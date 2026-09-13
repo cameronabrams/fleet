@@ -87,6 +87,10 @@ fleet answers that from two sides:
 - **watcher registration** (:doc:`tools/fleetregister`), so the *inventory* of live
   watchers is derived from processes that can be checked, not claimed in prose.
 
+A session that should stop is **parked** (its role continues later) or **retired**
+(its role is finished) with :doc:`tools/fleetretire`, which records how to resume
+it before stopping it; ``fleet.toml`` then keeps restores from relaunching it.
+
 The resume handle itself moves: a ``/clear`` rolls a session onto a new transcript
 while its process arguments still name the old one. :doc:`tools/fleetsnap` and
 :doc:`tools/fleetupgrade` detect that and resolve the live transcript.

@@ -27,8 +27,9 @@ What it gives you:
   who would lose runtime state on restart.
 - **Watched cluster work.** :doc:`tools/fleetwatch` derives which scheduler jobs
   have a live watcher, from the scheduler and ``/proc`` rather than from notes.
-- **Onboarding.** :doc:`tools/fleetspawn` brings one new session in — pane, labels,
-  launch, verification — and never answers the folder-trust prompt.
+- **Onboarding and spin-down.** :doc:`tools/fleetspawn` brings one new session in —
+  pane, labels, launch, verification — and never answers the folder-trust prompt;
+  :doc:`tools/fleetretire` parks or retires one, recording how to resume it first.
 - **Visibility.** :doc:`tools/fleetlog`, :doc:`tools/fleetcost` and
   :doc:`tools/fleetwaiting` reconstruct who talks to whom, what it costs, and who is
   blocked on the human.

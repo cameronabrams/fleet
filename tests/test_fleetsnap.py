@@ -1,6 +1,7 @@
 import os, tempfile, unittest
 from unittest import mock
 from tests.support import FakeConfig, load_tool
+from fleet import transcripts
 
 class CorrectedLabel(unittest.TestCase):
     """The @repo label vs the pane title. OBSERVED 2026-09-13: a session at the
@@ -10,7 +11,7 @@ class CorrectedLabel(unittest.TestCase):
         self.cfg = FakeConfig()
         self.tmp = tempfile.TemporaryDirectory()
         self.snap = load_tool("fleetsnap")
-        self.p = mock.patch.object(self.snap, "PROJECTS", self.tmp.name)
+        self.p = mock.patch.object(transcripts, "PROJECTS", self.tmp.name)
         self.p.start()
 
     def tearDown(self):
@@ -128,6 +129,30 @@ class Arguments(unittest.TestCase):
         r, written = self.run_tool("--dry-run")
         self.assertEqual(r.returncode, 2)
         self.assertEqual(written, [])
+
+
+class StoppedProblems(unittest.TestCase):
+    def setUp(self):
+        from tests.support import BASE_TOML
+        self.cfg = FakeConfig(toml=BASE_TOML +
+            '\n[parked.alpha]\nuuid = "aaaaaaaa-0000-4000-8000-000000000001"\nsince = "2026-09-13"\n')
+        self.snap = load_tool("fleetsnap")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def test_live_session_resuming_a_parked_transcript(self):
+        p = self.snap.stopped_problems("alpha", "aaaaaaaa-0000-4000-8000-000000000001")
+        self.assertEqual(len(p), 1)
+        self.assertIn("will not relaunch", p[0][1])
+
+    def test_name_reused_with_another_transcript(self):
+        p = self.snap.stopped_problems("alpha", "dddddddd-0000-4000-8000-000000000004")
+        self.assertEqual(len(p), 1)
+        self.assertIn("name is [parked]", p[0][1])
+
+    def test_unrelated_session(self):
+        self.assertEqual(self.snap.stopped_problems("beta", "eeeeeeee-0000-4000-8000-000000000005"), [])
 
 if __name__ == "__main__":
     unittest.main()

@@ -88,5 +88,27 @@ class Membership(unittest.TestCase):
     def test_undeclared(self):
         self.assertEqual(self.kinds("gamma", "red"), ["brief", "color"])
 
+
+U1 = "aaaaaaaa-0000-4000-8000-000000000001"
+U2 = "bbbbbbbb-0000-4000-8000-000000000002"
+
+class Stopped(unittest.TestCase):
+    def test_parked_and_retired(self):
+        cfg = {"parked": {"a": {"uuid": U1, "since": "2026-09-13"}},
+               "retired": {"b": {"uuid": U2, "since": "2026-09-01", "note": "done"}}}
+        self.assertEqual(fc.stopped(cfg)["a"]["state"], "parked")
+        self.assertEqual(fc.stopped(cfg)["b"]["note"], "done")
+        self.assertEqual(fc.stopped_uuids(cfg), {U1: ("a", "parked"), U2: ("b", "retired")})
+        self.assertEqual(fc.stopped({}), {})
+
+    def test_invalid_entries(self):
+        for bad in ({"parked": {"a": {"uuid": "aaaaaaaa", "since": "x"}}},       # short uuid
+                    {"parked": {"a": {"uuid": U1}}},                              # no since
+                    {"parked": {"a": "yes"}},                                     # not a table
+                    {"parked": {"a": {"uuid": U1, "since": "x"}},
+                     "retired": {"a": {"uuid": U2, "since": "x"}}}):              # both
+            with self.assertRaises(fc.ConfigError, msg=bad):
+                fc.stopped(bad)
+
 if __name__ == "__main__":
     unittest.main()

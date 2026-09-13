@@ -29,6 +29,7 @@ recoverable by inspecting a process that no longer exists.
 import json, os, re, subprocess, sys, glob
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet.procs import alive
 
 CFG     = fc.load()
 CLUSTER = fc.cluster(CFG)
@@ -129,40 +130,6 @@ def final_states(jids):
     return res
 
 WATCHDIR = os.path.join(fc.state_dir(CFG), "watchers")
-
-def alive(pid, want_start=None):
-    """Live means RUNNING, AND still the same process we registered.
-
-    `kill -0` SUCCEEDS on a zombie -- a process that has exited but whose parent
-    has not wait()ed. So a SIGKILLed watcher awaiting reaping reads ALIVE, and its
-    job reads WATCHED while nothing is watching: the fail-toward-fine direction
-    this registry exists to eliminate.
-
-    Reproduced 2026-09-12: a forked child whose parent
-    never waits shows /proc/<pid>/stat field 3 == 'Z' while `kill -0` returns
-    success. Rare in practice -- the harness reaps promptly and orphans reparent
-    to a reaper -- but it bites when the watcher's parent is itself stuck, which
-    is exactly when you most want the alarm.
-
-    And a pid is not an identity: the kernel reuses them (pid_max 4194304 on the
-    host measured, 2.6-5.9/s -> wrap in 8-19 days), so an uncleared registration is
-    eventually GUARANTEED to name an unrelated live process, which reads healthy.
-    starttime alone is not an identity either -- 10 ms ticks, and two back-to-back
-    processes collided on it in test. The PAIR (pid, starttime) is sound: a pid is
-    only reused after its holder is reaped, and wrap takes days.
-
-    So test the STATE and the IDENTITY, not addressability."""
-    try:
-        raw = open("/proc/%s/stat" % int(pid)).read()
-        tail = raw[raw.rindex(")") + 2:].split()   # after the LAST ')': comm may contain spaces
-        st, start = tail[0], tail[19]              # field 3 (state), field 22 (starttime)
-    except Exception:
-        return False            # no /proc entry at all -> gone
-    if st == "Z":
-        return False
-    if want_start is not None and str(want_start) != start:
-        return False            # pid reused by an unrelated process
-    return True
 
 def registered():
     """AUTHORITATIVE: watchers that registered themselves, filtered by liveness.

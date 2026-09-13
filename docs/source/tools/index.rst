@@ -24,8 +24,11 @@ script at build time, so it cannot drift from the code.
      - which sessions run a stale binary; ordered restart plan
      - nothing
    * - :doc:`fleetspawn`
-     - bring one new session in
+     - bring one new session in, or a parked one back
      - tmux, with ``--go``
+   * - :doc:`fleetretire`
+     - park or retire one session
+     - tmux and state, with ``--go``
    * - :doc:`fleetwatch`
      - which cluster work has a live watcher
      - nothing
@@ -53,6 +56,7 @@ Most tools read ``~/.claude/projects/`` (transcripts), ``/proc`` and
    fleetrestore
    fleetupgrade
    fleetspawn
+   fleetretire
    fleetwatch
    fleetregister
    fleetwaiting

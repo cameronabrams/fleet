@@ -18,6 +18,7 @@ installed before it can read its own configuration fails at exactly the moment
 it is needed.
 """
 import os
+import re
 import tomllib
 
 class ConfigError(RuntimeError):
@@ -102,6 +103,36 @@ def membership_problems(cfg, name, live_color=None, color_known=True):
         out.append(("color", f"live colour {live_color or 'NONE'}, declared {want}",
                     f"type  /color {want}  in its pane (a session cannot set its own)"))
     return out
+
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+def stopped(cfg):
+    """Session name -> {"state": "parked"|"retired", "uuid", "since", "note"},
+    from [parked.<name>] and [retired.<name>].
+
+    Parking and retiring are human decisions, so they are declared here. The
+    resume uuid is what the declaration is ABOUT: restores refuse to relaunch that
+    transcript. A later session that reuses the name has a different uuid and is
+    unaffected -- names are reused, transcripts are not."""
+    out = {}
+    for state in ("parked", "retired"):
+        for name, rec in cfg.get(state, {}).items():
+            if not isinstance(rec, dict):
+                raise ConfigError(f"[{state}.{name}] must be a table with uuid and since")
+            uuid, since = rec.get("uuid", ""), rec.get("since", "")
+            if not _UUID.fullmatch(str(uuid)):
+                raise ConfigError(f"[{state}.{name}] uuid must be a full session uuid, got {uuid!r}")
+            if not since:
+                raise ConfigError(f"[{state}.{name}] needs since = \"YYYY-MM-DD\"")
+            if name in out:
+                raise ConfigError(f"{name!r} is both parked and retired")
+            out[name] = {"state": state, "uuid": uuid, "since": str(since),
+                         "note": rec.get("note", "")}
+    return out
+
+def stopped_uuids(cfg):
+    """Resume uuid -> (name, state) for every parked or retired session."""
+    return {v["uuid"]: (k, v["state"]) for k, v in stopped(cfg).items()}
 
 def launch_env(cfg):
     """`KEY=val ...` prefix for launching a claude session, from [spawn].env.

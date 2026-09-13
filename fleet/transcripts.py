@@ -126,3 +126,73 @@ def cleared_successor(argv_uuid, label, pid):
     if not cands:
         return None, 0
     return os.path.basename(max(cands, key=os.path.getmtime))[:-6], len(cands)
+
+def newest_transcript(cwd, label=None):
+    """Prefer a transcript that identifies itself as `label`; fall back to newest."""
+    key = project_slug(cwd)
+    files = sorted(glob.glob(f"{PROJECTS}/{key}/*.jsonl"),
+                   key=os.path.getmtime, reverse=True)
+    if not files:
+        return None, "no transcript found"
+    # Two independent self-reports, both scanned over the WHOLE file:
+    #
+    #   agentName  - written by `--name` and by `/rename`. AUTHORITATIVE and
+    #                always present. /rename writes it MID-file, so take the
+    #                LAST, not the first: an earlier one is a superseded name.
+    #   "This session is X [ref]" - only appears once the session has called
+    #                ListAgents. A new session has none, which is why a fresh
+    #                or freshly-renamed session used to fall through to
+    #                "corroborated ... (no self-report)" despite carrying a
+    #                perfectly good agentName. Observed 2026-09-10: a session
+    #                renamed twice had 0 of the ListAgents marker, 3 agentName
+    #                records.
+    self_re = re.compile(r"This session is (\S+) \[[0-9a-f]{6}\]")
+    name_re = re.compile(r'"agentName"\s*:\s*"([^"]+)"')
+    norm = lambda x: (x or "").replace("-", " ").strip().lower()
+    found = {}
+    for f in files:
+        try:
+            body = open(f, errors="replace").read()
+        except OSError:
+            continue
+        names = name_re.findall(body) or self_re.findall(body)
+        if not names:
+            continue
+        last = names[-1]
+        found[f] = last
+        # No alias table: a transcript's LAST self-reported name is its current name,
+        # because `agentName` follows `/rename`. The table this replaced was
+        # hand-synced across two tools, had drifted, and was verified unnecessary
+        # 2026-09-12 -- identical manifest with it removed, fresh-launch path included.
+        resolved = last
+        if label and norm(resolved) == norm(label):
+            how = "verified: transcript self-reports this name"
+            return os.path.basename(f)[:-6], how
+    if found:
+        f = max(found, key=os.path.getmtime)
+        return (os.path.basename(f)[:-6],
+                f"UNVERIFIED: newest self-reports as {found[f]!r}, label is {label!r}")
+    f = files[0]
+    try:
+        peer = "cross-session-message" in open(f, errors="replace").read()
+    except OSError:
+        peer = False
+    if peer:
+        return (os.path.basename(f)[:-6],
+                "corroborated: newest in cwd and carries peer traffic (no self-report)")
+    return os.path.basename(f)[:-6], "UNVERIFIED: no self-report in any transcript"
+
+def resume_handle(proc, cwd, label):
+    """(uuid, how) for the transcript `claude --resume` should reopen."""
+    if proc["resume_uuid"]:
+        succ, n = cleared_successor(proc["resume_uuid"], label, proc["pid"])
+        if succ:
+            extra = f"; {n} candidates, newest taken" if n > 1 else ""
+            return succ, (f"verified: /clear since launch -- argv {proc['resume_uuid'][:8]} "
+                          f"superseded by a transcript that self-reports this name and "
+                          f"began after the process started{extra}")
+        return proc["resume_uuid"], "verified: --resume in process argv, no /clear since launch"
+    u = uuid_from_descendants(proc["pid"])
+    if u:
+        return u, "verified: session's own scratchpad path, via a child process"
+    return newest_transcript(cwd, label)

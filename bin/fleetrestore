@@ -124,6 +124,18 @@ def main():
         live = {l.strip() for l in out.splitlines() if l.strip()}
     except Exception:
         pass
+    # Parked and retired sessions are declared in fleet.toml by transcript. An older
+    # manifest, or a .bak, still lists them; relaunching one would undo a decision
+    # the human made. Keyed by uuid, so a new session that reuses the name restores.
+    held = fc.stopped_uuids(CFG)
+    gone = [x for x in m["sessions"] if x.get("resume_uuid") in held]
+    if gone:
+        print("\n  not relaunched (fleet.toml): " + ", ".join(
+            f"{x['label']} is {held[x['resume_uuid']][1]}" for x in gone))
+        m["sessions"] = [x for x in m["sessions"] if x.get("resume_uuid") not in held]
+        if not m["sessions"]:
+            print("  nothing to restore.\n")
+            return
     already = [x["label"] for x in m["sessions"] if x["label"] in live]
     if already:
         print(f"\n  already running, will be skipped: {', '.join(already)}")

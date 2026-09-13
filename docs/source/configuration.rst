@@ -108,6 +108,27 @@ to the first session whose fragment appears in the job's working directory.
 **First match wins**, so put specific fragments before general ones. A job matching
 no fragment is reported ``UNATTRIBUTED``, never guessed.
 
+``[parked.<name>]`` and ``[retired.<name>]``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Sessions stopped with :doc:`tools/fleetretire`, one table each:
+
+``uuid``
+   Required. The session's resume uuid — the transcript that must not be relaunched.
+``since``
+   Required. ``YYYY-MM-DD``.
+``note``
+   Optional.
+
+:doc:`tools/fleetretire` prints the entry; the configuration owner adds it. A name
+may not be both parked and retired, and ``uuid`` must be a full session uuid.
+
+Entries are keyed by transcript: :doc:`tools/fleetrestore` refuses to relaunch a
+listed uuid, and a new session that reuses the name is unaffected.
+:doc:`tools/fleetspawn` refuses a retired name, and a parked one except with
+``--resume`` and its uuid. :doc:`tools/fleetsnap` flags a live session whose
+transcript is listed — remove the entry once a parked session is back.
+
 ``[authority]``
 ~~~~~~~~~~~~~~~
 

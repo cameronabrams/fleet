@@ -30,6 +30,13 @@ coordinator    = "purple"
 project-a-repo = "red"
 project-a-runs = "cyan"
 
+# Sessions stopped with fleetretire. Keyed by transcript: fleetrestore will not
+# relaunch a listed uuid; a new session that reuses the name is unaffected.
+# [parked.project-a-runs]
+# uuid  = "<resume uuid>"
+# since = "2026-09-13"
+# note  = "resume when the next campaign starts"
+
 [cluster.mycluster]
 ssh_host        = "mycluster"            # an ssh alias that works non-interactively
 user            = "myuser"

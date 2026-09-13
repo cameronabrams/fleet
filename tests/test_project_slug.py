@@ -53,7 +53,7 @@ class ToolsUseIt(unittest.TestCase):
 
     def test_fleetsnap_finds_transcript(self):
         snap = load_tool("fleetsnap")
-        with mock.patch.object(snap, "PROJECTS", self.projects):
+        with mock.patch.object(transcripts, "PROJECTS", self.projects):
             uuid, how = snap.newest_transcript(DOTTED, "coord")
         self.assertEqual(uuid, UUID)
         self.assertTrue(how.startswith("verified"), how)

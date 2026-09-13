@@ -73,5 +73,52 @@ class Check(unittest.TestCase):
         self.assertFalse(self.spawn.named(["claude", "alpha"], "alpha"))
         self.assertFalse(self.spawn.named(["claude", "--name"], "alpha"))
 
+
+UP = "aaaaaaaa-0000-4000-8000-000000000001"
+
+class Resume(unittest.TestCase):
+    """Bringing a parked session back, and refusing retired ones."""
+    toml_extra = (f'\n[parked.alpha]\nuuid = "{UP}"\nsince = "2026-09-13"\n'
+                  '\n[retired.beta]\nuuid = "bbbbbbbb-0000-4000-8000-000000000002"\nsince = "2026-09-01"\n')
+
+    def setUp(self):
+        from tests.support import BASE_TOML
+        self.cfg = FakeConfig(toml=BASE_TOML + self.toml_extra, briefs=("alpha", "beta"))
+        self.dir = tempfile.mkdtemp(dir=self.cfg.root)
+        self.spawn = load_tool("fleetspawn")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def problems(self, name, resume=None):
+        a = SimpleNamespace(name=name, dir=self.dir, beside=None, resume=resume)
+        with mock.patch.object(self.spawn, "claude_procs", return_value=[]), \
+             mock.patch.object(self.spawn, "tmux", return_value=(0, "", "")):
+            return self.spawn.preflight(a, os.path.join(self.cfg.config, "briefs", f"{name}.md"))
+
+    def test_parked_needs_its_own_resume_uuid(self):
+        self.assertTrue(any("parked" in p for p in self.problems("alpha")))
+        self.assertTrue(any("not cccccccc-" in p for p in
+                            self.problems("alpha", "cccccccc-0000-4000-8000-000000000003")))
+        self.assertEqual(self.problems("alpha", UP), [])
+
+    def test_retired_is_refused_even_with_resume(self):
+        self.assertTrue(any("retired" in p for p in self.problems("beta")))
+        self.assertTrue(any("retired" in p for p in
+                            self.problems("beta", "bbbbbbbb-0000-4000-8000-000000000002")))
+
+    def test_another_sessions_transcript_is_refused(self):
+        # alpha's colour is declared; resuming beta's retired transcript under it is not allowed
+        self.assertTrue(any("belongs to [retired.beta]" in p for p in
+                            self.problems("alpha", "bbbbbbbb-0000-4000-8000-000000000002")))
+
+    def test_resume_launch_has_no_first_prompt(self):
+        a = SimpleNamespace(name="alpha", resume=UP)
+        self.assertEqual(self.spawn.launch_cmd(a, "brief.md"), f"claude --name alpha --resume {UP}")
+
+    def test_resume_mode_prompt_is_the_humans(self):
+        self.assertEqual(self.spawn.screen_state(
+            "This session is 5h 35m old\n  1. Resume from summary (recommended)\n"), "resume")
+
 if __name__ == "__main__":
     unittest.main()

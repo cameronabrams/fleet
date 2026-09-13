@@ -21,6 +21,9 @@ fleet that no longer exists, and the rebuilt sessions look right.
 Behavior
 --------
 
+- Sessions whose resume uuid is listed in ``[parked]`` or ``[retired]`` are not
+  relaunched, whatever manifest is read. A later session that reuses the name has a
+  different uuid and restores normally.
 - Sessions whose ``@repo`` label is already on a live pane are skipped.
 - Unverified resume handles are listed before the plan.
 - Windows are created in manifest order, the real window index is read back from

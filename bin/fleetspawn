@@ -12,6 +12,10 @@ a later restore reads, a launch into the wrong directory).
   fleetspawn ... --go                                actually do it
   fleetspawn --check NAME DIR                        verify a spawned session is live
                                                      (exit 3: still at the trust prompt)
+  fleetspawn NAME DIR ... --resume UUID              bring a PARKED session back
+
+A name in [retired] is refused. A name in [parked] is refused unless --resume
+gives its recorded uuid; afterwards the configuration owner removes the entry.
 
 The brief defaults to <config>/briefs/NAME.md and must exist: a session launched
 with no brief has no role, and a role reconstructed later is an inference.
@@ -24,42 +28,29 @@ should not. If the prompt appears, this stops and says which pane to look at.
 import argparse, os, shlex, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet.procs import claude_procs, named
 CFG = fc.load()
 
 # Both still present in the prompt drawn by claude 2.1.270 (captured 2026-09-13;
 # the full screen is a fixture in tests/test_fleetspawn.py).
 TRUST_MARKERS = ("trust this folder", "Is this a project you created")
+# A large resumed session asks whether to resume from a summary (lossy) or in
+# full (costly). That choice is the human's (fleet-upgrade skill, section 3).
+RESUME_MARKER = "Resume from summary"
 
 def screen_state(screen):
-    """'trust' if the folder-trust prompt is showing, 'banner' if the version banner
-    is (drawn only once a session is running), else 'unknown'."""
+    """'trust' if the folder-trust prompt is showing, 'resume' if the resume-mode
+    prompt is, 'banner' if the version banner is (drawn only once a session is
+    running), else 'unknown'."""
     if any(m in screen for m in TRUST_MARKERS):
         return "trust"
+    if RESUME_MARKER in screen:
+        return "resume"
     return "banner" if "Claude Code v" in screen else "unknown"
 
 def tmux(*a):
     r = subprocess.run(["tmux", *a], capture_output=True, text=True)
     return r.returncode, r.stdout.strip(), r.stderr.strip()
-
-def claude_procs():
-    """(pid, cwd, argv) for every live claude process, from /proc -- not from any
-    record, and not only from tmux: a session outside tmux still takes a name."""
-    out = []
-    for d in os.listdir("/proc"):
-        if not d.isdigit():
-            continue
-        try:
-            argv = open(f"/proc/{d}/cmdline", "rb").read().decode(errors="replace").split("\0")
-            cwd = os.readlink(f"/proc/{d}/cwd")
-        except OSError:
-            continue
-        if argv and os.path.basename(argv[0]) == "claude":
-            out.append((int(d), cwd, [x for x in argv if x]))
-    return out
-
-def named(argv, name):
-    return any(a == "--name" and i + 1 < len(argv) and argv[i + 1] == name
-               for i, a in enumerate(argv))
 
 def preflight(a, brief):
     problems = []
@@ -80,6 +71,19 @@ def preflight(a, brief):
     rc, labels, _ = tmux("list-panes", "-a", "-F", "#{@repo}")
     if a.name in labels.split():
         problems.append(f"a pane is already labelled @repo={a.name}")
+    stopped = fc.stopped(CFG)
+    rec = stopped.get(a.name)
+    if rec and rec["state"] == "retired":
+        problems.append(f"{a.name} is retired since {rec['since']} -- to reuse the name for a "
+                        f"new session, remove [retired.{a.name}] from fleet.toml first")
+    elif rec and not getattr(a, "resume", None):
+        problems.append(f"{a.name} is parked since {rec['since']} -- bring it back with "
+                        f"--resume {rec['uuid']}")
+    elif rec and a.resume != rec["uuid"]:
+        problems.append(f"{a.name} is parked with transcript {rec['uuid']}, not {a.resume}")
+    owner = fc.stopped_uuids(CFG).get(getattr(a, "resume", None) or "")
+    if owner and owner[0] != a.name:
+        problems.append(f"transcript {a.resume} belongs to [{owner[1]}.{owner[0]}]")
     if a.beside:
         rc, _, _ = tmux("display-message", "-p", "-t", a.beside, "#{pane_id}")
         if rc != 0:
@@ -89,6 +93,10 @@ def preflight(a, brief):
 def launch_cmd(a, brief):
     spawn = CFG.get("spawn", {})
     env = fc.launch_env(CFG)
+    if getattr(a, "resume", None):
+        # A resumed session continues its own conversation; no first prompt.
+        return " ".join(x for x in (env, "claude", "--name", shlex.quote(a.name),
+                                    "--resume", shlex.quote(a.resume)) if x)
     prompt = spawn.get("first_prompt",
                        "You are a new fleet session named {name}. "
                        "Read {brief} and follow it.").format(name=a.name, brief=brief)
@@ -102,8 +110,8 @@ def wait_for(pane, name, directory, timeout):
     while time.time() < t_end:
         _, screen, _ = tmux("capture-pane", "-p", "-t", pane)
         state = screen_state(screen)
-        if state == "trust":
-            return "trust", None
+        if state in ("trust", "resume"):
+            return state, None
         # The process exists BEFORE the trust prompt renders, and the echoed launch
         # line already contains the name -- so neither is evidence of startup. The
         # version banner is drawn only once the session is actually running.
@@ -156,6 +164,7 @@ def main():
     ap.add_argument("--wait", type=int, default=60, help="seconds to wait for startup")
     ap.add_argument("--go", action="store_true")
     ap.add_argument("--check", action="store_true", help="verify only; change nothing")
+    ap.add_argument("--resume", metavar="UUID", help="resume a parked session's transcript")
     a = ap.parse_args()
     a.dir = os.path.realpath(os.path.expanduser(a.dir))
     if a.check:
@@ -200,6 +209,11 @@ def main():
         print(f"  That is the human's decision, not the agent's. Answer it in the pane,")
         print(f"  then run:  fleetspawn --check {shlex.quote(a.name)} {shlex.quote(a.dir)}\n")
         sys.exit(3)
+    if state == "resume":
+        print(f"\n  STOPPED at the resume-mode prompt in pane {pane}: summary (lossy) or full")
+        print(f"  (costly) is the human's choice. Answer it, then run:")
+        print(f"  fleetspawn --check {shlex.quote(a.name)} {shlex.quote(a.dir)}\n")
+        sys.exit(5)
     if state == "timeout":
         print(f"\n  TIMED OUT: no live claude named {a.name!r} in {a.dir} after {a.wait}s.")
         print(f"  Look at pane {pane}; do not relaunch until you know why.\n")

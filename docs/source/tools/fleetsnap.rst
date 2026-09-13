@@ -21,7 +21,9 @@ What it records, per session
   ``CLAUDE.md``, ``ROADMAP.md``, ``CHECKPOINT.md``, ``SESSION-RESTART-STATE.md`` if
   present in its directory
 - declared and live color, and any **membership problems**: no brief, no
-  ``[colors]`` entry, or a live color that differs from the declared one
+  ``[colors]`` entry, a live color that differs from the declared one, or a
+  ``[parked]``/``[retired]`` entry that lists its transcript (it would not be
+  restored) or its name with another transcript
 
 Plus, fleet-wide: exact tmux window layouts, the installed claude version,
 ``~/.tmux.conf`` presence, systemd user units (flagging transient ones, which die at

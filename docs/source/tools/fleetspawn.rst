@@ -11,6 +11,7 @@ Usage
    fleetspawn NAME DIR --fleet GROUP --beside PANE [--split v|h] [--go]
    fleetspawn NAME DIR --fleet GROUP --window TITLE [--go]
    fleetspawn --check NAME DIR
+   fleetspawn NAME DIR --fleet GROUP --beside PANE --resume UUID [--go]
 
 Other options: ``--brief PATH`` (default ``<config>/briefs/NAME.md``) and ``--wait
 SECONDS`` for startup (default 60).
@@ -22,6 +23,14 @@ Blocks, and changes nothing, on any of: a missing directory, a missing brief, no
 ``[colors]`` entry for the name, no tmux server, a live claude already launched
 ``--name NAME``, a pane already labelled ``@repo=NAME``, or a nonexistent
 ``--beside`` pane. Fix the cause; do not work around it.
+
+It also blocks on a name in ``[retired]`` (remove the entry to reuse the name for a
+new session), on a name in ``[parked]`` unless ``--resume`` gives its recorded
+uuid, and on ``--resume`` with a transcript recorded for a different name.
+
+``--resume UUID`` launches ``claude --name NAME --resume UUID`` with no first
+prompt — the way a parked session (:doc:`fleetretire`) comes back. Delete its
+``[parked]`` entry afterwards.
 
 With ``--go``
 -------------
@@ -54,6 +63,8 @@ Exit codes
      - stopped at the folder-trust prompt (with ``--check``: the pane still shows it)
    * - ``4``
      - timed out waiting for startup
+   * - ``5``
+     - stopped at the resume-mode prompt (summary or full is the human's choice)
 
 A process with the right name in the right directory exists *before* the trust
 prompt is answered, so ``--check`` also reads the labelled pane for the prompt.

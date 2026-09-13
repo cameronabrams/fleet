@@ -1,0 +1,366 @@
+#!/usr/bin/env python3
+"""fleetretire - stop ONE session: park it (the role continues later) or retire it
+(the role is finished). The mirror of fleetspawn.
+
+  fleetretire NAME --park            plan: checks, then what --go would do
+  fleetretire NAME --retire          plan
+  fleetretire NAME --park|--retire --go
+                                     write the resume recipe, /exit, close the pane
+
+Prints the plan and does nothing unless given --go. Whether a session should stop
+is the human's decision; this does the mechanical part and refuses rather than
+guesses. It blocks when the session is busy or at a prompt, holds runtime (child
+processes, live registered watchers, cluster jobs), has uncommitted or unpushed
+work (--allow-dirty to accept), or -- retire only -- is named in other briefs
+(--allow-references).
+
+It stops a session; it never deletes one. The transcript, memory folder and
+working directory stay, and the resume command is written to the session's
+ledger BEFORE the process is stopped, because the resume uuid is only derivable
+from the live process. Recording the session in [parked] or [retired] in
+fleet.toml is the configuration owner's edit; the exact snippet is printed.
+fleetrestore then refuses to relaunch that transcript, and `fleetspawn --resume`
+brings a parked session back.
+
+Exit codes: 0 done (or plan with no blocks), 2 blocked, 3 stopped at an
+unexpected screen, 4 timed out waiting for the process to exit.
+"""
+import argparse, glob, json, os, re, shlex, subprocess, sys, time
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from fleet import config as fc
+from fleet.procs import alive, children, claude_procs, named, starttime
+from fleet.transcripts import resume_handle
+
+CFG = fc.load()
+STATE = fc.state_dir(CFG)
+BIN = os.path.dirname(os.path.realpath(__file__))
+
+BUSY_MARKER = "esc to interrupt"           # footer while a turn runs (2.1.270)
+TRUST_MARKERS = ("trust this folder", "Is this a project you created")
+BACKGROUND_MARKER = "Background work is running"
+
+def tmux(*a):
+    r = subprocess.run(["tmux", *a], capture_output=True, text=True)
+    return r.returncode, r.stdout.rstrip("\n"), r.stderr.strip()
+
+def git(cwd, *a):
+    r = subprocess.run(["git", "-C", cwd, *a], capture_output=True, text=True)
+    return r.returncode, r.stdout.strip()
+
+def fleetwatch_json(name):
+    """fleetwatch's view of NAME's work: (parsed json or None, error text)."""
+    try:
+        r = subprocess.run([os.path.join(BIN, "fleetwatch"), name, "--json"],
+                           capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, str(e)
+    if r.returncode != 0:
+        return None, (r.stderr.strip().splitlines() or ["exit %d" % r.returncode])[-1]
+    try:
+        return json.loads(r.stdout), ""
+    except ValueError:
+        return None, "unparseable output"
+
+def ppid(pid):
+    try:
+        raw = open("/proc/%d/stat" % pid).read()
+        return int(raw[raw.rindex(")") + 2:].split()[1])
+    except (OSError, ValueError, IndexError):
+        return None
+
+def ancestors(pid):
+    out = set()
+    while pid and pid > 1 and len(out) < 64:
+        pid = ppid(pid)
+        if pid:
+            out.add(pid)
+    return out
+
+def pane_of(pid):
+    """(pane_id, window_id, panes_in_window, @repo, @fleet) of the pane whose shell is
+    the claude process's parent, or None."""
+    fmt = "\t".join(["#{pane_id}", "#{pane_pid}", "#{window_id}", "#{window_panes}",
+                     "#{@repo}", "#{@fleet}"])
+    _, out, _ = tmux("list-panes", "-a", "-F", fmt)
+    parent = ppid(pid)
+    for row in out.splitlines():
+        p = row.split("\t")
+        if len(p) == 6 and p[1].isdigit() and int(p[1]) in (pid, parent):
+            return {"pane": p[0], "window": p[2], "panes": int(p[3] or 0),
+                    "label": p[4], "fleet": p[5]}
+    return None
+
+def argv_resume(argv):
+    return next((argv[i + 1] for i, x in enumerate(argv[:-1]) if x == "--resume"), None)
+
+def mentions(text, name):
+    return re.search(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])", text) is not None
+
+def gather(a):
+    """Facts and checks. Returns (facts, problems, notes)."""
+    problems, notes, f = [], [], {"name": a.name}
+    stopped = fc.stopped(CFG)
+    hits = [(p, c, v) for p, c, v in claude_procs() if named(v, a.name)]
+    if a.name in stopped:
+        rec = stopped[a.name]
+        f["recorded"] = rec
+        if not hits:
+            return f, problems, notes             # config-only: see main()
+        problems.append(f"{a.name} is already [{rec['state']}] in fleet.toml, yet a process "
+                        f"with the name is running -- resolve that first (fleetsnap flags it)")
+    if not hits:
+        problems.append(f"no claude process named {a.name!r} is running")
+        return f, problems, notes
+    if len(hits) > 1:
+        problems.append(f"{len(hits)} processes answer to {a.name!r}: "
+                        + ", ".join(f"pid {p}" for p, _, _ in hits) + " -- resolve the duplicate first")
+        return f, problems, notes
+    pid, cwd, argv = hits[0]
+    f.update(pid=pid, cwd=cwd, start=starttime(pid))
+    if pid == os.getpid() or pid in ancestors(os.getpid()):
+        problems.append("that is the session running this tool; a session cannot stop itself")
+
+    uuid, how = resume_handle({"resume_uuid": argv_resume(argv), "pid": pid}, cwd, a.name)
+    f.update(uuid=uuid, uuid_source=how)
+    if not uuid or not how.startswith("verified"):
+        problems.append(f"resume uuid not verified ({how}) -- stopping it could lose the way back")
+    elif uuid in fc.stopped_uuids(CFG):
+        other = fc.stopped_uuids(CFG)[uuid]
+        problems.append(f"its transcript is already listed as [{other[1]}.{other[0]}]")
+
+    pane = pane_of(pid)
+    f["pane"] = pane
+    if not pane:
+        problems.append("no tmux pane holds this process -- stop it by hand")
+    else:
+        if pane["label"] and pane["label"] != a.name:
+            notes.append(f"pane {pane['pane']} is labelled @repo={pane['label']}")
+        _, screen, _ = tmux("capture-pane", "-p", "-t", pane["pane"])
+        if any(m in screen for m in TRUST_MARKERS):
+            problems.append(f"pane {pane['pane']} shows the folder-trust prompt")
+        elif BACKGROUND_MARKER in screen:
+            problems.append(f"pane {pane['pane']} shows the background-work dialog")
+        elif BUSY_MARKER in screen:
+            problems.append(f"{a.name} is mid-turn (pane footer shows '{BUSY_MARKER}'); "
+                            f"wait until it is idle")
+
+    kids = children(pid)
+    if kids:
+        desc = []
+        for k in kids:
+            try:
+                desc.append(f"pid {k}: " + open(f"/proc/{k}/cmdline", "rb").read()
+                            .replace(b"\0", b" ").decode(errors="replace").strip()[:80])
+            except OSError:
+                desc.append(f"pid {k}")
+        problems.append("holds child processes (runtime that dies with it):\n      "
+                        + "\n      ".join(desc))
+
+    for path in sorted(glob.glob(os.path.join(STATE, "watchers", "*.json"))):
+        try:
+            r = json.load(open(path))
+        except (OSError, ValueError):
+            continue
+        if r.get("session") != a.name:
+            continue
+        if r.get("starttime") and alive(r.get("pid"), r["starttime"]):
+            problems.append(f"registered watcher on job {r.get('job')} is alive (pid {r.get('pid')}); "
+                            f"setsid'd watchers survive the session and would watch for nobody")
+        else:
+            notes.append(f"stale registration for job {r.get('job')}: "
+                         f"fleetregister --clear {a.name} {r.get('job')}")
+
+    if CFG.get("cluster"):
+        data, err = fleetwatch_json(a.name)
+        if data is None:
+            problems.append(f"fleetwatch failed ({err}) -- cannot tell whether it owns cluster work")
+        elif not data.get("cluster_ok"):
+            problems.append("cluster query failed -- cannot tell whether it owns live work")
+        elif data.get("jobs"):
+            problems.append("owns or watches cluster work: " + ", ".join(
+                f"{j['job']} ({'held' if j.get('held') else 'live'})" for j in data["jobs"]))
+    else:
+        notes.append("no [cluster] configured: cluster work not checked")
+
+    others = [p for p, c, v in claude_procs() if p != pid and os.path.realpath(c) == os.path.realpath(cwd)]
+    rc, inside = git(cwd, "rev-parse", "--is-inside-work-tree")
+    if rc != 0 or inside != "true":
+        notes.append(f"{cwd} is not a git work tree: nothing checked for unsaved work")
+    else:
+        _, dirty = git(cwd, "status", "--porcelain")
+        rc, ahead = git(cwd, "rev-list", "--count", "@{u}..HEAD")
+        what = []
+        if dirty:
+            what.append(f"{len(dirty.splitlines())} uncommitted path(s)")
+        if rc != 0:
+            notes.append("branch has no upstream: unpushed commits not checked")
+        elif ahead not in ("", "0"):
+            what.append(f"{ahead} unpushed commit(s)")
+        if what:
+            msg = f"{cwd}: " + ", ".join(what)
+            if others:
+                notes.append(msg + f" (shared with pid {', '.join(map(str, others))}, so not evidence about {a.name})")
+            elif not a.allow_dirty:
+                problems.append(msg + " -- commit/push, or --allow-dirty if it is deliberately left")
+            else:
+                notes.append(msg + " (allowed)")
+
+    if a.mode == "retire":
+        refs = []
+        for b in sorted(glob.glob(os.path.join(fc.config_dir(), "briefs", "*.md"))):
+            if os.path.basename(b) == f"{a.name}.md":
+                continue
+            try:
+                if mentions(open(b, errors="replace").read(), a.name):
+                    refs.append(os.path.basename(b)[:-3])
+            except OSError:
+                pass
+        if refs:
+            msg = "named in other briefs: " + ", ".join(refs)
+            if a.allow_references:
+                notes.append(msg + " (allowed)")
+            else:
+                problems.append(msg + " -- update them, or --allow-references")
+    return f, problems, notes
+
+def recipe(f, fleet):
+    env = fc.launch_env(CFG)
+    cmd = " ".join(x for x in (env, "claude", "--name", shlex.quote(f["name"]),
+                               "--resume", f["uuid"]) if x)
+    return (f"    cd {shlex.quote(f['cwd'])} && {cmd}\n\n"
+            f"or, into a new pane:\n\n"
+            f"    fleetspawn {shlex.quote(f['name'])} {shlex.quote(f['cwd'])} --fleet {fleet or '<group>'} "
+            f"--beside <pane> --resume {f['uuid']} --go\n")
+
+def ledger_text(f, mode, previous):
+    today = time.strftime("%Y-%m-%d")
+    word = "PARKED" if mode == "park" else "RETIRED"
+    fleet = (f.get("pane") or {}).get("fleet")
+    txt = (f"# {f['name']} — {word} since {today}\n\n"
+           f"Written by fleetretire at {time.strftime('%Y-%m-%d %H:%M %Z')}, before the process\n"
+           f"(pid {f['pid']}) was stopped. It held no runtime: no child processes, no live\n"
+           f"registered watchers, no cluster work.\n\n"
+           f"## Re-arm nothing. Resume with\n\n{recipe(f, fleet)}\n"
+           f"Transcript uuid: {f['uuid']}\n")
+    if mode == "park":
+        txt += (f"\nAfter resuming, remove [parked.{f['name']}] from fleet.toml -- until then\n"
+                f"fleetrestore will not relaunch it and fleetsnap flags it.\n")
+    if previous.strip():
+        txt += "\n## Ledger before stopping\n\n" + previous
+    return txt
+
+def snippet(name, mode, uuid, note=""):
+    state = "parked" if mode == "park" else "retired"
+    s = f'[{state}.{name}]\nuuid  = "{uuid}"\nsince = "{time.strftime("%Y-%m-%d")}"\n'
+    return s + (f'note  = "{note}"\n' if note else "")
+
+def screen(pane):
+    return tmux("capture-pane", "-p", "-t", pane)[1]
+
+def stop(f, wait):
+    """Type /exit and wait for the process to go. Returns (code, message)."""
+    pane, pid, start = f["pane"]["pane"], f["pid"], f["start"]
+    tmux("send-keys", "-t", pane, "-l", "/exit")          # text, no Enter
+    time.sleep(0.5)
+    lines = [l for l in screen(pane).splitlines() if l.strip()]
+    if not any(re.search(r"❯\s*/exit\s*$", l) for l in lines):
+        tmux("send-keys", "-t", pane, "C-u")
+        return 3, (f"the input line in {pane} did not read exactly '/exit' after typing it "
+                   f"(a terminal reply can corrupt keys); cleared it and stopped")
+    tmux("send-keys", "-t", pane, "Enter")
+    t_end = time.time() + wait
+    while time.time() < t_end:
+        if not alive(pid, start):
+            return 0, f"pid {pid} exited"
+        if BACKGROUND_MARKER in screen(pane):
+            return 3, (f"{pane} shows the background-work dialog: the session holds runtime "
+                       f"these checks did not see. It is still running; answer the dialog "
+                       f"(option 3, Stay) and find out what it holds")
+        time.sleep(1)
+    return 4, f"pid {pid} still running after {wait}s; look at pane {pane}"
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("name")
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument("--park", dest="mode", action="store_const", const="park")
+    g.add_argument("--retire", dest="mode", action="store_const", const="retire")
+    ap.add_argument("--go", action="store_true")
+    ap.add_argument("--allow-dirty", action="store_true")
+    ap.add_argument("--allow-references", action="store_true")
+    ap.add_argument("--note", default="", help="note for the fleet.toml entry")
+    ap.add_argument("--wait", type=int, default=30, help="seconds to wait for exit")
+    a = ap.parse_args()
+
+    f, problems, notes = gather(a)
+    rec = f.get("recorded")
+    if rec and "pid" not in f and not problems:
+        # Not running and already recorded: only configuration can change.
+        print(f"\n  {a.name} is not running and is already [{rec['state']}] since {rec['since']}.")
+        if a.mode == "retire" and rec["state"] == "parked":
+            print("  To retire it, the configuration owner replaces the entry with:\n")
+            print("    " + snippet(a.name, "retire", rec["uuid"], a.note).replace("\n", "\n    "))
+            print(f"  then removes its [colors]/[owners] rows, moves briefs/{a.name}.md to")
+            print(f"  briefs/retired/, and moves rearm/{a.name}.md to rearm/retired/.\n")
+        else:
+            print("  Nothing to do.\n")
+        return
+
+    print(f"\n  {a.mode} {a.name}")
+    if "pid" in f:
+        p = f.get("pane") or {}
+        print(f"  pid   {f['pid']}  in {f['cwd']}")
+        print(f"  pane  {p.get('pane', '?')}  fleet={p.get('fleet') or '?'}  "
+              f"({p.get('panes', '?')} pane(s) in its window)")
+        print(f"  uuid  {f.get('uuid')}  ({f.get('uuid_source')})")
+    for n in notes:
+        print(f"  note: {n}")
+    if problems:
+        print()
+        for p in problems:
+            print(f"  BLOCKED: {p}")
+        print()
+        sys.exit(2)
+    ledger = os.path.join(STATE, "rearm", f"{a.name}.md")
+    dest = ledger if a.mode == "park" else os.path.join(STATE, "rearm", "retired", f"{a.name}.md")
+    print(f"\n  --go would: write the resume recipe to {dest}; type /exit in "
+          f"{f['pane']['pane']} and wait for pid {f['pid']} to exit;")
+    print("  close the pane" + (" (it is alone in its window, so the pane is left open)"
+                                 if f["pane"]["panes"] <= 1 else "") + "; print the fleet.toml entry.")
+    if not a.go:
+        print("\n  plan only -- re-run with --go\n")
+        return
+
+    previous = open(ledger).read() if os.path.exists(ledger) else ""
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    with open(dest, "w") as fh:
+        fh.write(ledger_text(f, a.mode, previous))
+    if not (os.path.exists(dest) and f["uuid"] in open(dest).read()):
+        sys.exit(f"  could not confirm the recipe in {dest}; nothing stopped")
+    print(f"\n  wrote {dest}")
+
+    code, msg = stop(f, a.wait)
+    print(f"  {msg}")
+    if code:
+        print()
+        sys.exit(code)
+    if a.mode == "retire" and os.path.exists(ledger) and ledger != dest:
+        os.remove(ledger)                      # its content is kept in the retired ledger
+    pane = f["pane"]
+    if pane["panes"] > 1:
+        tmux("kill-pane", "-t", pane["pane"])
+        print(f"  closed pane {pane['pane']}")
+    else:
+        print(f"  pane {pane['pane']} is alone in its window and left open "
+              f"(tmux kill-window -t {pane['window']} to close it)")
+
+    state = "parked" if a.mode == "park" else "retired"
+    print(f"\n  Remaining, for the configuration owner -- add to fleet.toml:\n")
+    print("    " + snippet(a.name, a.mode, f["uuid"], a.note).replace("\n", "\n    "))
+    if a.mode == "retire":
+        print(f"  and remove {a.name}'s [colors] and [owners] rows; move briefs/{a.name}.md to")
+        print("  briefs/retired/; commit the configuration.")
+    print("  Then: fleetsnap (the layout changed), and tell the peers it worked with.\n")
+
+if __name__ == "__main__":
+    main()

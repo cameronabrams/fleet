@@ -43,11 +43,12 @@ when you need it.
 | `fleetlog` | reconstruct the cross-session message graph |
 | `fleetcost` | measure what inter-session messages cost in re-read tokens |
 | `fleetwaiting` | which sessions are blocked waiting on a human |
-| `fleetspawn` | bring one new session in: pane, labels, launch, verify (plan by default) |
+| `fleetspawn` | bring one new session in, or a parked one back (plan by default) |
+| `fleetretire` | park or retire one session: checks, resume recipe, `/exit` (plan by default) |
 
 ## Skills
 
-- `fleet-bootstrap` — found a fleet from a coordinator, or add / retire one
+- `fleet-bootstrap` — found a fleet from a coordinator, or add / park / retire one
   session: role design, briefs, `fleetspawn`, verification. Templates in
   `examples/brief.example.md` and `examples/conventions.example.md`.
 - `fleet-upgrade`, `fleet-snapshot` — rolling a binary upgrade without losing

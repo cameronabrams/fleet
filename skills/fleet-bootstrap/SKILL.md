@@ -1,6 +1,6 @@
 ---
 name: fleet-bootstrap
-description: Stand up a fleet of long-lived Claude Code sessions from a coordinator, or add or retire one session in an existing fleet - designing roles, writing each session's brief, creating the tmux pane, launching it, verifying it, and snapshotting. Use when asked to start a new fleet, to be a fleet coordinator for a set of repos or projects, to spin up / add / onboard a new agent or session, to give a project its own agent, or to retire a session. Triggers on "new fleet", "bootstrap a fleet", "you are the coordinator", "spin up an agent", "add a session", "new agent for", "create a pane for", "fleetspawn", "retire a session", "shut down that agent".
+description: Stand up a fleet of long-lived Claude Code sessions from a coordinator, or add, park or retire one session in an existing fleet - designing roles, writing each session's brief, creating the tmux pane, launching it, verifying it, stopping it, and snapshotting. Use when asked to start a new fleet, to be a fleet coordinator for a set of repos or projects, to spin up / add / onboard a new agent or session, to give a project its own agent, or to retire a session. Triggers on "new fleet", "bootstrap a fleet", "you are the coordinator", "spin up an agent", "add a session", "new agent for", "create a pane for", "fleetspawn", "retire a session", "shut down that agent", "park a session", "spin down", "fleetretire", "bring back a parked session".
 ---
 
 # Bootstrapping a fleet, one session at a time
@@ -20,7 +20,7 @@ a record, has failed at least once.
 | :--- | :--- |
 | No fleet exists; you have been asked to coordinate one | §1, then §2 for each session |
 | A fleet exists; one more session is needed | §2 |
-| A session's work is finished | §4 |
+| A session should stop, for now or for good | §4 |
 
 Before any of them, run `ListAgents`. The roster is what it says, not what a
 manifest, a checkpoint or your memory says.
@@ -199,16 +199,76 @@ scratchpad) show no prompt, so a test there cannot exercise this path.
   the roster from live processes. Nothing else needs a hand-kept list updated, and if
   you find one that does, that list is the bug.
 
-## 4. Retiring a session
+## 4. Stopping a session: park or retire
 
-1. Ask the session to write its state where it belongs (repo, notebook) and to say
-   what runtime it holds. Verify: `fleetwatch` shows no jobs owned by it, and it has
-   no child processes.
-2. With the human's approval, `/exit` in the pane (or `kill <pid>` by number — never a
-   pattern), then `tmux kill-pane -t <pane>`.
-3. Remove its `[owners]` and `[colors]` rows; move its brief to `<config>/briefs/retired/`; archive
-   its re-arm ledger. Commit the config repo.
-4. `fleetsnap`, verify, update the coordinator checkpoint, tell its former peers.
+**Whether a session stops is the human's decision.** Get it explicitly, and which of
+the two it is:
+
+| | **park** | **retire** |
+| :--- | :--- | :--- |
+| meaning | the role continues later; stop the process for now | the role is finished |
+| brief, `[colors]`, `[owners]` | stay | brief to `<config>/briefs/retired/`; rows removed |
+| re-arm ledger | rewritten with the resume recipe | moved to `<state>/rearm/retired/` |
+| `fleet.toml` | `[parked.<name>]` | `[retired.<name>]` |
+| coming back | `fleetspawn --resume <uuid>`, then delete the entry | a new spawn; the old transcript stays retired |
+
+Idle costs nothing (§1c), so park for a reason — a pane needed back, a session to keep
+out of upgrade rolls — not to tidy up.
+
+### 4a. Before the tool
+
+Ask the session to put its state where it belongs (repo, notebook, its ledger) and to
+finish or hand off what it owns. It must hold **no runtime**: no monitors, no
+background jobs, no registered watchers, no cluster work in flight.
+
+### 4b. Plan, then stop
+
+    fleetretire <name> --park              # or --retire; plan only, changes nothing
+    fleetretire <name> --park --go
+
+Preflight blocks on: no process with the name, or more than one; a resume uuid that
+is not verified; the pane busy (`esc to interrupt` in the footer), at the trust prompt
+or at the background-work dialog; child processes; a live registered watcher; cluster
+work the session owns or watches, or a cluster query that failed (cannot tell is not
+clear); uncommitted or unpushed work in its directory (`--allow-dirty` when it is
+deliberately left; not a block when another session shares the directory); for
+retire, other briefs naming it (`--allow-references`); the session being the one
+running the tool. Do not work around a block; fix its cause.
+
+With `--go` it writes the resume recipe to the ledger **before** stopping anything —
+the uuid is derivable only from the live process — then types `/exit` (text, check the
+input line, then Enter), waits for the pid to go, and closes the pane unless it is
+alone in its window. Exit `3` means it stopped at a screen it did not expect (a
+corrupted input line, the background-work dialog): the session may still be running;
+look. Exit `4` means the process did not exit in time.
+
+It never deletes a transcript, a memory folder or a working directory.
+
+### 4c. Record it — the configuration owner's edit
+
+The tool prints the entry. Add it, and for a retire also remove the `[colors]` and
+`[owners]` rows and move the brief. Commit the configuration.
+
+    [parked.<name>]                    # or [retired.<name>]
+    uuid  = "<resume uuid>"
+    since = "YYYY-MM-DD"
+    note  = "optional"
+
+From then on `fleetrestore` will not relaunch that transcript, even from an old
+manifest, and `fleetspawn` refuses the name unless given `--resume` with that uuid (a
+retired name must have its entry removed before the name is reused). The entries are
+keyed by transcript, so a new session that reuses a name is not blocked by an old one.
+
+### 4d. Afterwards
+
+`fleetsnap` (the layout changed) and verify; update the coordinator checkpoint; tell
+the peers it worked with, by pointer.
+
+To bring a parked session back: `fleetspawn <name> <dir> --fleet <group> --beside
+<pane> --resume <uuid> --go` (the command is in its ledger), then delete its
+`[parked]` entry. Until the entry goes, `fleetsnap` flags the live session, because
+the next restore would not bring it back. A large session may stop at the
+resume-mode prompt (exit `5`): summary or full is the human's choice.
 
 ## 5. Anti-patterns
 
@@ -223,3 +283,4 @@ scratchpad) show no prompt, so a test there cannot exercise this path.
 | two sessions in one directory by default | identity-by-transcript becomes ambiguous |
 | broadcast the new roster as an essay | n recipients × every later turn; send a pointer to those affected |
 | `/clear` a session to "make room" for a new role | rolls its transcript; spawn a new session instead |
+| stop a session by `kill` or closing its pane | no resume recipe, no `[parked]`/`[retired]` entry: the next restore brings it back |

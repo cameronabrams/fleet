@@ -54,5 +54,44 @@ class Plan(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("unknown fleet", r.stderr)
 
+
+class StoppedSessions(Plan):
+    """A parked or retired transcript is not relaunched from an old manifest; a new
+    session that reuses the name is."""
+    def setUp(self):
+        super().setUp()
+        with open(os.path.join(self.cfg.config, "fleet.toml"), "a") as f:
+            f.write('\n[retired.alpha]\nuuid = "aaaaaaaa-0000-4000-8000-000000000001"\n'
+                    'since = "2026-09-13"\n')
+        for name in ("manifest", "f"):
+            p = os.path.join(self.cfg.state, f"{name}.json")
+            m = json.load(open(p))
+            m["sessions"][1]["resume_uuid"] = "aaaaaaaa-0000-4000-8000-000000000001"  # alpha, retired
+            m["sessions"][0]["label"] = "alpha2"
+            json.dump(m, open(p, "w"))
+
+    def test_retired_transcript_not_relaunched(self):
+        r = self.run_tool("f")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("not relaunched (fleet.toml): alpha is retired", r.stdout)
+        self.assertNotIn("--resume aaaaaaaa-0000-4000-8000-000000000001", r.stdout)
+        self.assertIn("claude --name alpha2 --resume u-beta", r.stdout)
+
+    # inherited from Plan, whose manifest this class changes; not collected here
+    test_plan_changes_nothing_and_resumes_in_pane_order = None
+
+class StoppedByNameOnly(Plan):
+    def setUp(self):
+        super().setUp()
+        with open(os.path.join(self.cfg.config, "fleet.toml"), "a") as f:
+            f.write('\n[retired.alpha]\nuuid = "cccccccc-0000-4000-8000-000000000003"\n'
+                    'since = "2026-09-01"\n')
+
+    def test_same_name_different_transcript_is_restored(self):
+        r = self.run_tool("f")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("claude --name alpha --resume u-alpha", r.stdout)
+        self.assertNotIn("not relaunched", r.stdout)
+
 if __name__ == "__main__":
     unittest.main()
