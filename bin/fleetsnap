@@ -259,7 +259,9 @@ def main():
         if sys.argv[1] in ("-h", "--help"):
             print(__doc__.strip())
             return
-        sys.exit(f"fleetsnap: takes no arguments (got {' '.join(sys.argv[1:])}); see --help")
+        print(f"fleetsnap: takes no arguments (got {' '.join(sys.argv[1:])}); see --help",
+              file=sys.stderr)
+        sys.exit(2)
     prior = prior_snapshot()
     meta = window_meta()
     layouts = window_layouts(meta)
