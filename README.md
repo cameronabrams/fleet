@@ -1,5 +1,7 @@
 # fleet
 
+[![Documentation Status](https://readthedocs.org/projects/fleet-of-agents/badge/?version=latest)](https://fleet-of-agents.readthedocs.io/en/latest/)
+
 Tools and skills for running a fleet of long-lived Claude Code sessions, each
 owning a repository or a compute campaign, and coordinating between them.
 
@@ -56,8 +58,8 @@ when you need it.
 
 ## Documentation
 
-Full documentation is in `docs/` (Sphinx; built by Read the Docs from
-`.readthedocs.yaml`). To build locally: `pip install -r docs/requirements.txt`, then
+Full documentation: https://fleet-of-agents.readthedocs.io (sources in `docs/`, built
+by Read the Docs from `.readthedocs.yaml`). To build locally: `pip install -r docs/requirements.txt`, then
 `cd docs && make html`.
 
 ## Tests

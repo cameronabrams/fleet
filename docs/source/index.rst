@@ -1,8 +1,8 @@
 fleet
 =====
 
-.. |docs| image:: https://readthedocs.org/projects/fleet/badge/?version=latest
-   :target: https://fleet.readthedocs.io/en/latest/
+.. |docs| image:: https://readthedocs.org/projects/fleet-of-agents/badge/?version=latest
+   :target: https://fleet-of-agents.readthedocs.io/en/latest/
    :alt: Documentation status
 
 |docs|
