@@ -1,0 +1,363 @@
+#!/usr/bin/env python3
+"""fleetwatch - DERIVE which live cluster work has a local watcher, and which does not.
+
+The re-arm ledgers record what a session *believes* it has armed. That record is a
+second copy of state kept by hand, so it inherits the defect it exists to fix: a
+session cannot tell from inside that its ledger is stale, for the same reason it
+cannot tell its monitors are gone. Arming writes an entry; finishing writes nothing.
+Between 2026-09-04 and 2026-09-11 a ledger was wrong five times, in three ways, and
+every one was caught by an external check rather than by the ledger working.
+
+So: do not record the inventory. Derive it.
+
+  live SLURM work   <- squeue/sacct, keyed by array-parent job id and WorkDir
+  local watchers    <- /proc, any claude child whose cmdline names a job id
+
+and report the disagreements. The case that matters most is the one no ledger can
+ever catch: a job that was never watched at all, because you cannot record the
+monitor you forgot to create. Observed twice, 2026-09-10 and 2026-09-11.
+
+What the LEDGER is still for, and what this does not replace: the re-arm RECIPE
+(the actual poll loop) and the RATIONALE (why the campaign matters). Neither is
+recoverable by inspecting a process that no longer exists.
+
+  fleetwatch            report
+  fleetwatch <session>  only that session's work -- what a ledger should point AT
+                        instead of hand-syncing job ids and task counts
+  fleetwatch --json     machine-readable
+"""
+import json, os, re, subprocess, sys, glob
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from fleet import config as fc
+
+CFG     = fc.load()
+CLUSTER = fc.cluster(CFG)
+JOB_RE  = re.compile(r"\b(" + CLUSTER["job_id_re"] + r")\b")
+HELD    = tuple(CLUSTER.get("held_reasons", ["JobHeldUser", "JobHeldAdmin"]))
+
+# WorkDir -> owning session. Explicit rather than heuristic: an unmatched path is
+# reported as UNATTRIBUTED, never guessed. Add rows as campaigns appear.
+OWNERS = fc.owners(CFG)   # WorkDir fragment -> session, from fleet.toml
+
+MYTREE = os.getpid()
+def _ancestors():
+    out, pid = set(), os.getpid()
+    for _ in range(8):
+        try:
+            ppid = open(f"/proc/{pid}/stat").read().split(") ", 1)[1].split()[1]
+        except Exception:
+            break
+        out.add(ppid); pid = ppid
+        if ppid == "1":
+            break
+    return out
+ANCESTORS = _ancestors()
+
+def sh(*a, **kw):
+    try:
+        return subprocess.run(a, capture_output=True, text=True, timeout=kw.get("t", 240)).stdout
+    except Exception:
+        return ""
+
+def owner_of(workdir):
+    for frag, who in OWNERS:
+        if frag in workdir:
+            return who
+    return "UNATTRIBUTED"
+
+def live_jobs():
+    """Array-parent job id -> {tasks, states, workdir}. One ssh round trip."""
+    remote = ("squeue -u __USER__ -h -o '%F|%T|%r' | sort | uniq -c | "
+             "awk '{print $2\"|\"$1}'; echo '--WD--'; "
+             "for j in $(squeue -u __USER__ -h -o '%F' | sort -u); do "
+             "printf '%s|%s\\n' \"$j\" \"$(sacct -j $j -X -n -P --format=WorkDir%%80 2>/dev/null | head -1)\"; done; "
+             "echo '--END--'"
+             ).replace("__USER__", CLUSTER["user"])
+    out = sh("ssh", "-o", "ConnectTimeout=20", CLUSTER["ssh_host"], remote)
+    # An empty squeue and a failed ssh both produce no job lines. Without a marker
+    # the second reads as "no live work" -- and every dead watcher as FINISHED.
+    ok = "--END--" in out.splitlines()
+    jobs, wd, phase = {}, {}, 0
+    for line in out.splitlines():
+        if line.strip() == "--END--":
+            break
+        if line.strip() == "--WD--":
+            phase = 1; continue
+        p = line.strip().split("|")
+        if phase == 0 and len(p) == 4:
+            jid, state, reason, n = p[0], p[1], p[2], p[3]
+            j = jobs.setdefault(jid, {"tasks": 0, "states": {}, "reasons": {}})
+            j["tasks"] += int(n)
+            j["states"][state] = j["states"].get(state, 0) + int(n)
+            j["reasons"][reason] = j["reasons"].get(reason, 0) + int(n)
+        elif phase == 1 and len(p) == 2:
+            wd[p[0]] = p[1]
+    for jid, j in jobs.items():
+        j["workdir"] = wd.get(jid, "")
+        j["owner"] = owner_of(j["workdir"])
+        # HELD work cannot produce a result, so there is nothing a watcher could
+        # observe and "no watcher" is correct by construction -- not an oversight.
+        # Only reasons requiring a HUMAN to release count. `Dependency`, `Resources`
+        # and `Priority` all start on their own, so they DO need a watcher.
+        # Derived rather than taken from a ledger note: the moment the reason stops
+        # being a held one, this flips to needing a watcher with no file to update.
+        # (2026-09-09: two tasks held pending a human decision were flagged as
+        # unwatched two days later; this is the derived answer.)
+        j["held"] = bool(j["reasons"]) and all(
+            r in HELD for r in j["reasons"])
+    return jobs, ok
+
+TERMINAL = ("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL",
+            "PREEMPTED", "BOOT_FAIL", "DEADLINE", "REVOKED")
+
+def final_states(jids):
+    """job id -> set of sacct states, for jobs no longer in squeue. None if the
+    query itself failed. A job id sacct has never heard of maps to an empty set."""
+    if not jids:
+        return {}
+    remote = "".join(
+        "printf '%s|%s\\n' " + j + " \"$(sacct -j " + j + " -X -n -P --format=State 2>/dev/null "
+        "| awk '{print $1}' | sort -u | tr '\\n' ,)\"; " for j in sorted(jids)) + "echo '--END--'"
+    out = sh("ssh", "-o", "ConnectTimeout=20", CLUSTER["ssh_host"], remote)
+    if "--END--" not in out.splitlines():
+        return None
+    res = {}
+    for line in out.splitlines():
+        p = line.split("|", 1)
+        if len(p) == 2:
+            res[p[0]] = {x for x in p[1].split(",") if x}
+    return res
+
+WATCHDIR = os.path.join(fc.state_dir(CFG), "watchers")
+
+def alive(pid, want_start=None):
+    """Live means RUNNING, AND still the same process we registered.
+
+    `kill -0` SUCCEEDS on a zombie -- a process that has exited but whose parent
+    has not wait()ed. So a SIGKILLed watcher awaiting reaping reads ALIVE, and its
+    job reads WATCHED while nothing is watching: the fail-toward-fine direction
+    this registry exists to eliminate.
+
+    Reproduced 2026-09-12: a forked child whose parent
+    never waits shows /proc/<pid>/stat field 3 == 'Z' while `kill -0` returns
+    success. Rare in practice -- the harness reaps promptly and orphans reparent
+    to a reaper -- but it bites when the watcher's parent is itself stuck, which
+    is exactly when you most want the alarm.
+
+    And a pid is not an identity: the kernel reuses them (pid_max 4194304 on the
+    host measured, 2.6-5.9/s -> wrap in 8-19 days), so an uncleared registration is
+    eventually GUARANTEED to name an unrelated live process, which reads healthy.
+    starttime alone is not an identity either -- 10 ms ticks, and two back-to-back
+    processes collided on it in test. The PAIR (pid, starttime) is sound: a pid is
+    only reused after its holder is reaped, and wrap takes days.
+
+    So test the STATE and the IDENTITY, not addressability."""
+    try:
+        raw = open("/proc/%s/stat" % int(pid)).read()
+        tail = raw[raw.rindex(")") + 2:].split()   # after the LAST ')': comm may contain spaces
+        st, start = tail[0], tail[19]              # field 3 (state), field 22 (starttime)
+    except Exception:
+        return False            # no /proc entry at all -> gone
+    if st == "Z":
+        return False
+    if want_start is not None and str(want_start) != start:
+        return False            # pid reused by an unrelated process
+    return True
+
+def registered():
+    """AUTHORITATIVE: watchers that registered themselves, filtered by liveness.
+
+    No cmdline parsing. A registration claims {pid, job}; `kill -0` falsifies it
+    the moment the watcher dies. Contrast a ledger, which claims "I am watching X"
+    in prose that nothing can check.
+
+    Returns (live, dead): live maps session -> {job ids}; dead lists registrations
+    whose pid is gone -- a watcher that DIED, which no other check here detects.
+    """
+    live, dead = {}, []
+    for f in glob.glob(WATCHDIR + "/*.json"):
+        try:
+            r = json.load(open(f))
+        except Exception:
+            continue
+        # No starttime -> pre-2026-09-12 registration, identity unverifiable.
+        # Read it as DEAD rather than trusting it: fail toward alarm.
+        if r.get("starttime") and alive(r.get("pid"), r["starttime"]):
+            live.setdefault(r["session"], set()).add(str(r["job"]))
+        else:
+            r["_file"] = f; dead.append(r)
+    return live, dead
+
+def watchers():
+    """session name -> set of job ids its live child processes reference."""
+    out = {}
+    panes = sh("tmux", "list-panes", "-a", "-F", "#{pane_pid}").split()
+    for sp in panes:
+        for c in sh("pgrep", "-P", sp).split():
+            try:
+                cmd = open(f"/proc/{c}/cmdline", "rb").read().replace(b"\0", b" ").decode(errors="replace")
+            except OSError:
+                continue
+            m = re.match(r"\s*claude\b.*?--name\s+(\S+)", cmd)
+            if not m:
+                continue
+            name, found = m.group(1), set()
+            for k in sh("pgrep", "-P", c).split():
+                if k == str(MYTREE) or k in ANCESTORS:
+                    continue          # never count the process running this check
+                try:
+                    kc = open(f"/proc/{k}/cmdline", "rb").read().replace(b"\0", b" ").decode(errors="replace")
+                except OSError:
+                    continue
+                found |= polled_jobs(kc)
+            if found:
+                out.setdefault(name, set()).update(found)
+    return out
+
+def polled_jobs(cmdline):
+    """Job ids a command line polls in a loop; empty for anything else.
+
+    A job id in a cmdline is NOT evidence of watching it -- a one-shot
+    `sacct -j <id>`, a grep, or this very tool's own check command all mention
+    one. Observed 2026-09-12: the coordinator ran a verification command naming a
+    job and fleetwatch reported it as a watcher -- the self-match family this tool
+    exists to help catch, committed by the tool itself. It failed toward "fine":
+    a job looks watched because somebody merely looked at it.
+    Require positive evidence of a POLL LOOP -- a monitor sleeps between polls; a
+    transient command does not."""
+    if not re.search(r"\bsleep\s+\d", cmdline):
+        return set()
+    return set(JOB_RE.findall(cmdline))
+
+def main():
+    only = next((a for a in sys.argv[1:] if not a.startswith("-")), None)
+    jobs, cluster_ok = live_jobs()
+    reg, dead_reg = registered()
+    # A registered watcher whose pid is gone is either DEAD (its job is still live:
+    # alarm) or FINISHED (it exited because its job ended: the normal end of every
+    # watcher). Crying DEAD after every campaign trains everyone to ignore it, so
+    # FINISHED is reported separately -- but only when the scheduler PROVES the job
+    # ended. Not-in-squeue alone is not proof: a failed query looks the same.
+    # Raised 2026-09-13 by a production session whose watcher exited as designed.
+    finished = []
+    if cluster_ok:
+        gone = {str(r.get("job")) for r in dead_reg if str(r.get("job")) not in jobs}
+        fs = final_states(gone)
+        keep = []
+        for r in dead_reg:
+            j = str(r.get("job"))
+            st = (fs or {}).get(j)
+            if j in jobs:
+                r["_why"] = "its job is STILL LIVE"
+                keep.append(r)
+            elif fs is None:
+                r["_why"] = "job not in squeue, but sacct query failed -- cannot tell dead from finished"
+                keep.append(r)
+            elif st and all(x in TERMINAL for x in st):
+                r["_states"] = ",".join(sorted(st)); finished.append(r)
+            else:
+                r["_why"] = ("sacct does not know job %s -- wrong id in the registration?" % j
+                             if not st else "job not in squeue yet sacct says %s" % ",".join(sorted(st)))
+                keep.append(r)
+        dead_reg = keep
+    else:
+        for r in dead_reg:
+            r["_why"] = "cluster query failed -- cannot tell dead from finished"
+    inferred = watchers()          # ADVISORY ONLY -- see fleetregister
+    w = reg
+    if only:
+        # a session asking "what is MY live state?" -- the answer a ledger should
+        # defer to rather than duplicate. Match derived owner OR actual watcher,
+        # so a session still sees work it watches that is attributed elsewhere.
+        jobs = {k: v for k, v in jobs.items()
+                if v["owner"] == only or only in [s for s, i in w.items() if k in i]}
+        w = {k: v for k, v in w.items() if k == only}
+    watched = {j for s in w.values() for j in s}
+    rows = []
+    for jid, j in sorted(jobs.items()):
+        by = [s for s, ids in w.items() if jid in ids]
+        rows.append({"job": jid, "tasks": j["tasks"], "states": j["states"],
+                     "workdir": j["workdir"], "owner": j["owner"],
+                     "reasons": j["reasons"], "held": j["held"],
+                     "watched_by": by})
+    # monitors pointing at jobs that are no longer live
+    stale = ([{"session": s, "job": j} for s, ids in w.items() for j in ids if j not in jobs]
+             if cluster_ok else [])
+
+    if "--json" in sys.argv:
+        print(json.dumps({"cluster_ok": cluster_ok, "jobs": rows, "stale_watchers": stale,
+                          "dead_watchers": dead_reg, "finished_watchers": finished},
+                         indent=1, default=str)); return
+
+    if not cluster_ok:
+        print("!! CLUSTER QUERY FAILED (ssh %s) -- no job table. This is NOT \"no live"
+              " work\";\n   nothing below about live work or watcher coverage can be trusted."
+              % CLUSTER["ssh_host"])
+    elif not rows:
+        print("no live cluster work for %s." % CLUSTER["user"])
+    else:
+        print("%-11s %6s  %-28s %-18s %s" % ("JOB", "TASKS", "STATES", "OWNER (derived)", "WATCHED BY"))
+        for r in rows:
+            st = ",".join(f"{k}:{v}" for k, v in sorted(r["states"].items()))
+            print("%-11s %6d  %-28s %-18s %s" % (
+                r["job"], r["tasks"], st[:28], r["owner"],
+                ", ".join(r["watched_by"]) if r["watched_by"]
+                else ("held - nothing to watch" if r["held"] else "*** NOBODY ***")))
+
+    un = [r for r in rows if not r["watched_by"] and not r["held"]]
+    held = [r for r in rows if r["held"]]
+    if un:
+        print("\n!! LIVE WORK WITH NO WATCHER -- no ledger can catch this, because you")
+        print("   cannot record the monitor you forgot to create.")
+        for r in un:
+            print("   %s  %d task(s)  %s" % (r["job"], r["tasks"], r["workdir"]))
+        print("   Ask the derived owner to arm one, or confirm it is deliberate.")
+
+    if stale:
+        print("\n!! WATCHER ON WORK THAT IS NO LONGER LIVE -- the monitor will not exit")
+        print("   if its completion test cannot close. Check it.")
+        for s in stale:
+            print("   %s watches %s, which is not in squeue" % (s["session"], s["job"]))
+
+    unreg = sorted({(sess, j) for sess, ids in inferred.items() for j in ids
+                    if j not in reg.get(sess, set()) and j in jobs})
+    if unreg:
+        print("\n   looks like a watcher but is NOT REGISTERED (advisory -- inference,")
+        print("   so it may just be a command that mentioned the job):")
+        for sess, j in unreg:
+            print("   %s / %s   -> fleetregister %s %s <pid>" % (sess, j, sess, j))
+
+    if dead_reg:
+        print("\n!! REGISTERED WATCHER IS DEAD -- its pid is gone. Nothing else here")
+        print("   detects a watcher that died rather than never existing.")
+        for r in dead_reg:
+            print("   %s watched %s as pid %s, armed %s" %
+                  (r.get("session"), r.get("job"), r.get("pid"), r.get("armed", "?")))
+            print("      %s" % r.get("_why", ""))
+            print("      registration: %s" % r["_file"])
+
+    if finished:
+        print("\n   finished (watcher exited, and sacct shows its job ended -- the normal end")
+        print("   of a watcher, not a failure). Clear when the owner has read the result:")
+        for r in finished:
+            print("   %s / %s  %s   -> fleetregister --clear %s %s" %
+                  (r.get("session"), r.get("job"), r["_states"], r.get("session"), r.get("job")))
+
+    ua = [r for r in rows if r["owner"] == "UNATTRIBUTED"]
+    if ua:
+        print("\n!! WorkDir not in [owners] -- add a row to fleet.toml:")
+        for r in ua:
+            print("   %s  %s" % (r["job"], r["workdir"]))
+
+    if held:
+        print("\n   held (no watcher needed -- a held task never starts, so it")
+        print("   produces nothing to observe; this flips automatically if released):")
+        for r in held:
+            print("   %s  %d task(s)  %s" % (r["job"], r["tasks"],
+                  ",".join(sorted(r["reasons"]))))
+
+    if cluster_ok and not (un or stale or ua or unreg or dead_reg):
+        print("\nAll live work is watched, every watcher has live work, all owners known.")
+
+if __name__ == "__main__":
+    main()

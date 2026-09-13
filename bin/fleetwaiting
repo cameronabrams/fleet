@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""fleetwaiting - find sessions that appear to be blocked on the human.
+
+Read-only. Scans each live session's transcript for the most recent statement
+that it is waiting on the human, then checks whether anything after it looks like
+a resolution. Reports what it found and how old it is.
+
+Sessions refer to the human by name, so the patterns are built from [human] in
+fleet.toml: `name`, plus `aliases` for any other words sessions use (a pronoun,
+a role). "the human" and "the user" always count.
+
+THIS IS A PROMPT TO CHECK, NOT AN INVENTORY. It over-reports (a resolved item
+whose resolution used unusual wording still shows) and it under-reports (a
+session blocked without ever saying so does not). Reconcile it against
+`ListAgents` - the `waiting` state there is live and authoritative in a way
+transcript text is not - and against the session itself when it matters.
+"""
+import json, os, re, glob, subprocess, sys, time
+from datetime import datetime, timezone
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from fleet import config as fc
+from fleet.transcripts import project_slug
+
+PROJECTS = os.path.expanduser("~/.claude/projects")
+
+def patterns(cfg):
+    """(BLOCKED, RESOLVED) regexes for the words this fleet uses for its human."""
+    human = cfg.get("human", {})
+    words = [w for w in [human.get("name"), *human.get("aliases", []),
+                         "the human", "the user"] if w]
+    who = "(?:" + "|".join(re.escape(w).replace(r"\ ", r"\s+") for w in words) + ")"
+    blocked = re.compile(r"""(
+        waiting\s+on\s+WHO\b                  | blocked\s+on\s+WHO\b
+      | WHO(?:'s)?\s+call\b                   | only\s+WHO\s+can\b
+      | needs?\s+WHO(?:'s)?\s+(?:word|say|ruling|answer)
+      | pending\s+WHO\b                       | put\s+it\s+to\s+WHO\b
+      | asked\s+WHO\b                         | surfaced\s+it\s+to\s+WHO\b
+      | open\s+with\s+WHO\b                   | WHO\s+to\s+(?:settle|decide|rule|state)
+      | awaiting\s+WHO\b
+    )""".replace("WHO", who), re.I | re.X)
+    resolved = re.compile(r"""(
+        WHO\s+(?:confirmed|ruled|said|decided|approved|told|conferred|gave)
+      | WHO(?:'s)?\s+words?\s*[:,]            | settled\s+by\s+WHO\b
+      | decided\s+since                       | closed\s+by\s+WHO\b
+    )""".replace("WHO", who), re.I | re.X)
+    return blocked, resolved
+
+BLOCKED, RESOLVED = patterns(fc.load(required=False))
+
+def sh(*a):
+    return subprocess.run(a, capture_output=True, text=True).stdout
+
+def live_sessions():
+    """pane label -> transcript path, for sessions running right now."""
+    out = {}
+    fmt = "#{@repo}\t#{pane_pid}\t#{pane_current_path}"
+    for row in sh("tmux", "list-panes", "-a", "-F", fmt).strip().splitlines():
+        p = row.split("\t")
+        if len(p) < 3 or not p[0]:
+            continue
+        label, ppid, cwd = p
+        pids = [ppid] + sh("pgrep", "-P", ppid).split()
+        uuid = None
+        for pid in pids:
+            try:
+                cmd = open(f"/proc/{pid}/cmdline", "rb").read().decode(errors="replace")
+            except OSError:
+                continue
+            m = re.search(r"([0-9a-f]{8}-[0-9a-f-]{27})", cmd)
+            if m:
+                uuid = m.group(1); break
+        # `--resume <uuid>` names the SOURCE transcript, not the file the session
+        # writes to. For some sessions the resumed conversation continues into a
+        # NEW file, so resolving by the resume argument attributes a predecessor's
+        # words to its successor. Prefer the newest file in the project directory
+        # that self-reports this session's name; fall back to newest overall.
+        cand = glob.glob(f"{PROJECTS}/{project_slug(cwd)}/*.jsonl")
+        cand.sort(key=os.path.getmtime, reverse=True)
+        path = None
+        selfpat = re.compile(r"This session is " + re.escape(label) + r" \[")
+        for c in cand:
+            try:
+                if selfpat.search(open(c, errors="replace").read()):
+                    path = c; break
+            except OSError:
+                continue
+        if not path and uuid:
+            path = next((c for c in cand if uuid in c), None)
+        if not path and cand:
+            path = cand[0]
+        if path:
+            out[label] = path
+    return out
+
+def scan(path, tail_bytes=2_500_000):
+    """Return (last blocking line, its timestamp, resolved-after?)."""
+    size = os.path.getsize(path)
+    with open(path, errors="replace") as f:
+        if size > tail_bytes:
+            f.seek(size - tail_bytes)
+            f.readline()
+        lines = f.readlines()
+    last, last_ts, idx = None, None, None
+    for i, line in enumerate(lines):
+        try:
+            d = json.loads(line)
+        except Exception:
+            continue
+        # ONLY the session's own output. Its transcript also contains every
+        # message sent TO it - including the coordinator's - and matching those
+        # reports the sender's blocking language as the recipient's.
+        if d.get("type") != "assistant":
+            continue
+        ts = d.get("timestamp", "")
+        msg = d.get("message") or {}
+        parts = msg.get("content") if isinstance(msg, dict) else None
+        chunks = []
+        for it in (parts or []):
+            if not isinstance(it, dict):
+                continue
+            if it.get("type") == "text":
+                chunks.append(it.get("text", ""))
+            # a session states its blockers most explicitly when telling a peer,
+            # and that lives in the tool call it authored, not in its prose.
+            elif it.get("type") == "tool_use" and it.get("name") == "SendMessage":
+                inp = it.get("input") or {}
+                chunks.append(str(inp.get("summary", "")))
+                chunks.append(str(inp.get("message", "")))
+        blob = " ".join(chunks)
+        for sent in re.split(r"(?<=[.!?])\s+", blob.replace("\\n", " ")):
+            if BLOCKED.search(sent) and 20 < len(sent) < 400:
+                clean = sent.encode().decode("unicode_escape", "ignore")
+                clean = re.sub(r"[*`#]", "", clean).strip().strip('"')
+                last, last_ts, idx = " ".join(clean.split()), ts, i
+    if idx is None:
+        return None, None, False
+    after = " ".join(lines[idx + 1:])
+    return last, last_ts, bool(RESOLVED.search(after))
+
+def age(ts):
+    try:
+        t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        h = (datetime.now(timezone.utc) - t).total_seconds() / 3600
+        return f"{h:.1f}h ago" if h < 48 else f"{h/24:.1f}d ago"
+    except Exception:
+        return "?"
+
+def main():
+    sess = live_sessions()
+    # Not the session running this: it is the one asking, not one that is waiting.
+    me = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    sess = {k: v for k, v in sess.items() if not (me and os.path.basename(v) == me + ".jsonl")}
+    if not fc.load(required=False).get("human", {}).get("name"):
+        print("  (no [human] name in fleet.toml: matching only 'the human' / 'the user')")
+    if not sess:
+        sys.exit("no live sessions found (is tmux running, and are panes labelled with @repo?)")
+    rows = []
+    for label, path in sorted(sess.items()):
+        line, ts, resolved = scan(path)
+        rows.append((label, line, ts, resolved))
+    open_ = [r for r in rows if r[1] and not r[3]]
+    maybe = [r for r in rows if r[1] and r[3]]
+    quiet = [r for r in rows if not r[1]]
+
+    print(f"\n  scanned {len(rows)} live sessions\n")
+    if open_:
+        print("  APPEARS TO BE WAITING ON YOU\n")
+        for label, line, ts, _ in sorted(open_, key=lambda r: r[2] or ""):
+            print(f"    {label:<22} {age(ts)}")
+            print(f"      {line[:150]}\n")
+    if maybe:
+        print("  said it was waiting, but something after it reads as a resolution\n")
+        for label, line, ts, _ in maybe:
+            print(f"    {label:<22} {age(ts)}  {line[:110]}")
+        print()
+    if quiet:
+        print(f"  no blocking language found: {', '.join(r[0] for r in quiet)}\n")
+    print("  Reconcile against ListAgents - a session in the `waiting` state is")
+    print("  blocked now, whatever its transcript says. Ask the session if it matters.\n")
+
+if __name__ == "__main__":
+    main()

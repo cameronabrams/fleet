@@ -1,0 +1,56 @@
+# Example fleet configuration. Copy to ~/.config/fleet/fleet.toml and edit.
+# (or set FLEET_CONFIG to the directory holding it)
+#
+# This file holds what a human DECLARES about a fleet. Anything the tools OBSERVE
+# at runtime -- manifests, watcher registrations, re-arm ledgers -- lives under
+# [paths].state instead. Keep those apart: a record of observed state kept by
+# hand is exactly what rots.
+
+# How sessions refer to the human they work for. fleetwaiting builds its "blocked
+# on the human" patterns from these; "the human" and "the user" always count.
+[human]
+name    = "Alex"
+aliases = []                                      # other words sessions use, e.g. a role
+
+[paths]
+state       = "~/.local/state/fleet"
+conventions = "~/.config/fleet/conventions.md"   # from examples/conventions.example.md
+
+# fleetspawn: how a new session is launched. Briefs live in <config>/briefs/<name>.md.
+[spawn]
+env          = {}                                 # e.g. { NOTIFY_AGENT = "1" }
+first_prompt = "You are a new fleet session named {name}. Read {brief} and follow it."
+
+# Every member's colour, REQUIRED: fleetspawn refuses a session without one and
+# fleetsnap/fleetupgrade flag a live colour that differs. /color accepts red, blue,
+# green, yellow, purple, orange, pink, cyan. A /clear drops the colour and keeps the
+# name, which is why the declaration lives here and not in a transcript.
+[colors]
+coordinator    = "purple"
+project-a-repo = "red"
+project-a-runs = "cyan"
+
+[cluster.mycluster]
+ssh_host        = "mycluster"            # an ssh alias that works non-interactively
+user            = "myuser"
+scheduler       = "slurm"
+job_id_re       = "[0-9]{6,9}"           # the SHAPE of a job id on this scheduler
+held_reasons    = ["JobHeldUser", "JobHeldAdmin"]
+rate_usd_per_su = 0.01
+
+[[cluster.mycluster.accounts]]
+name        = "mygroup-billed"
+qos         = "normal"
+billed      = true
+cost_center = "000000-0000"
+
+[[cluster.mycluster.accounts]]
+name   = "mygroup-free"
+qos    = "free"
+billed = false
+
+# WorkDir fragment -> owning session. FIRST MATCH WINS: specific before general.
+# An unmatched path is reported UNATTRIBUTED, never guessed.
+[owners]
+"/project-a-sweep" = "project-a-runs"
+"/project-a"       = "project-a-repo"

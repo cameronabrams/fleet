@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""fleetrestore - rebuild the agent fleet from the last fleetsnap manifest.
+
+Prints the plan and does nothing unless given --go. Restores tmux layout, @repo
+labels, working directories, and resumes each session by transcript UUID.
+
+It deliberately does NOT restart any compute. Local jobs died with the power cycle
+and whether to rerun them is a judgement call, not a recovery step.
+
+  fleetrestore              show the plan (default; changes nothing)
+  fleetrestore --go         build it
+  fleetrestore --brief      write per-session RECOVERY.md notes, then show the plan
+"""
+import json, os, subprocess, sys, argparse, time, shlex
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from fleet import config as fc
+CFG = fc.load()
+
+STATE = fc.state_dir(CFG)
+
+
+BRIEF = """# Recovery brief — {label}
+
+Written by `fleetrestore` at {now}. The machine power-cycled; this session was
+resumed from its transcript, so your CONTEXT is intact but your RUNTIME is not.
+
+**Assume dead until you have re-armed or re-verified it:**
+
+- every Monitor or watcher you started. Your transcript still shows you creating
+  them, and nothing in it will tell you they are gone.
+- every local background job, including anything started with `setsid`.
+- every cross-session subscription.
+
+**Assume alive:** jobs on a remote cluster, this repo and its working tree, and any
+`systemd --user` unit with lingering enabled.
+
+**Do first:** re-read your durable state files ({durable}), re-arm what they say
+needs re-arming, then verify cluster state with `sacct`/`squeue` rather than from
+memory. Report what you found to the coordinator.
+
+**Before you tell anyone you have not been restarted, call `ListAgents`.** Its
+header reports this session's own name. That is the single identity fact
+observable from inside a session: a resumed transcript has no seam, so
+introspection returns "no restart" with complete confidence and nothing in your
+context can contradict it. Three sessions asserted their own continuity wrongly
+in two days, including one that had spent that day building identity-verification
+tooling. Expertise about a blind spot does not remove the blind spot.
+
+**Audit old records, not just new ones.** Grep your durable files for every claim
+attributed to the user. A conclusion stored alone is indistinguishable from a
+quotation on re-reading, which is why it survives every later review by its own
+author. Where the source sentence is gone and cannot be reconstructed, mark the
+entry *paraphrase of unknown fidelity: do not cite it back; confirm if it
+becomes load-bearing* rather than leaving it looking like testimony or deleting a
+probably-true fact.
+
+**Address peers by what `ListAgents` returns, never by what a manifest assigns.**
+The manifest records the name a session is *supposed* to have; `ListAgents` reports
+the name it *answers to*. During any partial rename those differ, and a message to
+an assigned-but-not-yet-adopted name fails to resolve. That failure is loud, which
+makes it the safe one - but only if you never paper over it by guessing.
+
+**And check when your last verification was, not just what it said.** A state you
+confirmed clean an hour ago may have been superseded by a scheduled job you never
+saw run. "Verified" carries a timestamp whether or not you wrote one down.
+"""
+
+def run(cmd, go, capture=False):
+    print(("  $ " if go else "    ") + " ".join(f"'{c}'" if " " in c else c for c in cmd))
+    if go:
+        r = subprocess.run(cmd, check=False,
+                           capture_output=capture, text=capture)
+        return (r.stdout or "").strip() if capture else None
+    return None
+
+
+def pane_base_index():
+    """tmux pane indices need not start at 0. Reading this rather than assuming
+    is the whole fix for the 2026-09-09 restore: with pane-base-index 1 every
+    session was sent one pane too high, and the first of each window nowhere."""
+    r = subprocess.run(["tmux", "show-window-options", "-gv", "pane-base-index"],
+                       capture_output=True, text=True)
+    v = r.stdout.strip()
+    return int(v) if v.isdigit() else 0
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("fleet", nargs="?", help="fleet to restore (omit to list them)")
+    ap.add_argument("--all", action="store_true", help="restore every fleet, exact geometry")
+    ap.add_argument("--go", action="store_true", help="actually build it")
+    ap.add_argument("--brief", action="store_true", help="write per-session RECOVERY.md")
+    ap.add_argument("--stagger", type=float, default=3.0,
+                    help="seconds between launches (default 3; avoids a load spike)")
+    a = ap.parse_args()
+
+    import glob as _g
+    avail = sorted(os.path.basename(f)[:-5] for f in _g.glob(f"{STATE}/*.json")
+                   if os.path.basename(f) != "manifest.json")
+    if not avail:
+        sys.exit(f"no manifests in {STATE} — run fleetsnap while the fleet is healthy")
+    if a.all:
+        path = f"{STATE}/manifest.json"
+    elif a.fleet:
+        if a.fleet not in avail:
+            sys.exit(f"unknown fleet {a.fleet!r}; available: {', '.join(avail)}")
+        path = f"{STATE}/{a.fleet}.json"
+    else:
+        print(f"\n  fleets in {STATE}:\n")
+        for f in avail:
+            d = json.load(open(f"{STATE}/{f}.json"))
+            print(f"    {f:<12} {len(d['sessions'])}  "
+                  f"{', '.join(x['label'] for x in d['sessions'])}")
+        print("\n  fleetrestore <fleet>    plan one fleet")
+        print("  fleetrestore --all      plan everything, exact geometry\n")
+        return
+    m = json.load(open(path))
+    MANIFEST = path
+
+    # liveness: never rebuild a session that is already running
+    live = set()
+    try:
+        out = subprocess.run(["tmux", "list-panes", "-a", "-F", "#{@repo}"],
+                             capture_output=True, text=True, timeout=5).stdout
+        live = {l.strip() for l in out.splitlines() if l.strip()}
+    except Exception:
+        pass
+    already = [x["label"] for x in m["sessions"] if x["label"] in live]
+    if already:
+        print(f"\n  already running, will be skipped: {', '.join(already)}")
+        m["sessions"] = [x for x in m["sessions"] if x["label"] not in live]
+        if not m["sessions"]:
+            print("  nothing to restore.\n")
+            return
+    age = time.time() - os.path.getmtime(MANIFEST)
+    print(f"\n  fleet: {m.get('fleet','ALL')}   coordinator: {m.get('coordinator','?')}")
+    print(f"  manifest captured {m['captured']}  ({age/3600:.1f} h ago)")
+    print(f"  {len(m['sessions'])} sessions, claude {m['installed_claude']}\n")
+
+    unver = [s for s in m["sessions"] if s["resume_uuid_source"].startswith("UNVER")]
+    if unver:
+        print("  !! unverified resume targets — check these before --go:")
+        for s in unver:
+            print(f"     {s['label']}: {s['resume_uuid']}  ({s['resume_uuid_source']})")
+        print()
+
+    if a.brief:
+        for s in m["sessions"]:
+            path = os.path.join(s["cwd"], "RECOVERY.md")
+            txt = BRIEF.format(label=s["label"], now=time.strftime("%Y-%m-%d %H:%M"),
+                               durable=", ".join(s["durable_files"]) or "none recorded")
+            print(f"    write {path}")
+            if a.go:
+                try:
+                    open(path, "w").write(txt)
+                except OSError as e:
+                    print(f"      ! {e}")
+
+    if not a.go:
+        print("  PLAN (nothing executed; pass --go to run):\n")
+
+    # group panes by window; create in original pane order, then apply the exact
+    # layout tmux itself recorded. Geometry is restored verbatim, not approximated.
+    pbi = pane_base_index()
+    by_win = {}
+    for s_ in m["sessions"]:
+        by_win.setdefault(s_["tmux"]["window"], []).append(s_)
+    sess = m["sessions"][0]["tmux"]["session"]
+    first = True
+    for w in sorted(by_win):
+        panes = sorted(by_win[w], key=lambda x: x["tmux"]["pane_index"])
+        if first:
+            exists = subprocess.run(["tmux", "has-session", "-t", sess],
+                                    capture_output=True).returncode == 0
+            if exists:
+                print(f"    (tmux session '{sess}' already exists — adding a window to it)")
+                got = run(["tmux", "new-window", "-P", "-F", "#{window_index}",
+                           "-t", f"{sess}:", "-c", panes[0]["cwd"]], a.go, capture=True)
+            else:
+                got = run(["tmux", "new-session", "-d", "-P", "-F", "#{window_index}",
+                           "-s", sess, "-c", panes[0]["cwd"]], a.go, capture=True)
+            first = False
+        else:
+            got = run(["tmux", "new-window", "-P", "-F", "#{window_index}",
+                       "-t", f"{sess}:", "-c", panes[0]["cwd"]], a.go, capture=True)
+        # tmux is the authority on where the window landed; the manifest index is
+        # only a fallback for the dry run, which creates nothing to ask about.
+        win = int(got) if (got or "").isdigit() else w
+        key = f"{sess}:{win}"
+        for extra in panes[1:]:
+            run(["tmux", "split-window", "-t", key, "-c", extra["cwd"]], a.go)
+        # Name the window, then pin it. automatic-rename is ON by default, so a
+        # window left unnamed gets renamed to the running command — "claude" —
+        # within seconds, and the next fleetsnap records THAT as the window name.
+        # The --all path did neither until 2026-09-09, which is how three window
+        # names were lost. Restoring names is not cosmetic: it is what
+        # stops the next snapshot from overwriting them with the command name.
+        wname = m["fleet"] if (m.get("fleet") and not a.all) else \
+                panes[0]["tmux"].get("window_name")
+        if wname and wname != "claude":
+            run(["tmux", "rename-window", "-t", key, wname], a.go)
+        elif wname == "claude":
+            print(f"    ! window {w}: manifest name is 'claude' — automatic-rename "
+                  f"had already eaten the real name before that snapshot. "
+                  f"Rename it by hand after the restore.")
+        run(["tmux", "set", "-w", "-t", key, "automatic-rename", "off"], a.go)
+        lay = m.get("window_layouts", {}).get(f"{sess}:{w}", {})
+        partial = not a.all
+        if lay.get("layout") and not partial:
+            run(["tmux", "select-layout", "-t", key, lay["layout"]], a.go)
+        else:
+            run(["tmux", "select-layout", "-t", key, "tiled"], a.go)   # partial fleet: exact layout would not fit
+        for i, s_ in enumerate(panes):
+            target = f"{key}.{i + pbi}"
+            run(["tmux", "set", "-p", "-t", target, "@repo", s_["label"]], a.go)
+            if s_.get("fleet"):
+                run(["tmux", "set", "-p", "-t", target, "@fleet", s_["fleet"]], a.go)
+            # --name pins the peer-visible session name to the role label, so a
+            # restart no longer changes how other sessions address this one.
+            # Verified 2026-08-26: `claude --name X` appears verbatim in ListAgents.
+            env = fc.launch_env(CFG)
+            run(["tmux", "send-keys", "-t", target,
+                 (f"{env} " if env else "") +
+                 f"claude --name {shlex.quote(s_['label'])} "
+                 f"--resume {s_['resume_uuid']}", "Enter"], a.go)
+            if a.go and a.stagger:
+                time.sleep(a.stagger)
+
+    print(f"\n  After restore: run `fleetsnap` to re-capture, and ask each session to "
+          f"confirm it re-armed what its state files require.\n")
+
+if __name__ == "__main__":
+    main()

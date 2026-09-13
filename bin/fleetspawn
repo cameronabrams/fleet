@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""fleetspawn - bring ONE new session into the fleet: pane, labels, launch.
+
+Prints the plan and does nothing unless given --go. The judgement -- whether the
+session should exist, what its role is, what its brief says -- belongs to the
+`fleet-bootstrap` skill and to the human. This does only the mechanical part,
+which is the part that is easy to get subtly wrong (pane-base-index, labels that
+a later restore reads, a launch into the wrong directory).
+
+  fleetspawn NAME DIR --fleet F --beside PANE        split beside an existing pane
+  fleetspawn NAME DIR --fleet F --window TITLE       open a new tmux window
+  fleetspawn ... --go                                actually do it
+  fleetspawn --check NAME DIR                        verify a spawned session is live
+                                                     (exit 3: still at the trust prompt)
+
+The brief defaults to <config>/briefs/NAME.md and must exist: a session launched
+with no brief has no role, and a role reconstructed later is an inference.
+
+It NEVER answers Claude Code's folder-trust prompt. Trusting a directory grants
+an agent read, edit and execute there; that is the human's decision, and on
+2026-09-12 the coordinator answered it for a new session before reading that it
+should not. If the prompt appears, this stops and says which pane to look at.
+"""
+import argparse, os, shlex, subprocess, sys, time
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from fleet import config as fc
+CFG = fc.load()
+
+# Both still present in the prompt drawn by claude 2.1.270 (captured 2026-09-13;
+# the full screen is a fixture in tests/test_fleetspawn.py).
+TRUST_MARKERS = ("trust this folder", "Is this a project you created")
+
+def screen_state(screen):
+    """'trust' if the folder-trust prompt is showing, 'banner' if the version banner
+    is (drawn only once a session is running), else 'unknown'."""
+    if any(m in screen for m in TRUST_MARKERS):
+        return "trust"
+    return "banner" if "Claude Code v" in screen else "unknown"
+
+def tmux(*a):
+    r = subprocess.run(["tmux", *a], capture_output=True, text=True)
+    return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+def claude_procs():
+    """(pid, cwd, argv) for every live claude process, from /proc -- not from any
+    record, and not only from tmux: a session outside tmux still takes a name."""
+    out = []
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            argv = open(f"/proc/{d}/cmdline", "rb").read().decode(errors="replace").split("\0")
+            cwd = os.readlink(f"/proc/{d}/cwd")
+        except OSError:
+            continue
+        if argv and os.path.basename(argv[0]) == "claude":
+            out.append((int(d), cwd, [x for x in argv if x]))
+    return out
+
+def named(argv, name):
+    return any(a == "--name" and i + 1 < len(argv) and argv[i + 1] == name
+               for i, a in enumerate(argv))
+
+def preflight(a, brief):
+    problems = []
+    if not os.path.isdir(a.dir):
+        problems.append(f"directory does not exist: {a.dir} (create it, and git init if it is a repo)")
+    if not os.path.isfile(brief):
+        problems.append(f"no brief at {brief} -- write one first (examples/brief.example.md)")
+    if not fc.colors(CFG).get(a.name):
+        problems.append(f'no colour declared -- add  {a.name} = "<color>"  under [colors] '
+                        f"in fleet.toml ({', '.join(fc.COLORS)})")
+    rc, _, _ = tmux("has-session")
+    if rc != 0:
+        problems.append("no tmux server running")
+    clash = [(p, c) for p, c, v in claude_procs() if named(v, a.name)]
+    if clash:
+        problems.append(f"a claude named {a.name!r} is already running: "
+                        + ", ".join(f"pid {p} in {c}" for p, c in clash))
+    rc, labels, _ = tmux("list-panes", "-a", "-F", "#{@repo}")
+    if a.name in labels.split():
+        problems.append(f"a pane is already labelled @repo={a.name}")
+    if a.beside:
+        rc, _, _ = tmux("display-message", "-p", "-t", a.beside, "#{pane_id}")
+        if rc != 0:
+            problems.append(f"no such pane: {a.beside}")
+    return problems
+
+def launch_cmd(a, brief):
+    spawn = CFG.get("spawn", {})
+    env = fc.launch_env(CFG)
+    prompt = spawn.get("first_prompt",
+                       "You are a new fleet session named {name}. "
+                       "Read {brief} and follow it.").format(name=a.name, brief=brief)
+    return " ".join(x for x in (env, "claude", "--name", shlex.quote(a.name),
+                                shlex.quote(prompt)) if x)
+
+def wait_for(pane, name, directory, timeout):
+    """Poll until the session is live in the right directory, or the trust prompt
+    shows. Returns ('live', pid) | ('trust', None) | ('timeout', None)."""
+    t_end = time.time() + timeout
+    while time.time() < t_end:
+        _, screen, _ = tmux("capture-pane", "-p", "-t", pane)
+        state = screen_state(screen)
+        if state == "trust":
+            return "trust", None
+        # The process exists BEFORE the trust prompt renders, and the echoed launch
+        # line already contains the name -- so neither is evidence of startup. The
+        # version banner is drawn only once the session is actually running.
+        if state == "banner":
+            for p, c, v in claude_procs():
+                if named(v, name) and os.path.realpath(c) == os.path.realpath(directory):
+                    return "live", p
+        time.sleep(2)
+    return "timeout", None
+
+def check(a):
+    hits = [(p, c, v) for p, c, v in claude_procs() if named(v, a.name)]
+    if not hits:
+        print(f"  NOT RUNNING: no claude process named {a.name!r}")
+        return 1
+    rc = 0
+    for p, c, v in hits:
+        ok = os.path.realpath(c) == os.path.realpath(a.dir)
+        print(f"  pid {p}  cwd {c}  {'ok' if ok else 'WRONG DIRECTORY, expected ' + a.dir}")
+        rc |= 0 if ok else 1
+    if len(hits) > 1:
+        print(f"  {len(hits)} processes answer to {a.name!r}: peers will be refused by name")
+        rc = 1
+    _, rows, _ = tmux("list-panes", "-a", "-F", "#{pane_id} #{@repo} #{@fleet}")
+    row = next((r for r in rows.splitlines() if r.split()[1:2] == [a.name]), None)
+    print(f"  pane labels: {row or 'NONE -- no pane carries @repo=' + a.name}")
+    # A process named right, in the right directory, exists BEFORE the trust prompt
+    # is answered, so everything above passes a session that has not started.
+    # Observed 2026-09-13: --check exited 0 on a session sitting at the prompt.
+    if row:
+        _, screen, _ = tmux("capture-pane", "-p", "-t", row.split()[0])
+        if screen_state(screen) == "trust":
+            print(f"  TRUST-PENDING: pane {row.split()[0]} shows the folder-trust prompt.")
+            print("  That is the human's to answer; re-run --check afterwards.")
+            return 3
+    print("  next: ListAgents should list it by name; then fleetsnap")
+    return rc
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("name")
+    ap.add_argument("dir")
+    ap.add_argument("--fleet", help="value for the pane's @fleet (fleetsnap groups by it)")
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--beside", metavar="PANE", help="split this pane, e.g. %%9")
+    g.add_argument("--window", metavar="TITLE", help="open a new window with this name")
+    ap.add_argument("--split", choices=("v", "h"), default="v",
+                    help="with --beside: v = below (default), h = to the right")
+    ap.add_argument("--brief", help="default: <config>/briefs/NAME.md")
+    ap.add_argument("--wait", type=int, default=60, help="seconds to wait for startup")
+    ap.add_argument("--go", action="store_true")
+    ap.add_argument("--check", action="store_true", help="verify only; change nothing")
+    a = ap.parse_args()
+    a.dir = os.path.realpath(os.path.expanduser(a.dir))
+    if a.check:
+        sys.exit(check(a))
+    if not (a.fleet and (a.beside or a.window)):
+        ap.error("--fleet and one of --beside/--window are required")
+    brief = os.path.expanduser(a.brief or os.path.join(fc.config_dir(), "briefs", f"{a.name}.md"))
+
+    problems = preflight(a, brief)
+    print(f"\n  spawn {a.name}  in {a.dir}  fleet={a.fleet}")
+    print(f"  brief {brief}")
+    print(f"  color {fc.colors(CFG).get(a.name) or 'NOT DECLARED'}")
+    print(f"  place {'split ' + a.split + ' beside ' + a.beside if a.beside else 'new window ' + a.window}")
+    print(f"  cmd   {launch_cmd(a, brief)}\n")
+    if problems:
+        for p in problems:
+            print(f"  BLOCKED: {p}")
+        sys.exit(2)
+    if not a.go:
+        print("  plan only -- re-run with --go\n")
+        return
+
+    if a.beside:
+        rc, pane, err = tmux("split-window", f"-{a.split}", "-d", "-t", a.beside,
+                             "-c", a.dir, "-P", "-F", "#{pane_id}")
+    else:
+        rc, pane, err = tmux("new-window", "-d", "-n", a.window, "-c", a.dir,
+                             "-P", "-F", "#{pane_id}")
+        if rc == 0:
+            tmux("set-window-option", "-t", pane, "automatic-rename", "off")
+    if rc != 0:
+        sys.exit(f"  tmux failed: {err}")
+    for opt, val in (("@repo", a.name), ("@fleet", a.fleet), ("@muted", "0")):
+        tmux("set-option", "-p", "-t", pane, opt, val)
+    tmux("select-pane", "-t", pane, "-T", a.name)
+    tmux("send-keys", "-t", pane, launch_cmd(a, brief), "C-m")
+    print(f"  created pane {pane}, launched; waiting up to {a.wait}s ...")
+
+    state, pid = wait_for(pane, a.name, a.dir, a.wait)
+    if state == "trust":
+        print(f"\n  STOPPED at the folder-trust prompt in pane {pane}.")
+        print(f"  That is the human's decision, not the agent's. Answer it in the pane,")
+        print(f"  then run:  fleetspawn --check {shlex.quote(a.name)} {shlex.quote(a.dir)}\n")
+        sys.exit(3)
+    if state == "timeout":
+        print(f"\n  TIMED OUT: no live claude named {a.name!r} in {a.dir} after {a.wait}s.")
+        print(f"  Look at pane {pane}; do not relaunch until you know why.\n")
+        sys.exit(4)
+    print(f"  live: pid {pid} in {a.dir}")
+    # Not typed by this tool: claude has no --color flag, and keys sent into a
+    # session that is already working on its first prompt can be corrupted or
+    # land as prompt text (observed 2026-09-07).
+    print(f"  next: once it is idle, type  /color {fc.colors(CFG)[a.name]}  in pane {pane};")
+    print("        ListAgents to confirm the name; then fleetsnap (it checks the colour)\n")
+
+if __name__ == "__main__":
+    main()

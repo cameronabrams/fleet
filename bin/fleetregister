@@ -1,0 +1,59 @@
+#!/bin/bash
+# fleetregister <session> <jobid> <pid> [note]
+#
+# A watcher REGISTERS itself instead of being inferred. fleetwatch then reports a
+# job watched iff a registered pid is alive (kill -0) -- no cmdline parsing.
+#
+# Why: inferring watcher-ness from cmdline text is family A of
+# docs/checks-that-reassure.md -- the check cannot distinguish the watcher from
+# anything else that merely mentions the job. fleetwatch itself fell into it on
+# 2026-09-12, counting the coordinator as a watcher because a one-shot command
+# named the job id. Raised by a study session: don't infer, register.
+#
+# A registration is NOT a ledger entry. A ledger claims "I am watching X" in prose
+# and nothing can falsify it. This claims {pid, job} and `kill -0` falsifies it
+# the moment the watcher dies -- which is also how a DEAD watcher gets noticed,
+# something nothing else here detects.
+#
+# fleetregister --clear <session> <jobid>
+#
+# Remove a finished watcher's registration. Refuses while the registered process
+# is still alive (same pid AND starttime): clearing a live watcher would make its
+# job read UNWATCHED while it is being watched. Before 2026-09-13 there was no
+# clear, and sessions deleted registration files by hand.
+set -u
+# State dir comes from fleet.toml via the one loader, so bash and python agree.
+HERE=$(dirname "$(readlink -f "$0")")
+D=$(PYTHONPATH="$HERE/.." python3 -c 'from fleet import config as c; print(c.state_dir())')/watchers
+[ "$D" = "/watchers" ] && { echo "fleetregister: could not resolve state dir from fleet.toml" >&2; exit 2; }
+mkdir -p "$D"
+if [ "${1:-}" = "--clear" ]; then
+  S=${2:?session}; J=${3:?jobid}; n=0
+  for f in "$D/$S-$J-"*.json; do
+    [ -e "$f" ] || continue
+    read -r P ST < <(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["pid"], r.get("starttime",""))' "$f")
+    NOW=$(awk '{n=split($0,a,")"); rest=a[n]; split(rest,x," "); print x[1], x[20]}' /proc/"$P"/stat 2>/dev/null)
+    if [ -n "$NOW" ] && [ "${NOW%% *}" != "Z" ] && [ "${NOW##* }" = "$ST" ]; then
+      echo "fleetregister: pid $P is still alive -- stop the watcher first; not clearing $f" >&2
+      exit 1
+    fi
+    rm -- "$f" && echo "cleared: $f" && n=$((n+1))
+  done
+  [ $n -gt 0 ] || { echo "fleetregister: no registration for $S / $J" >&2; exit 1; }
+  exit 0
+fi
+S=${1:?session}; J=${2:?jobid}; P=${3:?pid}; N=${4:-}
+# A pid alone is not an identity: the kernel reuses them. Measured here
+# 2026-09-12 -- pid_max 4194304, 2.6-5.9 pids/s -> full wrap in 8-19 days -- so a
+# registration that is never cleared is EVENTUALLY GUARANTEED to name an
+# unrelated live process, which then reads as a healthy watcher.
+# starttime (/proc/<pid>/stat field 22) is not an identity either: it is in 10 ms
+# clock ticks and two back-to-back processes collided on it in test. The PAIR
+# (pid, starttime) is sound, because a pid can only be reused after its holder is
+# reaped and wrap takes days.
+# Field 22 is read after the LAST ')' -- comm can contain spaces and parens.
+ST=$(awk '{n=split($0,a,")"); rest=a[n]; split(rest,f," "); print f[20]}' /proc/"$P"/stat 2>/dev/null)
+[ -z "$ST" ] && { echo "fleetregister: pid $P not running -- nothing to register" >&2; exit 1; }
+printf '{"session":"%s","job":"%s","pid":%s,"starttime":"%s","armed":"%s","note":"%s"}\n' \
+  "$S" "$J" "$P" "$ST" "$(date -Is)" "$N" > "$D/$S-$J-$P.json"
+echo "registered: $S watching $J as pid $P"

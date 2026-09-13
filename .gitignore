@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.bak*
+# never commit configuration or state into the application
+fleet.toml
+*.json
+
+# Sphinx output
+docs/build/

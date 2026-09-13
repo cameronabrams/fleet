@@ -1,0 +1,423 @@
+#!/usr/bin/env python3
+"""fleetupgrade - which sessions are running a stale claude binary, and are they
+safe to restart?
+
+REPORTS ONLY. It never restarts anything: a restart needs ListAgents (for
+busy/idle) and SendMessage (to ask about monitors), which only an agent has.
+The `fleet-upgrade` skill drives the sequence; this supplies the facts.
+
+The point of the report is that a restart is cheap for context and NOT cheap for
+runtime. A resumed session keeps its transcript and loses every Monitor,
+background job and cross-session subscription it started -- and its transcript
+still shows it creating them, so it cannot tell from inside. The only defence is
+a re-arm ledger written BEFORE the restart. This flags who lacks one.
+
+  fleetupgrade           table + ordered plan
+  fleetupgrade --json    same, machine-readable
+"""
+import json, os, re, subprocess, sys, glob
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from fleet import config as fc
+from fleet.transcripts import cleared_successor, project_slug, uuid_from_descendants
+CFG = fc.load()
+
+PROJECTS = os.path.expanduser("~/.claude/projects")
+SCRATCH  = "/tmp/claude-%d" % os.getuid()
+REARM    = os.path.join(fc.state_dir(CFG), "rearm")
+CLAUDE   = os.path.expanduser("~/.local/bin/claude")
+# The session running this tool exports its own uuid to child processes.
+# That is how we know which row is "you" without hardcoding a name.
+SELF_UUID = os.environ.get("CLAUDE_CODE_SESSION_ID")
+# Same launch environment fleetspawn and fleetrestore use, so a rolled session
+# keeps e.g. its notification flag. Trailing space when non-empty.
+ENV = (fc.launch_env(CFG) + " ") if fc.launch_env(CFG) else ""
+
+def sh(*a):
+    try:
+        return subprocess.run(a, capture_output=True, text=True).stdout
+    except OSError:
+        return ""
+
+def installed_version():
+    tgt = os.path.realpath(CLAUDE)
+    m = re.search(r"versions/([0-9][0-9A-Za-z.\-]*)", tgt)
+    return m.group(1) if m else None
+
+slug = project_slug
+
+def proc_version(pid):
+    try:
+        exe = os.readlink("/proc/%s/exe" % pid)
+    except OSError:
+        return None
+    m = re.search(r"versions/([0-9][0-9A-Za-z.\-]*)", exe)
+    return m.group(1) if m else None
+
+def uuid_from_scratchpad(cwd):
+    """Newest scratchpad dir for this project. A session's scratchpad is named
+    for its own session UUID, so this is a derivation from the filesystem that
+    does not read the transcript at all."""
+    d = os.path.join(SCRATCH, slug(cwd))
+    cands = [p for p in glob.glob(d + "/*/") if re.search(r"/[0-9a-f-]{36}/$", p)]
+    if not cands:
+        return None
+    newest = max(cands, key=os.path.getmtime)
+    return os.path.basename(newest.rstrip("/"))
+
+def uuid_from_transcript(cwd, name):
+    """Newest transcript in this project whose agent-name record matches `name`.
+    Independent of the scratchpad. NOTE: a session that just exited flushes on
+    the way out and can briefly be the newest file, so this is cross-checked
+    against the scratchpad rather than trusted alone."""
+    d = os.path.join(PROJECTS, slug(cwd))
+    best, best_mt = None, -1
+    for f in glob.glob(d + "/*.jsonl"):
+        try:
+            with open(f, errors="ignore") as fh:
+                for i, line in enumerate(fh):
+                    if i > 12:
+                        break
+                    if '"agent-name"' not in line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if rec.get("agentName") == name:
+                        mt = os.path.getmtime(f)
+                        if mt > best_mt:
+                            best, best_mt = os.path.basename(f)[:-6], mt
+                    break
+        except OSError:
+            continue
+    return best
+
+def name_from_transcript(cwd, uuid):
+    """The session's own agent-name record -- the authoritative name. /rename
+    writes one mid-file, so scan the whole transcript and take the LAST, not the
+    header: a renamed session's header still carries its old name. A tmux pane
+    title is not this; a title outlives the session that set it."""
+    if not uuid:
+        return None
+    f = os.path.join(PROJECTS, slug(cwd), uuid + ".jsonl")
+    last = None
+    try:
+        with open(f, errors="ignore") as fh:
+            for line in fh:
+                if '"agent-name"' not in line:
+                    continue
+                try:
+                    n = json.loads(line).get("agentName")
+                except ValueError:
+                    continue
+                if n:
+                    last = n
+    except OSError:
+        return None
+    return last
+
+def color_from_transcript(cwd, uuid):
+    """`/color` writes an agent-color record. Unlike agent-name it does NOT
+    survive a /clear -- the roll copies the name forward and drops the colour.
+    So a session can be correctly named and colourless. What it SHOULD be is
+    declared in [colors] in fleet.toml."""
+    if not uuid:
+        return None
+    f = os.path.join(PROJECTS, slug(cwd), uuid + ".jsonl")
+    last = None
+    try:
+        with open(f, errors="ignore") as fh:
+            for line in fh:
+                if '"agent-color"' not in line:
+                    continue
+                try:
+                    c = json.loads(line).get("agentColor")
+                except ValueError:
+                    continue
+                if c:
+                    last = c
+    except OSError:
+        return None
+    return last
+
+def proc_start(pid):
+    try:
+        return os.path.getmtime("/proc/%s" % pid)
+    except OSError:
+        return 0
+
+def live_uuids(cwd, n, since=0):
+    """Newest n scratchpad uuids for this project whose transcript has been
+    written since `since` (the session's process start). A session that exited
+    leaves its scratchpad dir behind AND flushes its transcript on the way out,
+    so without this filter the newest candidate is often a corpse."""
+    d = os.path.join(SCRATCH, slug(cwd))
+    c = [p for p in glob.glob(d + "/*/") if re.search(r"/[0-9a-f-]{36}/$", p)]
+    out = []
+    for x in c:
+        u = os.path.basename(x.rstrip("/"))
+        t = os.path.join(PROJECTS, slug(cwd), u + ".jsonl")
+        try:
+            mt = os.path.getmtime(t)
+        except OSError:
+            continue
+        if mt >= since:
+            out.append((mt, u))
+    out.sort(reverse=True)
+    return [u for _, u in out[:n]]
+
+def uuid_from_cmdline(cmd):
+    """The uuid the process itself was launched with. AUTHORITATIVE -- this is
+    the session saying what it resumed, not us inferring it from mtimes. Absent
+    only on a session started fresh with `--name` and no `--resume`."""
+    m = re.search(r"--resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", cmd or "")
+    return m.group(1) if m else None
+
+def foreign_claude(cwd, known_pids):
+    """Live claude processes with this cwd that are NOT in the tmux panes we
+    enumerated -- e.g. one started in a bare konsole tab.
+
+    This exists because grouping by tmux pane silently under-counts. On
+    2026-09-09 a session running outside tmux shared coord's cwd (the home dir);
+    the pane group had length 1, took the `unambiguous` branch, and reported
+    that other session's uuid for coord with no warning. A session need not be
+    in tmux to put a transcript in the project directory."""
+    out = []
+    for d in glob.glob("/proc/[0-9]*"):
+        pid = os.path.basename(d)
+        if pid in known_pids:
+            continue
+        try:
+            cmd = open(d + "/cmdline", "rb").read().replace(b"\0", b" ").decode()
+        except OSError:
+            continue
+        if not (re.match(r"^\s*claude(\s|$)", cmd) or "/versions/" in cmd):
+            continue
+        try:
+            if os.readlink(d + "/cwd") != cwd:
+                continue
+        except OSError:
+            continue
+        out.append((pid, cmd.strip()))
+    return out
+
+def proc_state(pid):
+    try:
+        return open("/proc/%s/stat" % pid).read().split(") ", 1)[1].split()[0]
+    except Exception:
+        return "?"
+
+def claude_pid(pane_pid):
+    """Pick the LIVE session in this pane, not merely the first child.
+
+    A pane can hold more than one claude: suspend one with Ctrl-Z and start
+    another and both are children of the same shell. The suspended one is state
+    'T'. Taking pgrep's first hit reported a stopped 2.1.258 process as the
+    session while the live 2.1.259 one sat behind it -- observed 2026-09-03.
+    Prefer running processes; fall back to a stopped one only if that is all
+    there is, and prefer the newest by pid."""
+    cands = []
+    for c in sh("pgrep", "-P", pane_pid).split():
+        try:
+            cmd = open("/proc/%s/cmdline" % c, "rb").read().replace(b"\0", b" ").decode()
+        except OSError:
+            continue
+        if re.match(r"^\s*claude(\s|$)", cmd) or "/versions/" in cmd:
+            cands.append((c, cmd.strip(), proc_state(c)))
+    if not cands:
+        return None, None
+    live = [x for x in cands if x[2] != "T"]
+    pick = max(live or cands, key=lambda x: int(x[0]))
+    return pick[0], pick[1]
+
+def sessions():
+    fmt = "\t".join(["#{pane_id}", "#{pane_pid}", "#{pane_title}", "#{pane_current_path}"])
+    rows = []
+    for row in sh("tmux", "list-panes", "-a", "-F", fmt).strip().splitlines():
+        parts = row.split("\t")
+        if len(parts) < 4:
+            continue
+        pane, ppid, title, cwd = parts[0], parts[1], parts[2].lstrip("\u2733 ").strip(), parts[3]
+        pid, cmd = claude_pid(ppid)
+        if pid:
+            rows.append({"pane": pane, "title": title, "cwd": cwd, "pid": pid, "cmd": cmd})
+
+    by_cwd = {}
+    for r in rows:
+        by_cwd.setdefault(r["cwd"], []).append(r)
+
+    all_pids = {r["pid"] for r in rows}
+
+    out = []
+    for cwd, group in by_cwd.items():
+        oldest = min(proc_start(r["pid"]) for r in group)
+        cands = live_uuids(cwd, len(group) + 2, since=oldest)
+        # (uuid, agent-name) for each candidate, newest first
+        named = [(u, name_from_transcript(cwd, u)) for u in cands]
+        taken = set()
+        # Sessions sharing this cwd that are NOT tmux panes. Their transcripts
+        # land in the same project dir, so any mtime-based guess can pick one.
+        outside = foreign_claude(cwd, all_pids)
+        for r in group:
+            uuid = name = None
+            src = ""
+            # AUTHORITATIVE FIRST: what did this very process resume?
+            argv_uuid = uuid_from_cmdline(r["cmd"])
+            if argv_uuid:
+                uuid = argv_uuid
+                name = name_from_transcript(cwd, uuid)
+                src = "verified: --resume in argv"
+                # argv is where the process STARTED; a /clear since then moved it.
+                succ, _ = cleared_successor(argv_uuid, name or r["title"], r["pid"])
+                if succ:
+                    uuid = succ
+                    name = name_from_transcript(cwd, uuid) or name
+                    src = "verified: /clear since launch, argv %s superseded" % argv_uuid[:8]
+            elif uuid_from_descendants(r["pid"]):
+                # The session's own scratchpad path, via a live child process. Handed
+                # to it by its environment, so it holds even in a shared cwd. The
+                # same method fleetsnap uses; without it the two tools disagreed.
+                uuid = uuid_from_descendants(r["pid"])
+                name = name_from_transcript(cwd, uuid)
+                src = "verified: session's own scratchpad path, via a child process"
+                taken.add(uuid)
+            elif outside:
+                # No argv uuid AND another session shares this cwd: every
+                # remaining method is an mtime guess that can silently pick the
+                # wrong transcript. Refuse rather than guess.
+                src = ("UNRESOLVED (shared cwd with %d session(s) outside tmux: %s)"
+                       % (len(outside), ", ".join(pid for pid, _ in outside)))
+            elif len(group) == 1:
+                # unambiguous: one session in this project
+                uuid = cands[0] if cands else None
+                name = name_from_transcript(cwd, uuid)
+                src = "agent-name" if name else "pane-title (no agent-name record)"
+            else:
+                # several sessions share this cwd; split them by agent-name, which
+                # is the only per-session discriminator available here.
+                for u, n in named:
+                    if u in taken or not n:
+                        continue
+                    if n == r["title"]:
+                        uuid, name, src = u, n, "agent-name (shared cwd, matched)"
+                        taken.add(u)
+                        break
+                if not uuid:
+                    src = "UNRESOLVED (shared cwd, no agent-name match)"
+            disagree = bool(name) and name != r["title"]
+            led = os.path.join(REARM, (name or r["title"]) + ".md")
+            out.append({
+                "name": name or r["title"], "pane_title": r["title"],
+                "name_source": src, "title_disagrees": disagree,
+                "pane": r["pane"], "pid": r["pid"], "cwd": cwd, "cmd": r["cmd"],
+                "version": proc_version(r["pid"]), "resume_uuid": uuid,
+                "ledger": led if os.path.exists(led) else None,
+                "color": color_from_transcript(cwd, uuid),
+            })
+    return out
+
+def main():
+    inst = installed_version()
+    ss = sessions()
+    # coord last, then stale-first, then name
+    ss.sort(key=lambda s: (s["name"] == "coord", s["version"] == inst, s["name"]))
+    if "--json" in sys.argv:
+        print(json.dumps({"installed": inst, "sessions": ss}, indent=1))
+        return
+    print("installed claude: %s\n" % inst)
+    print("%-22s %-5s %-9s %-6s %-7s %-8s %s" % ("SESSION", "PANE", "VERSION", "STALE", "LEDGER", "COLOR", "RESUME UUID"))
+    for s in ss:
+        print("%-22s %-5s %-9s %-6s %-7s %-8s %s" % (
+            s["name"][:22], s["pane"], s["version"] or "?",
+            "YES" if s["version"] != inst else "no",
+            "yes" if s["ledger"] else "MISSING",
+            s["color"] or ("LOST" if s["resume_uuid"] else "?"),
+            (s["resume_uuid"] or "?")[:8]))
+    declared = fc.colors(CFG)
+    # No resume uuid means no transcript was read, so no colour record could be
+    # found: that is "unknown", not "lost". fleetsnap resolves more handles.
+    off = [x for x in ss if x["color"] != declared.get(x["name"])
+           and (x["resume_uuid"] or not declared.get(x["name"]))]
+    if off:
+        print("\n!! colour differs from [colors] in fleet.toml (a /clear drops the colour")
+        print("   while keeping the name). Type the command in that session's pane:")
+        for x in off:
+            want = declared.get(x["name"])
+            print("   %-20s live=%-7s %s" % (x["name"], x["color"] or "NONE",
+                  "->  /color " + want if want else "NOT DECLARED -- add it to [colors]"))
+
+    dis = [x for x in ss if x["title_disagrees"]]
+    if dis:
+        print("\n!! pane title disagrees with the session's own agent-name record.")
+        print("   The pane title is NOT the session name; it outlives whoever set it.")
+        for x in dis:
+            print("   %s: title=%r  agent-name=%r  (agent-name wins)"
+                  % (x["pane"], x["pane_title"], x["name"]))
+    unres = [x for x in ss if "UNRESOLVED" in (x["name_source"] or "")]
+    if unres:
+        print("\n!! RESUME UUID COULD NOT BE RESOLVED -- do not restart these on a guess.")
+        print("   Another claude session shares the working directory, so its transcript")
+        print("   sits in the same project dir and any mtime-based pick can be wrong.")
+        for x in unres:
+            print("   %s %s: %s" % (x["pane"], x["name"], x["name_source"]))
+        print("   Resolve it: read the uuid from the session's own argv --")
+        print("     tr '\\0' ' ' < /proc/<pid>/cmdline")
+        print("   or close the other session and re-run.")
+
+    noname = [x for x in ss if "pane-title" in x["name_source"]]
+    if noname:
+        print("\n!! no agent-name record, so the name below is only the pane title:")
+        for x in noname:
+            print("   %s %s -- confirm against ListAgents before using it"
+                  % (x["pane"], x["name"]))
+    print("\nNames here are from transcripts. ListAgents is the authority; reconcile"
+          "\nbefore restarting anything.")
+
+    stale = [s for s in ss if s["version"] != inst]
+    print("\n%d of %d sessions stale." % (len(stale), len(ss)))
+    if not stale:
+        print("Nothing to upgrade. Do not restart anything.")
+        self_block(ss)
+        return
+    print("\nOrdered plan (coord last, since restarting it kills the driver):")
+    for i, s in enumerate(stale, 1):
+        warn = "" if s["ledger"] else "   <-- NO LEDGER: ask it to write one first"
+        print("  %d. %-20s pane %-4s  %sclaude --name %s --resume %s%s"
+              % (i, s["name"], s["pane"], ENV, s["name"], s["resume_uuid"], warn))
+    bad = [x for x in stale if x["resume_uuid"] is None or "UNRESOLVED" in x["name_source"]]
+    for x in bad:
+        print("  !! %s: %s -- do not restart on this" % (x["name"], x["name_source"]))
+    self_block(ss)
+
+def self_block(ss):
+    """The session running this tool cannot restart itself: sending /exit to its
+    own pane kills the process that would type the relaunch. Print the exact two
+    commands so nobody has to remember a uuid that a /clear may have moved."""
+    me = None
+    if SELF_UUID:
+        me = next((x for x in ss if x["resume_uuid"] == SELF_UUID), None)
+    if me is None:
+        me = next((x for x in ss if x["name"] == "coord"), None)
+    if me is None:
+        print("\n(could not identify the session running this tool; "
+              "restart it by hand)")
+        return
+    uuid = SELF_UUID or me["resume_uuid"]
+    print("\n" + "-" * 68)
+    print("TO RESTART %s (pane %s) -- you must run these yourself." % (me["name"], me["pane"]))
+    print("This tool runs inside that session; it cannot relaunch what it is running in.")
+    print("\n  1. in pane %s, type:  /exit" % me["pane"])
+    print("  2. then paste:\n")
+    # cd first: /exit leaves the pane's shell wherever it was, which need not be the
+    # session's directory (coord moved from ~ to the state dir on 2026-09-13).
+    here = os.getcwd().replace(os.path.expanduser("~"), "~", 1)
+    print("     cd %s && %sclaude --name %s --resume %s\n" % (here, ENV, me["name"], uuid))
+    if uuid != me["resume_uuid"]:
+        print("  (uuid taken from this session's own environment, which is")
+        print("   authoritative over the transcript scan above)")
+    print("Do NOT /clear afterwards -- that starts a new transcript and drops")
+    print("the context the --resume just restored.")
+    print("-" * 68)
+
+if __name__ == "__main__":
+    main()

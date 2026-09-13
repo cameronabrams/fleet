@@ -1,0 +1,55 @@
+#!/bin/bash
+# install -- link the fleet APPLICATION into place, and this machine's
+# CONFIGURATION skills alongside it.
+#
+#   ./install          show the plan; change nothing (default)
+#   ./install --go     do it
+#
+# Symlinks, not copies: one source of truth, so an edit in the repo is live at
+# once. Verified 2026-09-12 that Claude Code discovers a skill whose directory is
+# a symlink (a probe skill appeared in the skill listing).
+#
+# Never silently replaces a REAL file. Anything displaced is moved to
+# ~/.local/state/fleet/displaced-<stamp>/ so it can be restored.
+set -u
+GO=0; [ "${1:-}" = "--go" ] && GO=1
+APP=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+CFG=${FLEET_CONFIG:-$HOME/.config/fleet}
+BIN=$HOME/bin
+SK=$HOME/.claude/skills
+STAMP=$(date +%Y%m%d-%H%M%S)
+AWAY=$HOME/.local/state/fleet/displaced-$STAMP
+
+[ -f "$CFG/fleet.toml" ] || { echo "no $CFG/fleet.toml -- copy examples/fleet.example.toml there first"; exit 2; }
+
+plan() {   # plan <target> <source>
+  local tgt=$1 src=$2
+  if [ -L "$tgt" ] && [ "$(readlink -f "$tgt")" = "$(readlink -f "$src")" ]; then
+    printf "  ok        %s\n" "$tgt"; return
+  fi
+  if [ -e "$tgt" ] || [ -L "$tgt" ]; then
+    printf "  REPLACE   %s   (existing moved to %s)\n" "$tgt" "$AWAY"
+  else
+    printf "  link      %s\n" "$tgt"
+  fi
+  [ $GO = 1 ] || return
+  if [ -e "$tgt" ] || [ -L "$tgt" ]; then mkdir -p "$AWAY"; mv "$tgt" "$AWAY/"; fi
+  ln -s "$src" "$tgt"
+}
+
+echo "application : $APP"
+echo "config      : $CFG"
+[ $GO = 1 ] && echo "MODE        : INSTALLING" || echo "MODE        : plan only (./install --go to apply)"
+echo
+echo "tools -> $BIN"
+mkdir -p "$BIN"
+for t in "$APP"/bin/*; do plan "$BIN/$(basename "$t")" "$t"; done
+echo
+echo "application skills -> $SK"
+for s in "$APP"/skills/*/; do plan "$SK/$(basename "$s")" "${s%/}"; done
+echo
+echo "configuration skills -> $SK"
+for s in "$CFG"/skills/*/; do [ -d "$s" ] && plan "$SK/$(basename "$s")" "${s%/}"; done
+[ $GO = 1 ] && [ -d "$AWAY" ] && echo && echo "displaced originals kept in: $AWAY"
+
+exit 0

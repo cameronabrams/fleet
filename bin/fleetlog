@@ -1,0 +1,439 @@
+#!/usr/bin/env python3
+"""fleetlog - reconstruct the cross-session message graph from Claude Code transcripts.
+
+Read-only. Nothing is sent, nothing is modified. Everything below is derived from
+~/.claude/projects/**/*.jsonl, which records every peer message a session received
+(with the sender stamped in the envelope) and every SendMessage it issued.
+
+  fleetlog [--all]             who talked to whom: current sessions, last 14 days
+  fleetlog timeline [-n 40]    chronological traffic
+  fleetlog trace <keyword>     every message mentioning <keyword>, in order
+  fleetlog sessions            transcript -> session identity, and how it was resolved
+"""
+import json, os, re, sys, glob, argparse, hashlib
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from fleet import config as fc
+from fleet.transcripts import project_slug
+CFG = fc.load()
+from collections import defaultdict, Counter
+
+PROJECTS = os.path.expanduser("~/.claude/projects")
+
+# Sessions are renamed on restart. Map every old name onto the current one so the
+# graph does not fragment. Edit as names change.
+
+# Structural dependencies: (consumer, producer) - who should be hearing from whom.
+# `fleetlog gaps` reports registered pairs with no traffic, and traffic with no
+# registered pair. Keep this in step with how the work is actually divided.
+
+SOCKMAP = {}
+WINDOW_DAYS = 14   # recent-traffic window for gaps' unregistered section
+
+_NAME_MAP = None
+def name_map():
+    """DERIVED old-name -> current-session map. Rebuilt every run; nothing to maintain.
+
+    Replaces a hand-kept ALIASES table. That table could not be right even in
+    principle, because session NAMES ARE REUSED: one fleet's study session once
+    carried the name of the transcript that is now its repo session, and the old
+    coordinator transcript went by four different names over a month. A name is
+    not an identity. A TRANSCRIPT is.
+
+    For every transcript, read the sequence of names it self-reported, then map
+    each non-current name to, in order:
+      1. LINEAGE   -- that transcript's latest name, if it is a current session
+                      (one session, renamed)
+      2. DIRECTORY -- the current owner of that transcript's working directory
+                      (a successor took over the role in the same place)
+    A name that is itself a current session is never remapped.
+
+    Known, accepted limitation: a role that MOVED directory has its history under
+    the old directory attributed to that directory's current owner -- a study that
+    once ran in its repo's directory has its early traffic land on the repo
+    session. The data does not record role, only place.
+    """
+    global _NAME_MAP
+    if _NAME_MAP is not None:
+        return _NAME_MAP
+    _NAME_MAP = {}
+    try:
+        man = json.load(open(os.path.join(fc.state_dir(CFG), "manifest.json")))
+        current = {x["label"] for x in man["sessions"]}
+        dir_owner = {project_slug(x["cwd"]): x["label"] for x in man["sessions"]}
+    except Exception:
+        return _NAME_MAP                  # no manifest -> no mapping; names pass through
+    files = sorted(glob.glob(f"{PROJECTS}/*/*.jsonl"), key=os.path.getmtime, reverse=True)
+    for f in files:                       # newest first, so the freshest mapping wins
+        seq = []
+        try:
+            for line in open(f, errors="replace"):
+                for m in SELF_RE.finditer(line):
+                    n = m.group(1)
+                    if not seq or seq[-1] != n:
+                        seq.append(n)
+        except OSError:
+            continue
+        if not seq:
+            continue
+        target = seq[-1] if seq[-1] in current else dir_owner.get(os.path.basename(os.path.dirname(f)))
+        if not target:
+            continue                      # retired: no current successor anywhere
+        for n in seq:
+            if n not in current:
+                _NAME_MAP.setdefault(n, target)
+    return _NAME_MAP
+
+def canon(name):
+    if not name:
+        return None
+    name = name.strip().split(" [")[0].strip()
+    return name_map().get(name, name)
+
+def walk_strings(obj, out, depth=0):
+    if depth > 12:
+        return
+    if isinstance(obj, str):
+        out.append(obj)
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            walk_strings(v, out, depth + 1)
+    elif isinstance(obj, list):
+        for v in obj:
+            walk_strings(v, out, depth + 1)
+
+ENV_RE = re.compile(r'<cross-session-message\s+([^>]*)>')
+ATTR_RE = re.compile(r'(\w[\w-]*)="([^"]*)"')
+SELF_RE = re.compile(r'This session is (\S+) \[[0-9a-f]{6}\]')
+
+def parse_transcript(path):
+    """Return (identity, how_resolved, [events])."""
+    events, ident, how = [], None, None
+    seen = set()
+    for line in open(path, errors="replace"):
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        ts = rec.get("timestamp") or ""
+        rtype = rec.get("type", "")
+        strings = []
+        walk_strings(rec, strings)
+
+        for s in strings:
+            if ident is None:
+                m = SELF_RE.search(s)
+                if m:
+                    ident, how = canon(m.group(1)), "ListAgents self-report"
+            for m in ENV_RE.finditer(s):
+                attrs = dict(ATTR_RE.findall(m.group(1)))
+                sender = canon(attrs.get("from-name"))
+                if not sender:
+                    continue
+                if attrs.get("from"):
+                    SOCKMAP[attrs["from"]] = sender
+                body = s[m.end():m.end() + 4000]
+                key = hashlib.md5((sender + body[:400]).encode()).hexdigest()
+                if key in seen:
+                    continue           # same message queued and delivered
+                seen.add(key)
+                events.append({"ts": ts, "dir": "in", "peer": sender,
+                               "subject": first_line(body), "body": body,
+                               "src": rtype})
+
+        msg = rec.get("message")
+        if isinstance(msg, dict) and isinstance(msg.get("content"), list):
+            for it in msg["content"]:
+                if isinstance(it, dict) and it.get("type") == "tool_use" \
+                        and it.get("name") == "SendMessage":
+                    inp = it.get("input") or {}
+                    to = canon(inp.get("to") or inp.get("recipient"))
+                    if not to:
+                        continue
+                    body = inp.get("message") or inp.get("content") or ""
+                    events.append({"ts": ts, "dir": "out", "peer": to,
+                                   "subject": inp.get("summary") or first_line(body),
+                                   "body": body, "src": "SendMessage"})
+    if ident is None:
+        ident, how = fallback_identity(path, events)
+    return ident, how, events
+
+def first_line(text):
+    for ln in (text or "").strip().splitlines():
+        ln = ln.strip()
+        if ln:
+            return ln[:90]
+    return ""
+
+def fallback_identity(path, events):
+    live = live_map()
+    if path in live:
+        return live[path], "tmux pane -> pid -> --resume"
+    d = os.path.basename(os.path.dirname(path))
+    bydir = live_dirs()
+    if d in bydir and len(bydir[d]) == 1:
+        return bydir[d][0], "tmux pane cwd -> project dir"
+    return f"{d}:{os.path.basename(path)[:8]}", "unresolved (dir:uuid)"
+
+_DIRS = None
+def live_dirs():
+    """project-dir-name -> [session names] for sessions running right now."""
+    global _DIRS
+    if _DIRS is not None:
+        return _DIRS
+    _DIRS = defaultdict(list)
+    try:
+        import subprocess
+        out = subprocess.run(["tmux", "list-panes", "-a", "-F",
+                              "#{@repo}\t#{pane_current_path}"],
+                             capture_output=True, text=True, timeout=5).stdout
+        for row in out.strip().splitlines():
+            parts = row.split("\t")
+            if len(parts) < 2 or not parts[0]:
+                continue
+            _DIRS[project_slug(parts[1])].append(canon(parts[0]))
+    except Exception:
+        pass
+    return _DIRS
+
+_LIVE = None
+def live_map():
+    """transcript path -> session name, for sessions running right now."""
+    global _LIVE
+    if _LIVE is not None:
+        return _LIVE
+    _LIVE = {}
+    try:
+        import subprocess
+        panes = subprocess.run(["tmux", "list-panes", "-a", "-F",
+                                "#{pane_id}\t#{@repo}\t#{pane_pid}"],
+                               capture_output=True, text=True, timeout=5).stdout
+        for row in panes.strip().splitlines():
+            parts = row.split("\t")
+            if len(parts) < 3 or not parts[1]:
+                continue
+            name, ppid = canon(parts[1]), parts[2]
+            kids = subprocess.run(["pgrep", "-P", ppid], capture_output=True,
+                                  text=True).stdout.split()
+            for pid in [ppid] + kids:
+                try:
+                    cmd = open(f"/proc/{pid}/cmdline", "rb").read().decode().split("\0")
+                except Exception:
+                    continue
+                for tok in cmd:
+                    if re.fullmatch(r"[0-9a-f-]{36}", tok):
+                        for p in glob.glob(f"{PROJECTS}/*/{tok}.jsonl"):
+                            _LIVE[p] = name
+    except Exception:
+        pass
+    return _LIVE
+
+def load_all():
+    sessions, edges = {}, []
+    for path in sorted(glob.glob(f"{PROJECTS}/*/*.jsonl")):
+        try:
+            ident, how, events = parse_transcript(path)
+        except Exception as e:
+            print(f"  ! skipped {os.path.basename(path)}: {e}", file=sys.stderr)
+            continue
+        if not events:
+            continue
+        sessions[path] = (ident, how, len(events))
+        for ev in events:
+            src, dst = (ev["peer"], ident) if ev["dir"] == "in" else (ident, ev["peer"])
+            edges.append({"ts": ev["ts"], "from": src, "to": dst,
+                          "subject": ev["subject"], "body": ev["body"],
+                          "file": path, "dir": ev["dir"]})
+    for e in edges:
+        for k in ("from", "to"):
+            if e[k] and e[k].startswith("uds:"):
+                e[k] = SOCKMAP.get(e[k], e[k])
+    edges = dedupe(edges)
+    edges.sort(key=lambda e: e["ts"])
+    return sessions, edges
+
+def dedupe(edges):
+    """A message appears in the sender's transcript and the recipient's. Keep one."""
+    best, out = {}, []
+    for e in edges:
+        key = (e["from"], e["to"], e["ts"][:19], (e["body"] or "")[:200])
+        if key not in best:
+            best[key] = e
+    # also merge in/out pairs that differ only by timestamp source
+    seen = set()
+    for e in sorted(best.values(), key=lambda x: x["ts"]):
+        loose = (e["from"], e["to"], hashlib.md5((e["body"] or "")[:300].encode()).hexdigest())
+        if loose in seen:
+            continue
+        seen.add(loose)
+        out.append(e)
+    return out
+
+def short(ts):
+    return ts.replace("T", " ")[5:16] if ts else "??-?? ??:??"
+
+def current_sessions():
+    """Labels of the sessions running now, from the live manifest; None if unknown."""
+    try:
+        man = json.load(open(os.path.join(fc.state_dir(CFG), "manifest.json")))
+        return {x["label"] for x in man["sessions"]}
+    except Exception:
+        return None
+
+def cmd_graph(sessions, edges, args):
+    # Default: CURRENT sessions, last WINDOW_DAYS. `--all` for full history.
+    #
+    # Full history is mostly noise about a fleet that no longer exists. Session
+    # names are reused and one role moved directories, so August traffic surfaces
+    # under today's names: measured 2026-09-12, one pair showed 115 msgs, all
+    # 08-23..08-31, one since 08-29. Filtering to current sessions
+    # AND a recent window removes both artifacts with one rule.
+    #
+    # There is no longer a register of expected channels to compare against. It
+    # was deleted 2026-09-12: a hand-kept table of who SHOULD talk to whom rots
+    # like every other hand-kept table here (the previous one named retired
+    # sessions for two weeks and reported ok throughout), and it had mixed two
+    # different things -- information handoffs, which need sessions to talk, and
+    # software dependencies, which do not. This view reports what IS, derived.
+    if not getattr(args, "all", False):
+        import datetime as _dt
+        since = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=WINDOW_DAYS)).isoformat()
+        cur = current_sessions()
+        hidden = len(edges)
+        # Self-edges are dropped too: a session does not message itself. One
+        # appears only when two sessions collapse onto a reused name -- e.g. the
+        # repo session's transcript once carried its study session's name.
+        edges = [e for e in edges if (e["ts"] or "") >= since
+                 and e["from"] != e["to"]
+                 and (cur is None or (e["from"] in cur and e["to"] in cur))]
+        hidden -= len(edges)
+        scope = f"current sessions, last {WINDOW_DAYS} days  (--all for full history)"
+    else:
+        hidden, scope = 0, "full history, all sessions including retired"
+    pairs = Counter((e["from"], e["to"]) for e in edges)
+    span = defaultdict(lambda: ["", ""])
+    for e in edges:
+        s = span[(e["from"], e["to"])]
+        if not s[0]:
+            s[0] = e["ts"]
+        s[1] = e["ts"]
+    print(f"\n  {len(edges)} messages between {len(set([p[0] for p in pairs]) | set([p[1] for p in pairs]))} sessions   [{scope}]\n")
+    print(f"  {'from':<24} {'to':<24} {'n':>4}  {'first':<12} {'last':<12}")
+    print("  " + "-" * 80)
+    for (a, b), n in pairs.most_common():
+        f, l = span[(a, b)]
+        print(f"  {a:<24} {b:<24} {n:>4}  {short(f):<12} {short(l):<12}")
+    print()
+    totals = Counter()
+    for (a, b), n in pairs.items():
+        totals[a] += n
+        totals[b] += n
+    print("  busiest:", ", ".join(f"{k} ({v})" for k, v in totals.most_common(5)))
+    if hidden:
+        print(f"  not shown: {hidden} messages outside that scope")
+    print()
+
+def cmd_timeline(sessions, edges, args):
+    sel = edges[-args.n:] if args.n else edges
+    print()
+    for e in sel:
+        print(f"  {short(e['ts'])}  {e['from']:>22} -> {e['to']:<22} {e['subject'][:60]}")
+    print()
+
+def cmd_trace(sessions, edges, args):
+    kw = args.keyword.lower()
+    hits = [e for e in edges if kw in (e["body"] or "").lower()
+            or kw in (e["subject"] or "").lower()]
+    print(f"\n  {len(hits)} messages mention {args.keyword!r}\n")
+    for e in hits:
+        print(f"  {short(e['ts'])}  {e['from']} -> {e['to']}")
+        print(f"      {e['subject'][:88]}")
+        for ln in (e["body"] or "").splitlines():
+            if kw in ln.lower():
+                print(f"      | {ln.strip()[:110]}")
+                break
+        print()
+
+
+def cmd_verify(sessions, edges, args):
+    """Proof of possession: do MY recent messages to a session appear in the
+    transcript it claims? A bystander cannot have them without being the
+    recipient. Answers "is the session I am talking to the one this transcript
+    belongs to" - which is the operational question - rather than "which process
+    is that session", which needs environmental trace the process may not have.
+    Method contributed by a repo session, 2026-08-26."""
+    target = canon(args.session)
+    mine = [e for e in edges if e["to"] == target][-args.n:]
+    if not mine:
+        print(f"\n  no messages recorded to {target!r} - nothing to prove with\n")
+        return
+    cands = sorted(glob.glob(f"{PROJECTS}/*/*.jsonl"), key=os.path.getmtime, reverse=True)
+    print(f"\n  probing {len(cands)} transcripts with {len(mine)} message(s) sent to {target}\n")
+    hits = []
+    for f in cands:
+        try:
+            body = open(f, errors="replace").read()
+        except OSError:
+            continue
+        # the recipient stores our text JSON-escaped; normalise before comparing,
+        # and match on a punctuation-free fragment so entities and quoting cannot
+        # produce a false negative. A tool that reports "unsupported" when it
+        # simply cannot see is worse than no tool.
+        flat = body.replace('\\n', ' ').replace('\\"', '"').replace('\\\\', '\\')
+        flat = re.sub(r'\s+', ' ', flat)
+        n = 0
+        for e in mine:
+            frag = re.sub(r'\s+', ' ', (e["body"] or ""))
+            frag = frag.strip()[:200]
+            if len(frag) > 40 and frag in flat:
+                n += 1
+        if n:
+            hits.append((n, f))
+    # our own transcript necessarily contains what we sent; that is not evidence
+    # about the recipient and must not be counted as a hit.
+    # DERIVED, not hardcoded. This used to compare against a hardcoded uuid prefix --
+    # the coordinator's transcript as of 2026-08-26 -- beside dead code that had
+    # begun to derive it and never finished. Once coord moved to a new transcript
+    # the marker silently stopped firing, so the sender's OWN copy of a message
+    # counted as evidence the recipient got it: a claim read as supported by its
+    # author's transcript. Fails toward "fine". Found 2026-09-12 in the
+    # app/config split. The running session's id is in its environment.
+    self_uuid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    for n, f in sorted(hits, reverse=True):
+        uid = os.path.basename(f)[:-6]
+        proj = os.path.basename(os.path.dirname(f))
+        mark = "  <- the sender's own transcript; not evidence" if (self_uuid and uid == self_uuid) else ""
+        print(f"    {n}/{len(mine)} matched   {uid}")
+        print(f"                  {proj}{mark}")
+    if not hits:
+        print("    no transcript contains them - the claim is unsupported")
+    print("\n  NOTE: this binds a transcript to whoever receives at that address.")
+    print("  It does NOT establish who said anything about that session's standing;")
+    print("  a relayed claim stays relayed however well the binding checks out.\n")
+
+def cmd_sessions(sessions, edges, args):
+    print(f"\n  {'session':<26} {'msgs':>5}  {'resolved by':<28} transcript")
+    print("  " + "-" * 96)
+    for path, (ident, how, n) in sorted(sessions.items(), key=lambda x: -x[1][2]):
+        print(f"  {ident:<26} {n:>5}  {how:<28} {os.path.basename(path)[:8]}  "
+              f"{os.path.basename(os.path.dirname(path))}")
+    print()
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    # --all on the top-level parser too, so both `fleetlog --all` and
+    # `fleetlog graph --all` work. Without this the flag would silently do nothing.
+    ap.add_argument("--all", action="store_true", help="full history, including retired sessions")
+    sub = ap.add_subparsers(dest="cmd")
+    g = sub.add_parser("graph"); g.add_argument("--all", action="store_true")
+    t = sub.add_parser("timeline"); t.add_argument("-n", type=int, default=40)
+    r = sub.add_parser("trace"); r.add_argument("keyword")
+    sub.add_parser("sessions")
+    v = sub.add_parser("verify"); v.add_argument("session"); v.add_argument("-n", type=int, default=3)
+    args = ap.parse_args()
+    sessions, edges = load_all()
+    {"timeline": cmd_timeline, "trace": cmd_trace, 
+     "sessions": cmd_sessions, "verify": cmd_verify}.get(args.cmd, cmd_graph)(sessions, edges, args)
+
+if __name__ == "__main__":
+    main()

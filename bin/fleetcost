@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""fleetcost - what inter-agent chatter actually costs.
+
+Cost of a peer message is not its size. It is size x the number of assistant
+turns it then sits through in the receiver's context. Measured on this fleet:
+~107x. This script re-measures it.
+
+Estimates only: transcript bytes at 4 chars/token, a 200k-token window treated
+as a sliding cap. Real compaction summarizes rather than slides, so absolutes
+over-count by an unknown margin. Ratios are sound. /cost is the truth.
+
+  fleetcost            summary
+  fleetcost --senders  per-sender volume
+  fleetcost --worst    most expensive individual messages
+"""
+import json, glob, os, sys
+from collections import defaultdict
+
+CAP = 800_000                     # ~200k tokens, in chars
+ROOT = os.path.expanduser("~/.claude/projects")
+# Scan EVERY project dir, not just -home-<user>*. A session whose cwd is outside
+# $HOME (e.g. /data/...) lands in its own project dir; globbing
+# -home-<user>* skipped it entirely, so its traffic was visible only where a
+# scanned peer happened to receive it. Found 2026-08-28 by the session that
+# was being undercounted. Never narrow this glob to make a scan cheaper.
+PAT = os.path.join(ROOT, "*", "*.jsonl")
+
+def scan():
+    files = [f for f in glob.glob(PAT) if os.path.getsize(f) > 10_000]
+    msgs, bill, turns = [], 0, 0
+    for f in files:
+        try:
+            lines = open(f, errors="ignore").readlines()
+        except OSError:
+            continue
+        recs, is_a = [], []
+        for line in lines:
+            try:
+                d = json.loads(line)
+            except ValueError:
+                recs.append(None); is_a.append(0); continue
+            recs.append(d)
+            is_a.append(1 if (d.get("message") or {}).get("role") == "assistant" else 0)
+        run = 0
+        for i, line in enumerate(lines):
+            run += len(line)
+            if is_a[i]:
+                bill += min(run, CAP); turns += 1
+        for i, d in enumerate(recs):
+            if not d or d.get("type") == "queue-operation":
+                continue
+            c = d.get("content") or (d.get("message") or {}).get("content")
+            if isinstance(c, list):
+                c = " ".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in c)
+            c = str(c)
+            if "cross-session-message" not in c:
+                continue
+            added, rr = 0, 0
+            for j in range(i, len(lines)):
+                added += len(lines[j])
+                if added > CAP:
+                    break
+                if is_a[j]:
+                    rr += 1
+            sender = "unknown"
+            k = c.find('from-name=')
+            if k >= 0:
+                seg = c[k+10:k+80].lstrip('\\"')
+                sender = seg.split('"')[0].split('\\')[0]
+            msgs.append((sender, len(c), rr, os.path.basename(f)[:8]))
+    return files, msgs, bill, turns
+
+def main():
+    files, msgs, bill, turns = scan()
+    if not msgs:
+        print("no cross-session messages found"); return
+    w = sum(m[1] for m in msgs)
+    r = sum(m[1] * m[2] for m in msgs)
+    surv = sorted(m[2] for m in msgs)
+    sizes = sorted(m[1] for m in msgs)
+    print("transcripts %d   assistant turns %d" % (len(files), turns))
+    print("fleet input-token bill  ~%.1f M  (pre-cache-discount, over-counts)" % (bill / 4e6))
+    print()
+    print("peer messages   %d   mean %d chars   median %d   max %d"
+          % (len(msgs), w // len(msgs), sizes[len(sizes)//2], sizes[-1]))
+    print("written once    ~%d tok" % (w / 4))
+    print("re-read         ~%d tok" % (r / 4))
+    print("AMPLIFICATION   %.0fx   median msg survives %d turns, p90 %d"
+          % (r / w, surv[len(surv)//2], surv[int(len(surv)*.9)]))
+    med = surv[len(surv)//2]
+    print()
+    print("a 4,000-char peer message costs ~%d tok; at 800 chars, ~%d tok"
+          % (1000 * med, 200 * med))
+    if "--senders" in sys.argv:
+        by = defaultdict(lambda: [0, 0])
+        for s, n, _, _ in msgs:
+            by[s][0] += 1; by[s][1] += n
+        print("\nby sender:")
+        for s, (c, n) in sorted(by.items(), key=lambda x: -x[1][1])[:15]:
+            print("  %-26s %3d msgs %8d chars  mean %5d" % (s[:26], c, n, n // c))
+    if "--worst" in sys.argv:
+        print("\nmost expensive single messages:")
+        for s, n, rr, fn in sorted(msgs, key=lambda m: -m[1]*m[2])[:10]:
+            print("  %6d chars x %4d turns = ~%8d tok  from %-18s [%s]"
+                  % (n, rr, n*rr/4, s[:18], fn))
+
+if __name__ == "__main__":
+    main()

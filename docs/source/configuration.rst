@@ -1,0 +1,117 @@
+.. _configuration:
+
+Configuration
+=============
+
+All configuration lives in one TOML file, ``fleet.toml``, in the configuration
+directory: ``$FLEET_CONFIG`` if set, otherwise ``~/.config/fleet``. It holds what a
+human **declares**. Anything the tools observe at runtime lives in the state
+directory instead (:ref:`concepts`).
+
+The same directory holds:
+
+``briefs/<name>.md``
+   One brief per session, required. :doc:`tools/fleetspawn` refuses to launch a
+   session without one; :doc:`tools/fleetsnap` flags a member that lacks one.
+   Template: :doc:`templates`.
+
+``conventions.md``
+   The fleet's working rules, which every brief points to.
+
+``skills/<name>/``
+   Site skills (hosts, accounts, partitions), linked by ``install`` alongside the
+   application's skills.
+
+A complete example is in ``examples/fleet.example.toml``:
+
+.. literalinclude:: ../../examples/fleet.example.toml
+   :language: toml
+
+Sections
+--------
+
+``[human]``
+~~~~~~~~~~~
+
+``name``
+   How sessions refer to the human they work for.
+``aliases``
+   Other words sessions use for the human, such as a role or a pronoun.
+
+Read by :doc:`tools/fleetwaiting`, which builds its "blocked on the human" patterns
+from these. "the human" and "the user" always count. Without a name it matches only
+those two, and says so.
+
+``[paths]``
+~~~~~~~~~~~
+
+``state``
+   The state directory. Default ``~/.local/state/fleet``. Manifests, watcher
+   registrations (``watchers/``) and re-arm ledgers (``rearm/``) live here.
+``conventions``
+   Where the conventions file is. Declared for sessions and skills to find; no tool
+   reads it.
+
+``[spawn]``
+~~~~~~~~~~~
+
+``env``
+   A table of environment variables set on every session launch, e.g.
+   ``{ NOTIFY_AGENT = "1" }``. Used by :doc:`tools/fleetspawn`, by
+   :doc:`tools/fleetrestore`, and in the relaunch commands
+   :doc:`tools/fleetupgrade` prints, so a session comes back from a restore or an
+   upgrade with the environment it was spawned with.
+``first_prompt``
+   The first prompt :doc:`tools/fleetspawn` gives a new session. ``{name}`` and
+   ``{brief}`` are substituted. Default: ``You are a new fleet session named {name}.
+   Read {brief} and follow it.``
+
+``[colors]``
+~~~~~~~~~~~~
+
+``<session> = "<color>"`` for **every** member. Values must be ones ``/color``
+accepts: ``red``, ``blue``, ``green``, ``yellow``, ``purple``, ``orange``,
+``pink``, ``cyan``; anything else is a configuration error. Two sessions may share
+a color.
+
+A session's color is applied by the human typing ``/color <c>`` in its pane — there
+is no launch flag, and a session cannot set its own. A ``/clear`` drops the live
+color while keeping the name, which is why the declaration lives here:
+:doc:`tools/fleetsnap` and :doc:`tools/fleetupgrade` compare the live color against
+it and print the command to fix a difference.
+
+``[cluster.<name>]``
+~~~~~~~~~~~~~~~~~~~~
+
+Required by :doc:`tools/fleetwatch`. With one cluster configured the name is
+implied; with several, a tool must be told which.
+
+``ssh_host``
+   An ssh destination that works non-interactively.
+``user``
+   The scheduler user whose jobs are listed.
+``job_id_re``
+   A regular expression for the *shape* of a job id, e.g. ``"[0-9]{6,9}"``. Used to
+   recognize job ids in watcher command lines.
+``held_reasons``
+   Scheduler pending reasons that need a human to release. A job pending only for
+   these needs no watcher. Default ``["JobHeldUser", "JobHeldAdmin"]``.
+``scheduler``, ``rate_usd_per_su``, ``[[cluster.<name>.accounts]]``
+   Declared for skills and humans (costing, choosing an account); no tool reads
+   them.
+
+``[owners]``
+~~~~~~~~~~~~
+
+``"<WorkDir fragment>" = "<session>"``. :doc:`tools/fleetwatch` attributes each job
+to the first session whose fragment appears in the job's working directory.
+**First match wins**, so put specific fragments before general ones. A job matching
+no fragment is reported ``UNATTRIBUTED``, never guessed.
+
+``[authority]``
+~~~~~~~~~~~~~~~
+
+Optional, free-form. :doc:`tools/fleetsnap` copies it verbatim into every manifest.
+If you record a grant of the human's authority here, record its current status
+alongside it — a snapshot re-stamps whatever it copies with a fresh date, and a
+lapsed grant stored alone reads as current.

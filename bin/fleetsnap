@@ -1,0 +1,425 @@
+#!/usr/bin/env python3
+"""fleetsnap - snapshot enough state to rebuild the agent fleet after a power cycle.
+
+Must run while the fleet is HEALTHY. The pane -> transcript mapping only exists in
+live process arguments; once tmux dies it is unrecoverable. Writes:
+
+    ~/.local/state/fleet/manifest.json   machine-readable
+    ~/.local/state/fleet/manifest.md     human-readable, for when nothing is running
+"""
+import json, os, re, shutil, subprocess, glob, sys, time
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from fleet import config as fc
+from fleet.transcripts import (cleared_successor, agent_color, project_slug,
+                               uuid_from_descendants)
+CFG = fc.load()
+
+# pre-rename names, so a transcript that self-reports an old name still verifies.
+
+STATE = fc.state_dir(CFG)
+PROJECTS = os.path.expanduser("~/.claude/projects")
+
+def sh(*a, **kw):
+    return subprocess.run(a, capture_output=True, text=True, **kw).stdout
+
+def rotate(path, keep=10):
+    """Keep history of the file the whole recovery path depends on.
+
+    Every other file in STATE has .bak copies; manifest.json had none, so it was
+    the one file a bad snapshot could destroy. 2026-09-09: a re-snap taken over
+    window names that automatic-rename had already overwritten wiped the only
+    copy holding the real ones. Recovered from a session transcript, by luck."""
+    if not os.path.exists(path):
+        return None
+    dest = f"{path}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
+    shutil.copy2(path, dest)
+    for old in sorted(glob.glob(f"{path}.bak-*"))[:-keep]:
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+    return dest
+
+
+def prior_snapshot():
+    """The manifest we are about to overwrite — consulted, not trusted."""
+    try:
+        with open(f"{STATE}/manifest.json") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def window_meta():
+    """Name, layout, and whether tmux is free to rewrite the name.
+
+    automatic-rename ON means the name you are reading is the running command,
+    not a name anyone chose. Recording it as a window name is what makes the
+    loss permanent, since the next restore rebuilds windows called 'claude'."""
+    out = {}
+    txt = sh("tmux", "list-windows", "-a", "-F",
+             "#{session_name}\t#{window_index}\t#{window_name}\t"
+             "#{?automatic-rename,1,0}\t#{window_layout}")
+    for row in txt.strip().splitlines():
+        p = row.split("\t")
+        if len(p) == 5:
+            out[f"{p[0]}:{p[1]}"] = {"name": p[2], "auto": p[3] == "1", "layout": p[4]}
+    return out
+
+
+def keep_real_window_names(meta, prior, only):
+    """Never let an auto-generated name overwrite a real one in the record.
+
+    Where tmux is auto-naming and the previous manifest holds a deliberate name,
+    the previous name is the better record and is carried forward. The warning
+    fires either way: the fix belongs in tmux, not in the manifest.
+
+    `only` is the set of windows that actually hold a captured session. Scratch
+    windows are auto-named by design and warning about them every run is how a
+    warning gets trained into background noise — which is the failure this guard
+    exists to prevent, not one to reproduce."""
+    prior_names = {k: v.get("name") for k, v in
+                   (prior.get("window_layouts") or {}).items() if v.get("name")}
+    notes = []
+    for key, w in meta.items():
+        if not w["auto"] or key not in only:
+            continue
+        old = prior_names.get(key)
+        if old and old != w["name"]:
+            notes.append(f"{key}: tmux reports {w['name']!r} (automatic-rename is ON) — "
+                         f"kept {old!r} from the previous manifest")
+            w["name"], w["carried_forward"] = old, True
+        else:
+            notes.append(f"{key}: automatic-rename is ON, so {w['name']!r} is the running "
+                         f"command, not a name. Fix it in tmux, then re-snap:\n"
+                         f"        tmux rename-window -t {key} <name> && "
+                         f"tmux set -w -t {key} automatic-rename off")
+    return notes
+
+
+def window_layouts(meta):
+    """tmux's own layout serialization — restores geometry exactly, not approximately."""
+    return {k: {"name": v["name"], "layout": v["layout"]} for k, v in meta.items()}
+
+def pane_rows():
+    fmt = "\t".join(["#{session_name}", "#{window_index}", "#{window_name}",
+                     "#{pane_index}", "#{pane_id}", "#{@repo}", "#{@fleet}", "#{pane_title}",
+                     "#{pane_current_path}", "#{pane_pid}", "#{pane_width}x#{pane_height}"])
+    return [r.split("\t") for r in sh("tmux", "list-panes", "-a", "-F", fmt).strip().splitlines()]
+
+def claude_proc(pane_pid):
+    pids = [pane_pid] + sh("pgrep", "-P", pane_pid).split()
+    for pid in pids:
+        try:
+            cmd = open(f"/proc/{pid}/cmdline", "rb").read().decode().split("\0")
+        except OSError:
+            continue
+        if any("claude" in c for c in cmd if c):
+            exe = os.path.realpath(f"/proc/{pid}/exe") if os.path.exists(f"/proc/{pid}/exe") else ""
+            uuid = next((c for c in cmd if re.fullmatch(r"[0-9a-f-]{36}", c or "")), None)
+            started = sh("ps", "-o", "lstart=", "-p", pid).strip()
+            return {"pid": int(pid), "version": os.path.basename(exe),
+                    "resume_uuid": uuid, "started": started,
+                    "argv": [c for c in cmd if c]}
+    return None
+
+def corrected_label(repo, title, argv, cwd):
+    """(label, note): the pane's @repo label, or the pane title where the label is stale.
+
+    @repo is a hand-set label and goes stale on rename; pane_title is set by
+    the app from `claude --name` and follows `/rename`. But a title is not always
+    the app's: before claude draws, it is the shell's `user@host:path`, or tmux's
+    bare hostname while the trust prompt is up. "No spaces, so it looks like a
+    name" passed both -- OBSERVED 2026-09-13, a manifest named a session after a
+    host and path. So the title replaces the label only on positive evidence that
+    it IS this session's name: the process was launched `--name <title>`, or a
+    transcript in its project self-reports it (a /rename since launch)."""
+    t = title.lstrip("✳✴✵ ").strip()
+    if not (t and repo and t != repo and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", t)):
+        return repo, None
+    launched = next((argv[i + 1] for i, x in enumerate(argv[:-1]) if x == "--name"), None)
+    if launched == t:
+        return t, f"pane label said {repo!r}; corrected from pane_title (= --name)"
+    if newest_transcript(cwd, t)[1].startswith("verified"):
+        return t, f"pane label said {repo!r}; corrected from pane_title (transcript self-reports it)"
+    return repo, None
+
+def newest_transcript(cwd, label=None):
+    """Prefer a transcript that identifies itself as `label`; fall back to newest."""
+    key = project_slug(cwd)
+    files = sorted(glob.glob(f"{PROJECTS}/{key}/*.jsonl"),
+                   key=os.path.getmtime, reverse=True)
+    if not files:
+        return None, "no transcript found"
+    # Two independent self-reports, both scanned over the WHOLE file:
+    #
+    #   agentName  - written by `--name` and by `/rename`. AUTHORITATIVE and
+    #                always present. /rename writes it MID-file, so take the
+    #                LAST, not the first: an earlier one is a superseded name.
+    #   "This session is X [ref]" - only appears once the session has called
+    #                ListAgents. A new session has none, which is why a fresh
+    #                or freshly-renamed session used to fall through to
+    #                "corroborated ... (no self-report)" despite carrying a
+    #                perfectly good agentName. Observed 2026-09-10: a session
+    #                renamed twice had 0 of the ListAgents marker, 3 agentName
+    #                records.
+    self_re = re.compile(r"This session is (\S+) \[[0-9a-f]{6}\]")
+    name_re = re.compile(r'"agentName"\s*:\s*"([^"]+)"')
+    norm = lambda x: (x or "").replace("-", " ").strip().lower()
+    found = {}
+    for f in files:
+        try:
+            body = open(f, errors="replace").read()
+        except OSError:
+            continue
+        names = name_re.findall(body) or self_re.findall(body)
+        if not names:
+            continue
+        last = names[-1]
+        found[f] = last
+        # No alias table: a transcript's LAST self-reported name is its current name,
+        # because `agentName` follows `/rename`. The table this replaced was
+        # hand-synced across two tools, had drifted, and was verified unnecessary
+        # 2026-09-12 -- identical manifest with it removed, fresh-launch path included.
+        resolved = last
+        if label and norm(resolved) == norm(label):
+            how = "verified: transcript self-reports this name"
+            return os.path.basename(f)[:-6], how
+    if found:
+        f = max(found, key=os.path.getmtime)
+        return (os.path.basename(f)[:-6],
+                f"UNVERIFIED: newest self-reports as {found[f]!r}, label is {label!r}")
+    f = files[0]
+    try:
+        peer = "cross-session-message" in open(f, errors="replace").read()
+    except OSError:
+        peer = False
+    if peer:
+        return (os.path.basename(f)[:-6],
+                "corroborated: newest in cwd and carries peer traffic (no self-report)")
+    return os.path.basename(f)[:-6], "UNVERIFIED: no self-report in any transcript"
+
+def resume_handle(proc, cwd, label):
+    """(uuid, how) for the transcript `claude --resume` should reopen."""
+    if proc["resume_uuid"]:
+        succ, n = cleared_successor(proc["resume_uuid"], label, proc["pid"])
+        if succ:
+            extra = f"; {n} candidates, newest taken" if n > 1 else ""
+            return succ, (f"verified: /clear since launch -- argv {proc['resume_uuid'][:8]} "
+                          f"superseded by a transcript that self-reports this name and "
+                          f"began after the process started{extra}")
+        return proc["resume_uuid"], "verified: --resume in process argv, no /clear since launch"
+    u = uuid_from_descendants(proc["pid"])
+    if u:
+        return u, "verified: session's own scratchpad path, via a child process"
+    return newest_transcript(cwd, label)
+
+def durable_files(cwd, label=None):
+    """Files the session should re-read after a restart. Its brief comes first: it
+    is the only record of the session's ROLE, and it lives in configuration."""
+    out = []
+    brief = os.path.join(fc.config_dir(), "briefs", f"{label}.md") if label else None
+    if brief and os.path.exists(brief):
+        out.append(brief.replace(os.path.expanduser("~"), "~", 1))
+    for name in ("CLAUDE.md", "ROADMAP.md", "CHECKPOINT.md", "SESSION-RESTART-STATE.md"):
+        p = os.path.join(cwd, name)
+        if os.path.exists(p):
+            out.append(name)
+    return out
+
+def linger_units():
+    """User services, flagged by whether they actually survive a reboot.
+
+    A transient unit (systemd-run --user) lives in /run, which is tmpfs. Linger
+    keeps the user manager alive without a login; it does NOT recreate transient
+    units after a power cycle. Only a unit file on disk + `enable` does that.
+    """
+    txt = sh("systemctl", "--user", "list-units", "--type=service", "--no-legend", "--plain")
+    out = []
+    for line in txt.strip().splitlines():
+        if not line.strip():
+            continue
+        name = line.split()[0]
+        if name.startswith(("plasma-", "app-", "dbus-", "xdg-", "gvfs-", "pipewire",
+                            "wireplumber", "kde-", "at-spi", "dconf", "obex")):
+            continue
+        info = sh("systemctl", "--user", "show", name, "-p", "Transient", "-p", "FragmentPath")
+        transient = "Transient=yes" in info
+        out.append({"unit": name, "transient": transient,
+                    "survives_reboot": not transient,
+                    "fragment": next((l.split("=", 1)[1] for l in info.splitlines()
+                                      if l.startswith("FragmentPath=")), "")})
+    return out
+
+def main():
+    prior = prior_snapshot()
+    meta = window_meta()
+    layouts = window_layouts(meta)
+    winnotes = []
+    snap = {"captured": time.strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "host": os.uname().nodename,
+            "installed_claude": os.path.basename(os.path.realpath(
+                os.path.expanduser("~/.local/bin/claude"))),
+            "sessions": [], "user_units": linger_units(),
+            "window_layouts": layouts, "window_name_notes": winnotes,
+            "tmux_conf": {"path": os.path.expanduser("~/.tmux.conf"),
+                          "exists": os.path.exists(os.path.expanduser("~/.tmux.conf")),
+                          "mtime": (time.strftime("%Y-%m-%d %H:%M",
+                                    time.localtime(os.path.getmtime(os.path.expanduser("~/.tmux.conf"))))
+                                    if os.path.exists(os.path.expanduser("~/.tmux.conf")) else None)},
+            "note": "resume_uuid is the durable handle; session NAMES change on restart",
+            # A CACHE OF THE HUMAN'S SENTENCE, NOT A SUBSTITUTE FOR IT. Stored as the
+            # quote rather than as a conclusion drawn from it, because a conclusion
+            # stored alone is indistinguishable from a quotation on re-reading.
+            # Verify the binding rather than trusting this field: check which live
+            # session resumes that transcript, via --resume in its process argv or
+            # via a descendant executing from its scratchpad path.
+            "authority": CFG.get("authority", {})}
+    for r in pane_rows():
+        if len(r) < 11:
+            continue
+        sess, win, winname, pidx, pane, repo, fleet, title, cwd, ppid, size = r[:11]
+        fleet = fleet or sess or "default"
+        proc = claude_proc(ppid)
+        if not proc:
+            continue
+        repo, label_note = corrected_label(repo, title, proc["argv"], cwd)
+        snap["sessions"].append({
+            "label": repo or f"(unlabeled {pane})",
+            "fleet": fleet,
+            "label_note": label_note,
+            "tmux": {"session": sess, "window": int(win),
+                     "window_name": meta.get(f"{sess}:{win}", {}).get("name", winname),
+                     "pane_index": int(pidx), "pane_id": pane, "size": size},
+            "cwd": cwd,
+            **dict(zip(("resume_uuid", "resume_uuid_source"),
+                       resume_handle(proc, cwd, repo))),
+            "version": proc["version"], "pid": proc["pid"], "started": proc["started"],
+            "durable_files": durable_files(cwd, repo),
+        })
+        s = snap["sessions"][-1]
+        s["color"] = {"declared": fc.colors(CFG).get(s["label"]),
+                      "live": agent_color(s["resume_uuid"])}
+        s["membership_problems"] = [
+            {"kind": k, "problem": p, "fix": f} for k, p, f in fc.membership_problems(
+                CFG, s["label"], s["color"]["live"], color_known=bool(s["resume_uuid"]))]
+    # Correct the window names only now: which windows are fleet windows is not
+    # known until the sessions have been collected.
+    fleet_wins = {f"{s['tmux']['session']}:{s['tmux']['window']}"
+                  for s in snap["sessions"]}
+    winnotes = keep_real_window_names(meta, prior, fleet_wins)
+    snap["window_layouts"] = layouts = window_layouts(meta)
+    snap["window_name_notes"] = winnotes
+    for s in snap["sessions"]:
+        key = f"{s['tmux']['session']}:{s['tmux']['window']}"
+        s["tmux"]["window_name"] = meta.get(key, {}).get("name", s["tmux"]["window_name"])
+
+    os.makedirs(STATE, exist_ok=True)
+    rotate(f"{STATE}/manifest.json")
+    rotate(f"{STATE}/manifest.md")
+    with open(f"{STATE}/manifest.json", "w") as f:
+        json.dump(snap, f, indent=2)
+
+    fleets = {}
+    for sess in snap["sessions"]:
+        fleets.setdefault(sess["fleet"], []).append(sess)
+    coord = next((x["label"] for x in snap["sessions"] if x["fleet"] == "coord"), None)
+    for name, members in fleets.items():
+        sub = dict(snap)
+        sub["fleet"] = name
+        sub["sessions"] = members
+        sub["coordinator"] = coord
+        sub["window_layouts"] = {k: v for k, v in layouts.items()
+                                 if any(f"{m['tmux']['session']}:{m['tmux']['window']}" == k
+                                        for m in members)}
+        with open(f"{STATE}/{name}.json", "w") as f:
+            json.dump(sub, f, indent=2)
+    idx = [f"# Fleets on {snap['host']} — {snap['captured']}\n",
+           "One manifest per fleet. `fleetrestore <fleet>` rebuilds one; "
+           "`fleetrestore --all` rebuilds everything with exact geometry.\n",
+           "| fleet | sessions | file |", "|---|---|---|"]
+    for name, members in sorted(fleets.items()):
+        idx.append(f"| **{name}** | {', '.join(m['label'] for m in members)} | "
+                   f"`{name}.json` |")
+    idx.append(f"\nCoordinator: **{coord or '_none_'}** — restore once, not per fleet.\n")
+    idx.append("Fleet membership comes from the tmux pane option `@fleet` "
+               "(falling back to the tmux session name). Change it with "
+               "`tmux set -p -t <pane> @fleet <name>` and re-run `fleetsnap`.")
+    with open(f"{STATE}/index.md", "w") as f:
+        f.write("\n".join(idx) + "\n")
+
+    L = []
+    L.append(f"# Fleet manifest — {snap['captured']} on {snap['host']}\n")
+    L.append(f"Claude Code installed: **{snap['installed_claude']}**. "
+             f"{len(snap['sessions'])} sessions captured.\n")
+    L.append("To rebuild after a power cycle, from a plain shell:\n")
+    L.append("```\ntmux new-session -d -s 0\n"
+             "# then per session below:\n"
+             "#   tmux new-window / split-window -c <cwd>\n"
+             "#   tmux set -p @repo <label>\n"
+             "#   claude --resume <uuid>\n```\n")
+    L.append("| fleet | label | window.pane | cwd | resume uuid | version |")
+    L.append("|---|---|---|---|---|---|")
+    for s in snap["sessions"]:
+        t = s["tmux"]
+        L.append(f"| {s['fleet']} | {s['label']} | {t['window']}.{t['pane_index']} | `{s['cwd']}` | "
+                 f"`{s['resume_uuid']}` | {s['version']} |")
+    L.append("\n## Durable state each session should re-read\n")
+    for s in snap["sessions"]:
+        files = ", ".join(f"`{f}`" for f in s["durable_files"]) or "_none found_"
+        L.append(f"- **{s['label']}** — {files}")
+    L.append("\n## Membership: every session needs a brief and a declared colour\n")
+    incomplete = [s for s in snap["sessions"] if s["membership_problems"]]
+    if not incomplete:
+        L.append(f"All {len(snap['sessions'])} complete.")
+    for s in incomplete:
+        for p in s["membership_problems"]:
+            L.append(f"- **{s['label']}** — {p['problem']}; {p['fix']}")
+    L.append("\n## tmux\n")
+    tc = snap["tmux_conf"]
+    L.append(f"`~/.tmux.conf` {'present' if tc['exists'] else 'MISSING'}"
+             + (f", last modified {tc['mtime']}. " if tc['exists'] else ". ")
+             + "It is a file on disk, so it survives a power cycle and is re-read when "
+               "the tmux server next starts. The `@repo` pane-border logic lives there.")
+    L.append("\nExact window layouts, restorable verbatim with `tmux select-layout`:\n")
+    for k, v in sorted(snap["window_layouts"].items()):
+        L.append(f"- `{k}` ({v['name']}): `{v['layout']}`")
+    L.append("\n## What does NOT survive a power cycle\n")
+    L.append("- tmux layout, pane ids, `@repo` labels — rebuilt by the restore script")
+    L.append("- every local background job, including anything started with `setsid`")
+    L.append("- every in-session Monitor/watcher — transcripts still *show* them being "
+             "created, so nothing in a resumed session flags them as dead")
+    L.append("- cross-session message subscriptions")
+    L.append("\n## What DOES survive\n")
+    L.append("- jobs on a remote cluster (they run there, not here)")
+    L.append("- git repos, working trees, uncommitted changes")
+    L.append("- all transcripts under `~/.claude/projects/`")
+    L.append("- systemd `--user` units **only if they have a unit file on disk and are "
+             "enabled**. A transient unit created with `systemd-run --user` lives in `/run`, "
+             "which is tmpfs, and is GONE after a power cycle. Lingering keeps the user "
+             "manager alive without a login; it does not recreate transient units.")
+    for u in snap["user_units"]:
+        mark = "survives reboot" if u["survives_reboot"] else "**TRANSIENT — dies at reboot**"
+        L.append(f"  - `{u['unit']}` — {mark}  \n    `{u['fragment']}`")
+    with open(f"{STATE}/manifest.md", "w") as f:
+        f.write("\n".join(L) + "\n")
+    for n in winnotes:
+        print(f"    ! window name: {n}")
+    stale = [x for x in snap["sessions"] if x.get("label_note")]
+    for x in stale:
+        print(f"    ! {x['label']}: {x['label_note']}")
+    print(f"captured {len(snap['sessions'])} sessions in {len(fleets)} fleets -> {STATE}/")
+    for name, members in sorted(fleets.items()):
+        print(f"    {name:<12} {len(members)}  {', '.join(m['label'] for m in members)}")
+    incomplete = [s for s in snap["sessions"] if s["membership_problems"]]
+    if incomplete:
+        print(f"\n!! {len(incomplete)} of {len(snap['sessions'])} sessions incomplete "
+              "(every member needs a brief and a declared colour):")
+        for s in incomplete:
+            for p in s["membership_problems"]:
+                print(f"   {s['label']:<20} {p['problem']}\n   {'':<20} -> {p['fix']}")
+    else:
+        print(f"    membership: all {len(snap['sessions'])} have a brief and their declared colour")
+
+if __name__ == "__main__":
+    main()
