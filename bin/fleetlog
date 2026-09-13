@@ -131,7 +131,12 @@ def parse_transcript(path):
                     continue
                 if attrs.get("from"):
                     SOCKMAP[attrs["from"]] = sender
-                body = s[m.end():m.end() + 4000]
+                # The body is what lies between the tags, stripped -- the same text
+                # the sender's SendMessage recorded. Taking a fixed span after the
+                # open tag kept the newline, the closing tag and any harness text
+                # after it, so no received copy ever matched the sent one and
+                # every message counted two or three times (reported 2026-09-13).
+                body = s[m.end():m.end() + 8000].split("</cross-session-message>", 1)[0].strip()
                 key = hashlib.md5((sender + body[:400]).encode()).hexdigest()
                 if key in seen:
                     continue           # same message queued and delivered
@@ -149,7 +154,7 @@ def parse_transcript(path):
                     to = canon(inp.get("to") or inp.get("recipient"))
                     if not to:
                         continue
-                    body = inp.get("message") or inp.get("content") or ""
+                    body = str(inp.get("message") or inp.get("content") or "").strip()
                     events.append({"ts": ts, "dir": "out", "peer": to,
                                    "subject": inp.get("summary") or first_line(body),
                                    "body": body, "src": "SendMessage"})
