@@ -100,5 +100,34 @@ class Rotate(unittest.TestCase):
         finally:
             cfg.close()
 
+
+class Arguments(unittest.TestCase):
+    """fleetsnap takes no arguments. It used to ignore them, so `fleetsnap --help`
+    took a real snapshot and wrote the state directory (2026-09-13)."""
+    def run_tool(self, *args):
+        import subprocess
+        from tests.support import APP
+        cfg = FakeConfig()
+        env = dict(os.environ, TMUX_TMPDIR=tempfile.mkdtemp(prefix="ft", dir="/tmp"))
+        env.pop("TMUX", None)
+        try:
+            r = subprocess.run([os.path.join(APP, "bin", "fleetsnap"), *args],
+                               capture_output=True, text=True, env=env)
+            return r, os.listdir(cfg.state)
+        finally:
+            import shutil
+            shutil.rmtree(env["TMUX_TMPDIR"]); cfg.close()
+
+    def test_help_writes_nothing(self):
+        r, written = self.run_tool("--help")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("fleetsnap", r.stdout)
+        self.assertEqual(written, [])
+
+    def test_unknown_argument_refused(self):
+        r, written = self.run_tool("--dry-run")
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(written, [])
+
 if __name__ == "__main__":
     unittest.main()

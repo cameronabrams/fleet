@@ -252,6 +252,14 @@ def linger_units():
     return out
 
 def main():
+    # Takes no arguments. It used to ignore them, so `fleetsnap --help` wrote a
+    # real snapshot (2026-09-13). A tool that writes state must not do so on a
+    # request for its usage.
+    if sys.argv[1:]:
+        if sys.argv[1] in ("-h", "--help"):
+            print(__doc__.strip())
+            return
+        sys.exit(f"fleetsnap: takes no arguments (got {' '.join(sys.argv[1:])}); see --help")
     prior = prior_snapshot()
     meta = window_meta()
     layouts = window_layouts(meta)
