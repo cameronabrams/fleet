@@ -43,7 +43,8 @@ echo "config      : $CFG"
 echo
 echo "tools -> $BIN"
 mkdir -p "$BIN"
-for t in "$APP"/bin/*; do plan "$BIN/$(basename "$t")" "$t"; done
+# Executable files only: a __pycache__ left by running a tool is not a tool.
+for t in "$APP"/bin/*; do [ -f "$t" ] && [ -x "$t" ] && plan "$BIN/$(basename "$t")" "$t"; done
 echo
 echo "application skills -> $SK"
 for s in "$APP"/skills/*/; do plan "$SK/$(basename "$s")" "${s%/}"; done

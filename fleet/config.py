@@ -127,12 +127,72 @@ def stopped(cfg):
             if name in out:
                 raise ConfigError(f"{name!r} is both parked and retired")
             out[name] = {"state": state, "uuid": uuid, "since": str(since),
-                         "note": rec.get("note", "")}
+                         "note": rec.get("note", ""), "group": rec.get("group", ""),
+                         "cwd": os.path.expanduser(rec.get("cwd", "")) if rec.get("cwd") else ""}
     return out
 
 def stopped_uuids(cfg):
     """Resume uuid -> (name, state) for every parked or retired session."""
     return {v["uuid"]: (k, v["state"]) for k, v in stopped(cfg).items()}
+
+def display_zone(cfg):
+    """(zone name, where it came from) for showing times to the human.
+
+    [human] timezone_file names a file holding the human's CURRENT zone, re-read on
+    every run, for a human who travels; [human] timezone is a fixed zone. The file
+    wins when it is readable and names a real zone. Otherwise UTC -- and the caller
+    must label it, because an unlabelled time in the wrong zone reads as right."""
+    from zoneinfo import ZoneInfo
+    human = cfg.get("human", {})
+    tried = []
+    f = human.get("timezone_file")
+    if f:
+        path = os.path.expanduser(f)
+        try:
+            z = open(path).read().strip()
+            ZoneInfo(z)
+            return z, f"from {f}"
+        except Exception as e:
+            tried.append(f"{f}: {type(e).__name__}")
+    z = human.get("timezone")
+    if z:
+        try:
+            ZoneInfo(z)
+            return z, "[human] timezone" + (f" ({'; '.join(tried)})" if tried else "")
+        except Exception as e:
+            tried.append(f"timezone {z!r}: {type(e).__name__}")
+    return "UTC", "no usable [human] timezone" + (f" ({'; '.join(tried)})" if tried else "")
+
+def events(tz):
+    """Declared fleet events from <config>/events.toml: [(epoch, label, detail, has_time)].
+
+    [[event]] date = "YYYY-MM-DD", time = "HH:MM" (optional), label, detail
+    (optional). Times are in `tz`, the display zone. A date without a time is kept
+    as a date: has_time False, epoch at that day's start."""
+    import datetime
+    from zoneinfo import ZoneInfo
+    path = os.path.join(config_dir(), "events.toml")
+    if not os.path.exists(path):
+        return []
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
+    out = []
+    for i, e in enumerate(data.get("event", [])):
+        try:
+            day = datetime.date.fromisoformat(str(e["date"]))
+            label = str(e["label"])
+        except (KeyError, ValueError) as err:
+            raise ConfigError(f"events.toml event {i + 1}: needs date = \"YYYY-MM-DD\" and label ({err})")
+        t = str(e.get("time", "")).strip()
+        hh, mm = (0, 0)
+        if t:
+            try:
+                hh, mm = (int(x) for x in t.split(":"))
+            except ValueError:
+                raise ConfigError(f"events.toml event {i + 1}: time must be HH:MM, got {t!r}")
+        when = datetime.datetime(day.year, day.month, day.day, hh, mm, tzinfo=ZoneInfo(tz))
+        out.append((when.timestamp(), label, str(e.get("detail", "")), bool(t)))
+    return sorted(out)
 
 def launch_env(cfg):
     """`KEY=val ...` prefix for launching a claude session, from [spawn].env.

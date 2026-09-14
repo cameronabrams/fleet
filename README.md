@@ -43,6 +43,7 @@ when you need it.
 | `fleetlog` | reconstruct the cross-session message graph |
 | `fleetcost` | measure what inter-session messages cost in re-read tokens |
 | `fleetwaiting` | which sessions are blocked waiting on a human |
+| `fleetgantt` | every session's life as a Gantt chart (standalone HTML) |
 | `fleetspawn` | bring one new session in, or a parked one back (plan by default) |
 | `fleetretire` | park or retire one session: checks, resume recipe, `/exit` (plan by default) |
 

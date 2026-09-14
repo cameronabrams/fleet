@@ -18,6 +18,9 @@ The same directory holds:
 ``conventions.md``
    The fleet's working rules, which every brief points to.
 
+``events.toml``
+   Fleet events for :doc:`tools/fleetgantt` (optional).
+
 ``skills/<name>/``
    Site skills (hosts, accounts, partitions), linked by ``install`` alongside the
    application's skills.
@@ -38,9 +41,16 @@ Sections
 ``aliases``
    Other words sessions use for the human, such as a role or a pronoun.
 
-Read by :doc:`tools/fleetwaiting`, which builds its "blocked on the human" patterns
-from these. "the human" and "the user" always count. Without a name it matches only
-those two, and says so.
+``timezone_file``
+   A file holding the human's current time zone (e.g. ``America/New_York``), re-read
+   on every run.
+``timezone``
+   A fixed zone, used when the file is absent or unusable.
+
+``name`` and ``aliases`` are read by :doc:`tools/fleetwaiting`, which builds its
+"blocked on the human" patterns from them; "the human" and "the user" always count.
+Without a name it matches only those two, and says so. The zone settings are read by
+:doc:`tools/fleetgantt`, which falls back to UTC and labels whichever it used.
 
 ``[paths]``
 ~~~~~~~~~~~
@@ -119,6 +129,10 @@ Sessions stopped with :doc:`tools/fleetretire`, one table each:
    Required. ``YYYY-MM-DD``.
 ``note``
    Optional.
+``group``, ``cwd``
+   Optional. The fleet group and working directory the session had, so
+   :doc:`tools/fleetgantt` keeps its lane in its group and can place its unnamed
+   transcripts. Neither is knowable once the process is gone.
 
 :doc:`tools/fleetretire` prints the entry; the configuration owner adds it. A name
 may not be both parked and retired, and ``uuid`` must be a full session uuid.

@@ -202,6 +202,8 @@ class Act(Base):
         self.assertIn(("kill-pane", "-t", "%7"), self.calls)
         self.assertIn("[parked.alpha]", out)
         self.assertIn(f'uuid  = "{UUID}"', out)
+        self.assertIn('group = "f"', out)                         # keeps its chart lane
+        self.assertIn(f'cwd   = "{self.cwd}"', out)
 
     def test_retire_moves_ledger(self):
         os.makedirs(os.path.dirname(self.ledger()))

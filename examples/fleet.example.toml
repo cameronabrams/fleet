@@ -11,6 +11,8 @@
 [human]
 name    = "Alex"
 aliases = []                                      # other words sessions use, e.g. a role
+timezone = "America/New_York"                     # fleetgantt's display zone
+# timezone_file = "~/.local/state/fleet/tz"       # or: a file holding the current zone
 
 [paths]
 state       = "~/.local/state/fleet"
@@ -36,6 +38,8 @@ project-a-runs = "cyan"
 # uuid  = "<resume uuid>"
 # since = "2026-09-13"
 # note  = "resume when the next campaign starts"
+# group = "project-a"                              # optional: keeps its fleetgantt lane
+# cwd   = "/home/me/project-a-runs"                # optional: places its unnamed transcripts
 
 [cluster.mycluster]
 ssh_host        = "mycluster"            # an ssh alias that works non-interactively

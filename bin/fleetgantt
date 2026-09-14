@@ -1,0 +1,270 @@
+#!/usr/bin/env python3
+"""fleetgantt - draw every fleet session's life as a Gantt chart: one lane per role,
+one track per transcript, its active stretches, and fleet events.
+
+  fleetgantt                          write the page; print its path
+  fleetgantt --since 2026-09-01       window start (a date, or "YYYY-MM-DD HH:MM")
+  fleetgantt --until 2026-09-10       window end (default: now)
+  fleetgantt --out FILE               write here instead of <state>/gantt/
+  fleetgantt --json                   print the lane data instead of writing a page
+  fleetgantt --all                    also draw transcripts that belong to no role
+  fleetgantt --no-derived             declared events only
+
+Read-only apart from the page it writes. Everything is derived from transcripts
+and configuration:
+
+  roles    live sessions from the last fleetsnap manifest (lane group = @fleet),
+           plus [parked] and [retired] in fleet.toml (group = their `group`, else
+           "parked"/"retired")
+  identity fleet.identity: a transcript's own last name, else what the rename
+           table says a retired name became, else its directory's owner -- the
+           last two are inferences and drawn as such
+  events   <config>/events.toml (declared), plus claude versions reaching two or
+           more roles and park/retire dates (derived)
+  times    shown in [human] timezone_file / timezone, labelled on the page
+
+A transcript that belongs to no role and ran in no role's directory is counted in
+the footer, not drawn (--all draws it in the unattached lane).
+"""
+import argparse, datetime, glob, json, os, shutil, sys, time
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from zoneinfo import ZoneInfo
+from fleet import config as fc
+from fleet import history, identity
+from fleet.transcripts import project_slug
+
+CFG = fc.load()
+STATE = fc.state_dir(CFG)
+PROJECTS = os.path.expanduser("~/.claude/projects")
+TEMPLATE = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "fleet", "gantt.html")
+UNATTACHED = "unattached"
+
+def roles_from_config():
+    """[(role, group, state, cwd)] in lane order: live sessions in manifest order,
+    then parked and retired ones."""
+    out, seen = [], set()
+    try:
+        man = json.load(open(os.path.join(STATE, "manifest.json")))
+        sessions = man.get("sessions", [])
+    except (OSError, ValueError):
+        sessions = []
+    for s in sessions:
+        if s.get("label") and s["label"] not in seen:
+            seen.add(s["label"])
+            out.append((s["label"], s.get("fleet") or "fleet", "live", s.get("cwd") or ""))
+    for name, rec in sorted(fc.stopped(CFG).items()):
+        if name not in seen:
+            seen.add(name)
+            out.append((name, rec["group"] or rec["state"], rec["state"], rec["cwd"]))
+    return out, bool(sessions)
+
+def directory_owners(roles):
+    """project dir name -> role, for directories exactly one role works in; and the
+    set of all role directories. A directory two roles share owns nothing: placing an
+    unnamed transcript there would be a guess."""
+    by_dir = {}
+    for role, _, _, cwd in roles:
+        if cwd:
+            by_dir.setdefault(project_slug(cwd), []).append(role)
+    owners = {d: rs[0] for d, rs in by_dir.items() if len(rs) == 1}
+    return owners, by_dir
+
+def parse_when(s, tz, end=False):
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            d = datetime.datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+        if fmt == "%Y-%m-%d" and end:
+            d += datetime.timedelta(days=1)
+        return d.replace(tzinfo=ZoneInfo(tz)).timestamp()
+    raise SystemExit(f"fleetgantt: cannot read {s!r}; use YYYY-MM-DD or 'YYYY-MM-DD HH:MM'")
+
+def local_midnight(t, tz, days=0):
+    d = datetime.datetime.fromtimestamp(t, ZoneInfo(tz)).date() + datetime.timedelta(days=days)
+    return datetime.datetime(d.year, d.month, d.day, tzinfo=ZoneInfo(tz)).timestamp()
+
+def day_ticks(t0, t1, tz):
+    out, t = [], t0
+    while t <= t1:
+        d = datetime.datetime.fromtimestamp(t, ZoneInfo(tz))
+        out.append([t, d.strftime("%b ") + str(d.day), d.weekday() == 0, d.day == 1])
+        t = local_midnight(t, tz, 1)
+    return out
+
+def scan_all():
+    rows = []
+    for f in glob.glob(f"{PROJECTS}/*/*.jsonl"):
+        if os.path.basename(os.path.dirname(f)).startswith("-tmp-"):
+            continue                     # scratch-directory projects, not sessions
+        r = history.scan(f)
+        if r:
+            rows.append(r)
+    return rows
+
+def pack(segs):
+    """Assign overlapping tracks of one lane to sub-rows."""
+    ends = []
+    for s in sorted(segs, key=lambda s: s["start"]):
+        for i, e in enumerate(ends):
+            if s["start"] >= e:
+                s["row"], ends[i] = i, s["end"]
+                break
+        else:
+            s["row"] = len(ends)
+            ends.append(s["end"])
+    return max(1, len(ends))
+
+def build(a):
+    tz, tz_source = fc.display_zone(CFG)
+    roles, have_manifest = roles_from_config()
+    role_names = {r for r, _, _, _ in roles}
+    owners, by_dir = directory_owners(roles)
+    colors = fc.colors(CFG)
+    rows = scan_all()
+
+    def seq(r):
+        out = []
+        for _, n in r["names"]:
+            if not out or out[-1] != n:
+                out.append(n)
+        return out
+    newest_first = sorted(rows, key=lambda r: r["last"], reverse=True)
+    # Lineage only (a name a transcript later changed to a role's). The table's
+    # directory fallback would put a transcript that named itself something else
+    # into that directory's lane, which is the guess the chart keeps apart.
+    renames = identity.rename_map([(r["project"], seq(r)) for r in newest_first], role_names, {})
+
+    segs, others = [], []
+    for r in rows:
+        own = (r["agent_names"][-1] if r["agent_names"]
+               else (r["names"][-1][1] if r["names"] else None))
+        who, how, inferred = identity.attribute(own, r["project"], role_names, renames, owners,
+                                                place_named=False)
+        lane, note = who, None
+        if who not in role_names:
+            shared = by_dir.get(r["project"], [])
+            if len(shared) > 1:
+                note = "directory shared by " + ", ".join(shared) + ": not placed"
+            if not shared and not a.all:
+                others.append(r)
+                continue
+            lane = UNATTACHED
+        segs.append({"role": lane, "uuid": r["uuid"][:8], "name": own, "how": how,
+                     "inferred": inferred and lane != UNATTACHED, "note": note,
+                     "dir": r["cwd"] or r["project"], "start": r["first"], "end": r["last"],
+                     "bins": r["bins"], "clear": r["clear"], "compact": r["compact"],
+                     "renames": r["renames"], "sent": r["sent"], "received": r["received"],
+                     "versions": r["versions"], "_seen": r["version_seen"]})
+
+    if not segs:
+        raise SystemExit("fleetgantt: no transcripts belong to any role "
+                         "(is there a fleetsnap manifest, or [parked]/[retired] entries?)")
+    first = min(s["start"] for s in segs)
+    now = time.time()
+    # Whole days in the display zone: from the midnight at or before the start, to
+    # the end of today -- or exactly to --until (a bare date means the end of it).
+    t0 = local_midnight(parse_when(a.since, tz) if a.since else first, tz)
+    t1 = parse_when(a.until, tz, end=True) if a.until else local_midnight(now, tz, 1)
+    if t1 <= t0:
+        raise SystemExit("fleetgantt: --until is not after --since")
+    segs = [s for s in segs if s["end"] >= t0 and s["start"] < t1]
+    for s in segs:
+        s["start"], s["end"] = max(s["start"], t0), min(s["end"], t1)
+        lo, hi = int(t0 // history.BIN), int(t1 // history.BIN)
+        s["bins"] = [b for b in s["bins"] if lo <= b < hi]
+        s["compact"] = [c for c in s["compact"] if t0 <= c < t1]
+        s["renames"] = [x for x in s["renames"] if t0 <= x[0] < t1]
+
+    events = [{"t": t, "label": l, "detail": d, "has_time": h, "kind": "declared"}
+              for t, l, d, h in fc.events(tz) if t0 <= t < t1]
+    versions = []
+    if not a.no_derived:
+        for name, rec in fc.stopped(CFG).items():
+            t = datetime.datetime.fromisoformat(rec["since"]).replace(tzinfo=ZoneInfo(tz)).timestamp()
+            if t0 <= t < t1:
+                events.append({"t": t, "label": f"{name} {rec['state']}", "detail": rec["note"],
+                               "has_time": False, "kind": "derived"})
+        # A claude version "reached the fleet" when two or more roles ran it.
+        reach = {}
+        for s in segs:
+            if s["role"] == UNATTACHED:
+                continue
+            for v, t in s["_seen"].items():
+                reach.setdefault(v, {}).setdefault(s["role"], t)
+                reach[v][s["role"]] = min(reach[v][s["role"]], t)
+        for v, by_role in reach.items():
+            if len(by_role) >= 2:
+                t = sorted(by_role.values())[1]      # the second role to run it
+                if t0 <= t < t1:
+                    versions.append({"t": t, "v": v, "roles": len(by_role)})
+        versions.sort(key=lambda x: x["t"])
+    events.sort(key=lambda e: e["t"])
+    for s in segs:
+        del s["_seen"]
+
+    lanes, order = [], []
+    for role, group, state, _ in roles:
+        order.append((role, group, state))
+    if any(s["role"] == UNATTACHED for s in segs):
+        order.append((UNATTACHED, UNATTACHED, UNATTACHED))
+    groups_seen = []
+    for _, g, _ in order:
+        if g not in groups_seen:
+            groups_seen.append(g)
+    for g in groups_seen:
+        for role, group, state in order:
+            if group != g:
+                continue
+            mine = [s for s in segs if s["role"] == role]
+            if not mine and state != "live":
+                continue                         # a stopped role with nothing in the window
+            lanes.append({"group": g, "role": role, "state": state,
+                          "color": colors.get(role) or "gray", "rows": pack(mine),
+                          "segs": sorted(mine, key=lambda s: s["start"])})
+    zone_now = datetime.datetime.fromtimestamp(now, ZoneInfo(tz))
+    return {"zone": tz, "zone_source": tz_source, "zone_abbr": zone_now.strftime("%Z"),
+            "generated": zone_now.strftime("%Y-%m-%d %H:%M %Z"), "have_manifest": have_manifest,
+            "t0": t0, "t1": t1, "now": min(now, t1), "bin": history.BIN,
+            "days": day_ticks(t0, t1, tz), "lanes": lanes, "events": events,
+            "versions": versions, "other": {"count": len(others),
+                                            "projects": sorted({r["project"] for r in others})}}
+
+def render(data):
+    page = open(TEMPLATE, encoding="utf-8").read()
+    blob = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
+    return page.replace("__DATA__", blob, 1)
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--since"); ap.add_argument("--until")
+    ap.add_argument("--out", help="write the page here")
+    ap.add_argument("--json", action="store_true", help="print lane data; write nothing")
+    ap.add_argument("--all", action="store_true", help="also draw transcripts of no role")
+    ap.add_argument("--no-derived", action="store_true", help="declared events only")
+    a = ap.parse_args()
+    data = build(a)
+    if a.json:
+        json.dump(data, sys.stdout, indent=1)
+        print()
+        return
+    if not data["have_manifest"]:
+        print("fleetgantt: no fleetsnap manifest; only parked/retired roles have lanes", file=sys.stderr)
+    html = render(data)
+    if a.out:
+        path = os.path.abspath(a.out)
+    else:
+        stamp = datetime.datetime.now(ZoneInfo(data["zone"])).strftime("%Y%m%d-%H%M")
+        path = os.path.join(STATE, "gantt", f"fleet-gantt-{stamp}.html")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+    if not a.out:
+        shutil.copyfile(path, os.path.join(os.path.dirname(path), "latest.html"))
+    n = sum(len(l["segs"]) for l in data["lanes"])
+    print(f"{path}\n  {len([l for l in data['lanes'] if l['role'] != UNATTACHED])} roles, {n} transcripts, "
+          f"{len(data['events'])} events; times in {data['zone']} ({data['zone_source']})"
+          + (f"; {data['other']['count']} transcripts of no role not drawn" if data["other"]["count"] else ""))
+
+if __name__ == "__main__":
+    main()

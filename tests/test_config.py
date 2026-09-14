@@ -110,5 +110,52 @@ class Stopped(unittest.TestCase):
             with self.assertRaises(fc.ConfigError, msg=bad):
                 fc.stopped(bad)
 
+
+class Zone(unittest.TestCase):
+    def test_file_wins_then_fixed_then_utc(self):
+        cfg = FakeConfig()
+        try:
+            f = os.path.join(cfg.root, "tz")
+            open(f, "w").write("Europe/Lisbon\n")
+            self.assertEqual(fc.display_zone({"human": {"timezone_file": f, "timezone": "Asia/Tokyo"}})[0],
+                             "Europe/Lisbon")
+            open(f, "w").write("Not/AZone\n")
+            z, why = fc.display_zone({"human": {"timezone_file": f, "timezone": "Asia/Tokyo"}})
+            self.assertEqual(z, "Asia/Tokyo"); self.assertIn("ZoneInfoNotFoundError", why)
+            self.assertEqual(fc.display_zone({"human": {"timezone_file": f + ".missing"}})[0], "UTC")
+            self.assertEqual(fc.display_zone({})[0], "UTC")
+        finally:
+            cfg.close()
+
+class Events(unittest.TestCase):
+    def setUp(self):
+        self.cfg = FakeConfig()
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def write(self, text):
+        open(os.path.join(self.cfg.config, "events.toml"), "w").write(text)
+
+    def test_times_in_zone_and_date_only(self):
+        self.write('[[event]]\ndate = "2026-09-09"\ntime = "10:01"\nlabel = "b"\n'
+                   '[[event]]\ndate = "2026-09-07"\nlabel = "a"\ndetail = "d"\n')
+        ev = fc.events("America/New_York")
+        self.assertEqual([(e[1], e[3]) for e in ev], [("a", False), ("b", True)])   # sorted by time
+        import datetime
+        utc = datetime.datetime(2026, 9, 9, 14, 1, tzinfo=datetime.timezone.utc).timestamp()
+        self.assertEqual(ev[1][0], utc)                  # 10:01 EDT is 14:01 UTC
+        self.assertEqual(fc.events("UTC")[1][0] - ev[1][0], -4 * 3600)
+
+    def test_missing_file_is_no_events(self):
+        self.assertEqual(fc.events("UTC"), [])
+
+    def test_bad_entries(self):
+        for bad in ('[[event]]\nlabel = "no date"\n', '[[event]]\ndate = "2026-09-09"\n',
+                    '[[event]]\ndate = "2026-09-09"\ntime = "10am"\nlabel = "x"\n'):
+            self.write(bad)
+            with self.assertRaises(fc.ConfigError, msg=bad):
+                fc.events("UTC")
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet lifelines</title>
+<style>
+:root {
+  color-scheme: light;
+  --ground: #f4f5f1; --ink: #16191c; --ink-2: #4f565c; --ink-3: #737b80;
+  --rule: #dcdfd8; --rule-strong: #c4c9c1; --track: #a9b0a8;
+  --active: #1d6c86; --active-soft: #8fb9c7; --event: #9a5a07; --derived: #6b6f8a;
+  --band: #eaece6; --tip-bg: #16191c; --tip-ink: #f1f3ee; --focus: #1d6c86;
+  --sw-red: #cf3f36; --sw-blue: #2f6fd6; --sw-green: #2e9a4a; --sw-yellow: #c28a00;
+  --sw-purple: #8052c8; --sw-orange: #df6a1c; --sw-pink: #d24f93; --sw-cyan: #1597ab; --sw-gray: #9aa09a;
+  --mono: ui-monospace, "SFMono-Regular", "DejaVu Sans Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0f1214; --ink: #e5e8e3; --ink-2: #a8afb3; --ink-3: #858d92;
+    --rule: #22282b; --rule-strong: #333b3f; --track: #525b5f;
+    --active: #5eb4d0; --active-soft: #2f5d6c; --event: #e0a24a; --derived: #a3a8c8;
+    --band: #151a1d; --tip-bg: #e5e8e3; --tip-ink: #0f1214; --focus: #5eb4d0;
+    --sw-red: #e8665e; --sw-blue: #5b91ec; --sw-green: #4fbd6a; --sw-yellow: #e0ad2b;
+    --sw-purple: #a37fe6; --sw-orange: #f08a45; --sw-pink: #ea78b1; --sw-cyan: #38bccf; --sw-gray: #6f7773;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0f1214; --ink: #e5e8e3; --ink-2: #a8afb3; --ink-3: #858d92;
+  --rule: #22282b; --rule-strong: #333b3f; --track: #525b5f;
+  --active: #5eb4d0; --active-soft: #2f5d6c; --event: #e0a24a; --derived: #a3a8c8;
+  --band: #151a1d; --tip-bg: #e5e8e3; --tip-ink: #0f1214; --focus: #5eb4d0;
+  --sw-red: #e8665e; --sw-blue: #5b91ec; --sw-green: #4fbd6a; --sw-yellow: #e0ad2b;
+  --sw-purple: #a37fe6; --sw-orange: #f08a45; --sw-pink: #ea78b1; --sw-cyan: #38bccf; --sw-gray: #6f7773;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--ground); color: var(--ink);
+  font-family: var(--mono); font-size: 13px; line-height: 1.5;
+  padding-inline: clamp(16px, 3vw, 40px); padding-block: 28px 48px;
+}
+.wrap { max-width: 1480px; margin: 0 auto; display: grid; gap: 22px; }
+header { display: grid; gap: 10px; }
+.eyebrow { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+h1 { font-family: var(--sans); font-weight: 700; font-size: clamp(28px, 4vw, 42px); line-height: 1.05; margin: 0; }
+.lede { max-width: 72ch; color: var(--ink-2); margin: 0; }
+.stats { display: flex; flex-wrap: wrap; gap: 8px 28px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.stat b { font-family: var(--sans); font-size: 22px; font-weight: 600; display: block; line-height: 1.1; }
+.stat span { font-size: 11px; color: var(--ink-3); letter-spacing: .04em; text-transform: uppercase; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center; color: var(--ink-2); font-size: 12px; padding-block: 10px; border-block: 1px solid var(--rule); }
+.legend svg { vertical-align: middle; margin-right: 6px; }
+.chart-box { overflow-x: auto; border-bottom: 1px solid var(--rule); }
+.chart-box:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+svg text { font-family: var(--mono); }
+.notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px 36px; color: var(--ink-2); font-size: 12.5px; }
+.notes h2 { font-family: var(--sans); font-size: 15px; font-weight: 600; color: var(--ink); margin: 0 0 4px; }
+.notes p { margin: 0; max-width: 62ch; }
+code { font-family: var(--mono); color: var(--ink); }
+#tip { position: fixed; pointer-events: none; z-index: 10; max-width: 360px; background: var(--tip-bg); color: var(--tip-ink);
+  padding: 10px 12px; border-radius: 4px; font-size: 12px; line-height: 1.45; box-shadow: 0 6px 20px rgb(0 0 0 / .22); font-variant-numeric: tabular-nums; }
+#tip .t { font-family: var(--sans); font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+#tip .k { opacity: .65; }
+#tip .row { display: flex; justify-content: space-between; gap: 16px; }
+.hit { fill: transparent; }
+.seg:hover .trk { stroke: var(--ink-2); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow" id="eyebrow"></div>
+    <h1>Fleet lifelines</h1>
+    <p class="lede">One lane per role in the fleet. Each thin track is one transcript, from its first record
+      to its last; the solid ticks on it are the 15-minute stretches in which that session wrote anything.
+      A new track starts when a session is launched fresh or <code>/clear</code>ed; a resumed session keeps
+      writing to the same track.</p>
+    <div class="stats" id="stats"></div>
+  </header>
+
+  <div class="legend" aria-label="Legend">
+    <span><svg width="46" height="14" aria-hidden="true"><line x1="2" y1="7" x2="44" y2="7" stroke="var(--track)" stroke-width="1.5"/><rect x="10" y="2" width="7" height="10" fill="var(--active)"/><rect x="22" y="2" width="3" height="10" fill="var(--active)"/><rect x="30" y="2" width="9" height="10" fill="var(--active)"/></svg>transcript · active 15-min blocks</span>
+    <span><svg width="16" height="14" aria-hidden="true"><rect x="3" y="2" width="10" height="10" fill="var(--ink)"/></svg>launched fresh</span>
+    <span><svg width="16" height="14" aria-hidden="true"><circle cx="8" cy="7" r="4.5" fill="var(--ground)" stroke="var(--ink)" stroke-width="1.6"/></svg>started by <code>/clear</code></span>
+    <span><svg width="16" height="14" aria-hidden="true"><path d="M8 2 L13 7 L8 12 L3 7 Z" fill="var(--ground)" stroke="var(--ink-2)" stroke-width="1.4"/></svg>context compacted</span>
+    <span><svg width="16" height="14" aria-hidden="true"><line x1="8" y1="1" x2="8" y2="13" stroke="var(--ink)" stroke-width="1.6"/></svg>renamed</span>
+    <span><svg width="46" height="14" aria-hidden="true"><line x1="2" y1="7" x2="44" y2="7" stroke="var(--track)" stroke-width="1.5" stroke-dasharray="3 3"/><rect x="14" y="2" width="12" height="10" fill="var(--active-soft)"/></svg>placement inferred</span>
+    <span><svg width="16" height="14" aria-hidden="true"><line x1="8" y1="0" x2="8" y2="14" stroke="var(--event)" stroke-width="1.5" stroke-dasharray="2 2"/></svg>declared event</span>
+    <span><svg width="16" height="14" aria-hidden="true"><line x1="8" y1="0" x2="8" y2="14" stroke="var(--derived)" stroke-width="1.5" stroke-dasharray="1 3"/></svg>derived event</span>
+    <span><svg width="12" height="12" aria-hidden="true"><rect x="1" y="1" width="10" height="10" rx="2" fill="var(--sw-purple)"/></svg>declared <code>/color</code></span>
+  </div>
+
+  <div class="chart-box" id="box" tabindex="0" aria-label="Timeline chart; scroll sideways on small screens">
+    <svg id="chart" role="img" aria-labelledby="chart-title"><title id="chart-title">Timeline of fleet session transcripts</title></svg>
+  </div>
+
+  <section class="notes">
+    <div><h2>Reading a lane</h2><p>Several tracks in one lane are successive lives of the same role; tracks that
+      overlap in time are stacked. Hover a track for its span, activity, messages and versions.</p></div>
+    <div><h2>How identity was decided</h2><p>From each transcript's own last name record. Where that name is
+      retired, the transcript goes to the role the name became; where it recorded no name, to the role that owns
+      its directory. Both are inferences and drawn dashed and faded.</p></div>
+    <div><h2>What this does not show</h2><p>Restarts that resume a transcript leave no break in a track.
+      "Active" means some record was written in that 15 minutes, including while waiting on tools or jobs.
+      Message counts come from transcripts and miss any whose transcript is gone.</p></div>
+    <div><h2>Times and scope</h2><p id="scope"></p></div>
+  </section>
+</div>
+<div id="tip" hidden></div>
+
+<script id="data" type="application/json">__DATA__</script>
+<script>
+(() => {
+  const D = JSON.parse(document.getElementById("data").textContent);
+  const TZ = D.zone;
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (n, a = {}, p) => { const e = document.createElementNS(NS, n); for (const k in a) if (a[k] !== null) e.setAttribute(k, a[k]); if (p) p.appendChild(e); return e; };
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  const DAY = 86400, PXD = 36, LABEL = 184, PADR = 24;
+  const X = t => LABEL + (t - D.t0) / DAY * PXD;
+  const W = LABEL + (D.t1 - D.t0) / DAY * PXD + PADR;
+  const ROWH = 20, LANEPAD = 7, GROUPH = 26;
+  const fmtD = new Intl.DateTimeFormat("en-US", { timeZone: TZ, month: "short", day: "numeric" });
+  const fmtDT = new Intl.DateTimeFormat("en-US", { timeZone: TZ, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  const dt = t => fmtDT.format(new Date(t * 1000)).replace(",", "");
+  const dur = s => s < 3600 ? `${Math.max(1, Math.round(s / 60))} min` : s < 2 * DAY ? `${(s / 3600).toFixed(1)} h` : `${(s / DAY).toFixed(1)} d`;
+
+  document.getElementById("eyebrow").textContent =
+    `${fmtD.format(new Date(D.t0 * 1000))} – ${fmtD.format(new Date((D.t1 - 1) * 1000))} · Claude Code transcripts · generated ${D.generated}`;
+  document.getElementById("scope").innerHTML =
+    `Times are in <code>${esc(TZ)}</code> (${esc(D.zone_source)}).` +
+    (D.other.count ? ` ${D.other.count} transcript${D.other.count === 1 ? "" : "s"} of no role, outside every role's directory, ${D.other.count === 1 ? "is" : "are"} not drawn.` : "") +
+    (D.have_manifest ? "" : " No fleetsnap manifest was found, so live sessions have no lanes.");
+
+  const segs = D.lanes.flatMap(l => l.segs);
+  const roles = D.lanes.filter(l => l.state !== "unattached").length;
+  const activeH = segs.reduce((a, s) => a + s.bins.length, 0) * D.bin / 3600;
+  const sent = segs.reduce((a, s) => a + s.sent, 0);
+  const comp = segs.reduce((a, s) => a + s.compact.length, 0);
+  document.getElementById("stats").innerHTML = [[roles, "roles"], [segs.length, "transcripts"],
+    [Math.round(activeH).toLocaleString(), "active hours"], [sent.toLocaleString(), "messages sent"], [comp, "compactions"]]
+    .map(([v, k]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join("");
+
+  const tiers = 3, TOP = 24 + tiers * 24 + (D.versions.length ? 22 : 0);
+  let y = TOP, lastGroup = null;
+  const placed = [];
+  for (const l of D.lanes) {
+    if (l.group !== lastGroup) { placed.push({ group: l.group, y }); y += GROUPH; lastGroup = l.group; }
+    const h = l.rows * ROWH + LANEPAD * 2;
+    placed.push({ lane: l, y, h }); y += h;
+  }
+  const H = y + 30;
+  const svg = document.getElementById("chart");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("width", W); svg.setAttribute("height", H);
+  const gGrid = el("g", {}, svg), gEvents = el("g", {}, svg), gLanes = el("g", {}, svg), gTop = el("g", {}, svg);
+
+  const tipEl = document.getElementById("tip");
+  function tip(e, html) {
+    tipEl.innerHTML = html; tipEl.hidden = false;
+    const r = tipEl.getBoundingClientRect(), pad = 14;
+    let x = e.clientX + pad, yy = e.clientY + pad;
+    if (x + r.width > innerWidth - 8) x = e.clientX - r.width - pad;
+    if (yy + r.height > innerHeight - 8) yy = e.clientY - r.height - pad;
+    tipEl.style.left = x + "px"; tipEl.style.top = yy + "px";
+  }
+  const hideTip = () => { tipEl.hidden = true; };
+  const hover = (node, html) => { node.addEventListener("mousemove", e => tip(e, html)); node.addEventListener("mouseleave", hideTip); };
+
+  // Day grid: a label on Mondays, the first day shown, and the 1st of a month
+  D.days.forEach(([t, label, monday, first], i) => {
+    el("line", { x1: X(t), x2: X(t), y1: TOP - 6, y2: H - 24, stroke: monday || first ? "var(--rule-strong)" : "var(--rule)" }, gGrid);
+    if (t < D.t1 && (monday || i === 0 || first)) el("text", { x: X(t) + 3, y: H - 10, fill: "var(--ink-3)", "font-size": 11 }, gGrid).textContent = label;
+  });
+
+  // Events: declared in amber, derived in slate; a date without a time is a day band
+  D.events.forEach((ev, i) => {
+    const x = X(ev.t), color = ev.kind === "declared" ? "var(--event)" : "var(--derived)";
+    const ly = 14 + (i % tiers) * 24;
+    if (!ev.has_time) el("rect", { x, y: TOP - 6, width: PXD, height: H - 18 - TOP, fill: color, opacity: .07 }, gEvents);
+    el("line", { x1: x, x2: x, y1: ly + 13, y2: H - 24, stroke: color, "stroke-width": 1.2, "stroke-dasharray": ev.kind === "declared" ? "2 3" : "1 3", opacity: .75 }, gEvents);
+    const end = x > W - 220;
+    el("text", { x: end ? x - 5 : x + 5, y: ly + 10, "text-anchor": end ? "end" : "start", fill: color, "font-size": 11, "font-weight": 500 }, gTop).textContent = ev.label;
+    const when = ev.has_time ? dt(ev.t) : fmtD.format(new Date((ev.t + 43200) * 1000)) + " (date only)";
+    hover(el("rect", { x: end ? x - 200 : x, y: ly - 2, width: 200, height: 18, class: "hit" }, gTop),
+      `<div class="t">${esc(ev.label)}</div><div class="k">${when} · ${ev.kind}</div>${ev.detail ? `<div>${esc(ev.detail)}</div>` : ""}`);
+  });
+
+  // Claude versions that reached two or more roles, on their own row
+  if (D.versions.length) {
+    const vy = TOP - 18;
+    el("text", { x: 0, y: vy + 4, fill: "var(--ink-3)", "font-size": 10.5, "letter-spacing": ".06em" }, gTop).textContent = "CLAUDE VERSIONS";
+    D.versions.forEach(v => {
+      const x = X(v.t);
+      el("path", { d: `M${x} ${vy - 4} l4 8 l-8 0 z`, fill: "var(--derived)" }, gTop);
+      hover(el("rect", { x: x - 6, y: vy - 8, width: 12, height: 16, class: "hit" }, gTop),
+        `<div class="t">claude ${esc(v.v)}</div><div class="k">${dt(v.t)} · second role to run it · ${v.roles} roles in all</div>`);
+    });
+  }
+
+  placed.forEach((p, idx) => {
+    if (p.group) {
+      el("line", { x1: 0, x2: W, y1: p.y + GROUPH - 4, y2: p.y + GROUPH - 4, stroke: "var(--rule-strong)" }, gLanes);
+      el("text", { x: 0, y: p.y + GROUPH - 10, fill: "var(--ink-3)", "font-size": 10.5, "letter-spacing": ".08em" }, gLanes)
+        .textContent = p.group === "unattached" ? "NOT A ROLE" : p.group.toUpperCase();
+      return;
+    }
+    const l = p.lane;
+    if (idx % 2 === 0) el("rect", { x: 0, y: p.y, width: W, height: p.h, fill: "var(--band)" }, gLanes);
+    if (l.state !== "unattached") el("rect", { x: 0, y: p.y + p.h / 2 - 5, width: 10, height: 10, rx: 2, fill: `var(--sw-${l.color})` }, gLanes);
+    const lab = l.state === "unattached" ? "other names" : l.role + (l.state === "live" ? "" : ` (${l.state})`);
+    el("text", { x: 18, y: p.y + p.h / 2 + 4, fill: l.state === "live" ? "var(--ink)" : "var(--ink-2)", "font-size": 12.5, "font-weight": 500 }, gLanes).textContent = lab;
+
+    for (const s of l.segs) {
+      const cy = p.y + LANEPAD + s.row * ROWH + ROWH / 2;
+      const g = el("g", { class: "seg" }, gLanes);
+      const x0 = X(s.start), x1 = Math.max(X(s.end), x0 + 2);
+      el("line", { class: "trk", x1: x0, x2: x1, y1: cy, y2: cy, stroke: "var(--track)", "stroke-width": 1.5, "stroke-dasharray": s.inferred ? "3 3" : null }, g);
+      const runs = []; let a = null, b = null;
+      for (const k of s.bins) { if (a === null) a = b = k; else if (k === b + 1) b = k; else { runs.push([a, b]); a = b = k; } }
+      if (a !== null) runs.push([a, b]);
+      for (const [ra, rb] of runs) {
+        const rx = X(ra * D.bin), rw = Math.max(1.2, X((rb + 1) * D.bin) - rx);
+        el("rect", { x: rx, y: cy - 5, width: rw, height: 10, fill: s.inferred ? "var(--active-soft)" : "var(--active)" }, g);
+      }
+      for (const c of s.compact) el("path", { d: `M${X(c)} ${cy - 10} l4 4 l-4 4 l-4 -4 z`, fill: "var(--ground)", stroke: "var(--ink-2)", "stroke-width": 1.2 }, g);
+      if (s.clear) el("circle", { cx: x0, cy, r: 4, fill: "var(--ground)", stroke: "var(--ink)", "stroke-width": 1.6 }, g);
+      else el("rect", { x: x0 - 3.5, y: cy - 3.5, width: 7, height: 7, fill: s.inferred ? "var(--ink-3)" : "var(--ink)" }, g);
+      for (const [t] of s.renames) el("line", { x1: X(t), x2: X(t), y1: cy - 9, y2: cy + 9, stroke: "var(--ink)", "stroke-width": 1.4 }, g);
+      const ah = s.bins.length * D.bin / 3600;
+      const html = `<div class="t">${esc(l.state === "unattached" ? (s.name || "unnamed session") : l.role)}</div>
+        <div class="k">transcript ${esc(s.uuid)}${s.name && s.name !== l.role ? ` · named “${esc(s.name)}”` : ""}</div>
+        <div class="row"><span class="k">span</span><span>${dt(s.start)} → ${dt(s.end)} · ${dur(s.end - s.start)}</span></div>
+        <div class="row"><span class="k">active</span><span>≈ ${ah < 1 ? Math.round(ah * 60) + " min" : ah.toFixed(1) + " h"}</span></div>
+        <div class="row"><span class="k">messages</span><span>${s.sent} sent · ${s.received} received</span></div>
+        <div class="row"><span class="k">compactions</span><span>${s.compact.length}</span></div>
+        <div class="row"><span class="k">start</span><span>${s.clear ? "started by /clear" : "launched fresh"}</span></div>
+        ${s.versions.length ? `<div class="row"><span class="k">claude</span><span>${esc(s.versions[0])}${s.versions[1] !== s.versions[0] ? " → " + esc(s.versions[1]) : ""}</span></div>` : ""}
+        ${s.renames.map(([t, f, to]) => `<div class="row"><span class="k">renamed</span><span>${esc(f)} → ${esc(to)}, ${dt(t)}</span></div>`).join("")}
+        ${s.inferred || s.note ? `<div class="k" style="margin-top:4px">${esc(s.note || s.how)}</div>` : ""}
+        <div class="k">${esc(s.dir)}</div>`;
+      const hit = el("rect", { class: "hit", x: x0 - 4, y: cy - ROWH / 2, width: x1 - x0 + 8, height: ROWH });
+      g.insertBefore(hit, g.firstChild);
+      hover(hit, html);
+    }
+  });
+
+  const xn = X(D.now);
+  el("line", { x1: xn, x2: xn, y1: TOP - 6, y2: H - 24, stroke: "var(--ink)", "stroke-width": 1 }, gTop);
+  el("text", { x: xn - 4, y: H - 28, "text-anchor": "end", fill: "var(--ink)", "font-size": 11, "font-weight": 600 }, gTop).textContent = "now";
+
+  const box = document.getElementById("box");
+  if (box.scrollWidth > box.clientWidth) box.scrollLeft = box.scrollWidth;
+})();
+</script>
+</body>
+</html>

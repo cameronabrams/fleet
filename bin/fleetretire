@@ -249,9 +249,15 @@ def ledger_text(f, mode, previous):
         txt += "\n## Ledger before stopping\n\n" + previous
     return txt
 
-def snippet(name, mode, uuid, note=""):
+def snippet(name, mode, uuid, note="", group="", cwd=""):
     state = "parked" if mode == "park" else "retired"
     s = f'[{state}.{name}]\nuuid  = "{uuid}"\nsince = "{time.strftime("%Y-%m-%d")}"\n'
+    # group and cwd keep a stopped role's lane, and its unnamed transcripts, in place
+    # on fleetgantt's chart; neither is knowable once the process is gone
+    if group:
+        s += f'group = "{group}"\n'
+    if cwd:
+        s += f'cwd   = "{cwd}"\n'
     return s + (f'note  = "{note}"\n' if note else "")
 
 def screen(pane):
@@ -299,7 +305,8 @@ def main():
         print(f"\n  {a.name} is not running and is already [{rec['state']}] since {rec['since']}.")
         if a.mode == "retire" and rec["state"] == "parked":
             print("  To retire it, the configuration owner replaces the entry with:\n")
-            print("    " + snippet(a.name, "retire", rec["uuid"], a.note).replace("\n", "\n    "))
+            print("    " + snippet(a.name, "retire", rec["uuid"], a.note, rec.get("group", ""),
+                                    rec.get("cwd", "")).replace("\n", "\n    "))
             print(f"  then removes its [colors]/[owners] rows, moves briefs/{a.name}.md to")
             print(f"  briefs/retired/, and moves rearm/{a.name}.md to rearm/retired/.\n")
         else:
@@ -356,7 +363,8 @@ def main():
 
     state = "parked" if a.mode == "park" else "retired"
     print(f"\n  Remaining, for the configuration owner -- add to fleet.toml:\n")
-    print("    " + snippet(a.name, a.mode, f["uuid"], a.note).replace("\n", "\n    "))
+    print("    " + snippet(a.name, a.mode, f["uuid"], a.note, pane.get("fleet") or "",
+                            f["cwd"]).replace("\n", "\n    "))
     if a.mode == "retire":
         print(f"  and remove {a.name}'s [colors] and [owners] rows; move briefs/{a.name}.md to")
         print("  briefs/retired/; commit the configuration.")

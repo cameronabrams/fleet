@@ -44,6 +44,9 @@ script at build time, so it cannot drift from the code.
    * - :doc:`fleetcost`
      - what inter-session messages cost in re-read tokens
      - nothing
+   * - :doc:`fleetgantt`
+     - every session's life as a Gantt chart
+     - writes a page
 
 Most tools read ``~/.claude/projects/`` (transcripts), ``/proc`` and
 ``tmux list-panes``. All take their configuration from :doc:`../configuration`.
@@ -62,3 +65,4 @@ Most tools read ``~/.claude/projects/`` (transcripts), ``/proc`` and
    fleetwaiting
    fleetlog
    fleetcost
+   fleetgantt

@@ -34,7 +34,7 @@ class Log(unittest.TestCase):
                                             "input": {"to": "beta", "summary": "fixed",
                                                       "message": "done"}}]}}) + "\n")
         ident, how, events = self.log.parse_transcript(path)
-        self.assertEqual((ident, how), ("alpha", "own ListAgents self-report"))
+        self.assertEqual((ident, how), ("alpha", "own name record"))
         self.assertEqual([(e["dir"], e["peer"]) for e in events], [("in", "beta"), ("out", "beta")])
         self.assertEqual(events[0]["subject"], "Please look at the slug bug")
 
