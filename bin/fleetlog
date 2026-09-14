@@ -108,6 +108,7 @@ SELF_RE = re.compile(r'This session is (\S+) \[[0-9a-f]{6}\]')
 def parse_transcript(path):
     """Return (identity, how_resolved, [events])."""
     events, ident, how = [], None, None
+    last_agent, last_self = None, None
     seen = set()
     for line in open(path, errors="replace"):
         try:
@@ -116,14 +117,14 @@ def parse_transcript(path):
             continue
         ts = rec.get("timestamp") or ""
         rtype = rec.get("type", "")
+        if rtype == "agent-name" and rec.get("agentName"):
+            last_agent = rec["agentName"]
         strings = []
         walk_strings(rec, strings)
 
         for s in strings:
-            if ident is None:
-                m = SELF_RE.search(s)
-                if m:
-                    ident, how = canon(m.group(1)), "ListAgents self-report"
+            for m in SELF_RE.finditer(s):
+                last_self = m.group(1)
             for m in ENV_RE.finditer(s):
                 attrs = dict(ATTR_RE.findall(m.group(1)))
                 sender = canon(attrs.get("from-name"))
@@ -158,9 +159,44 @@ def parse_transcript(path):
                     events.append({"ts": ts, "dir": "out", "peer": to,
                                    "subject": inp.get("summary") or first_line(body),
                                    "body": body, "src": "SendMessage"})
+    ident, how = own_identity(path, last_agent, last_self)
     if ident is None:
         ident, how = fallback_identity(path, events)
     return ident, how, events
+
+def own_identity(path, last_agent, last_self):
+    """(name, how) from the transcript's OWN records, or (None, None).
+
+    The LAST agent-name record, else the LAST ListAgents self-report: /rename
+    writes mid-file, so earlier names are superseded ones. Never the first, and
+    never mapped through the fleet-wide old-name table, because names are reused:
+    OBSERVED 2026-09-14, the original coordinator transcript (agent-name 'coord'
+    throughout) was reported as another session whose transcript had later
+    carried one of its old names. A name that is not a current session is
+    attributed to the current owner of THIS transcript's directory, and says so."""
+    name = last_agent or last_self
+    if not name:
+        return None, None
+    how = "own agent-name record" if last_agent else "own ListAgents self-report"
+    cur = current_sessions()
+    if cur is None or name in cur:
+        return name, how
+    owner = dir_owners().get(os.path.basename(os.path.dirname(path)))
+    if owner:
+        return owner, f"renamed; {name!r} -> owner of its directory"
+    return name, how + " (not a current session)"
+
+_OWNERS = None
+def dir_owners():
+    """project-dir-name -> current session whose cwd it is, from the manifest."""
+    global _OWNERS
+    if _OWNERS is None:
+        try:
+            man = json.load(open(os.path.join(fc.state_dir(CFG), "manifest.json")))
+            _OWNERS = {project_slug(x["cwd"]): x["label"] for x in man["sessions"]}
+        except Exception:
+            _OWNERS = {}
+    return _OWNERS
 
 def first_line(text):
     for ln in (text or "").strip().splitlines():
