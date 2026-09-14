@@ -67,8 +67,12 @@ def name_map():
         seq = []
         try:
             for line in open(f, errors="replace"):
-                for m in SELF_RE.finditer(line):
-                    n = m.group(1)
+                # agent-name records too: /rename writes one, and a transcript that
+                # never called ListAgents after its rename has no other record of it
+                found = [m.group(1) for m in SELF_RE.finditer(line)]
+                if '"agent-name"' in line:
+                    found += AGENT_RE.findall(line)
+                for n in found:
                     if not seq or seq[-1] != n:
                         seq.append(n)
         except OSError:
@@ -104,6 +108,7 @@ def walk_strings(obj, out, depth=0):
 ENV_RE = re.compile(r'<cross-session-message\s+([^>]*)>')
 ATTR_RE = re.compile(r'(\w[\w-]*)="([^"]*)"')
 SELF_RE = re.compile(r'This session is (\S+) \[[0-9a-f]{6}\]')
+AGENT_RE = re.compile(r'"agentName"\s*:\s*"([^"]+)"')
 
 def parse_transcript(path):
     """Return (identity, how_resolved, [events])."""
@@ -181,6 +186,13 @@ def own_identity(path, last_agent, last_self):
     cur = current_sessions()
     if cur is None or name in cur:
         return name, how
+    # The transcript's own last name is retired. A session renamed across restarts
+    # carries that name into a later transcript and changes it there, which the
+    # old-name table records -- the fallback it is right for. It is wrong only when
+    # it overrides a transcript's own CURRENT name, which returned above.
+    mapped = name_map().get(name)
+    if mapped:
+        return mapped, f"renamed; {name!r} -> {mapped!r} by a later transcript"
     owner = dir_owners().get(os.path.basename(os.path.dirname(path)))
     if owner:
         return owner, f"renamed; {name!r} -> owner of its directory"
@@ -292,21 +304,57 @@ def load_all():
     edges.sort(key=lambda e: e["ts"])
     return sessions, edges
 
+PAIR_WINDOW = 300   # seconds between a send and its delivery
+
+def _t(ts):
+    try:
+        import datetime as _dt
+        return _dt.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
 def dedupe(edges):
-    """A message appears in the sender's transcript and the recipient's. Keep one."""
-    best, out = {}, []
+    """A message appears in the sender's transcript and the recipient's. Keep one.
+
+    Each copy is authoritative about its own end only: the sent copy knows its
+    sender (the transcript it is in) and names the recipient as the sender typed
+    it; the received copy knows its recipient and names the sender as it was
+    called THEN. After a rename those names disagree, so copies are paired by body
+    and time, not by (from, to) -- pairing on names counted every message from a
+    renamed session twice, and pairing on body alone merged the same text sent
+    days apart. The merged edge takes its sender from the sent copy and its
+    recipient from the received copy."""
+    exact, first = set(), []
     for e in edges:
-        key = (e["from"], e["to"], e["ts"][:19], (e["body"] or "")[:200])
-        if key not in best:
-            best[key] = e
-    # also merge in/out pairs that differ only by timestamp source
-    seen = set()
-    for e in sorted(best.values(), key=lambda x: x["ts"]):
-        loose = (e["from"], e["to"], hashlib.md5((e["body"] or "")[:300].encode()).hexdigest())
-        if loose in seen:
+        key = (e["dir"], e["from"], e["to"], e["ts"][:19], (e["body"] or "")[:200])
+        if key not in exact:
+            exact.add(key)
+            first.append(e)
+    digest = lambda e: hashlib.md5((e["body"] or "")[:300].encode()).hexdigest()
+    outs = {}
+    for e in first:
+        if e["dir"] == "out":
+            outs.setdefault(digest(e), []).append(e)
+    used, out = set(), []
+    for e in sorted(first, key=lambda x: x["ts"]):
+        if e["dir"] != "in":
             continue
-        seen.add(loose)
-        out.append(e)
+        te = _t(e["ts"])
+        cands = [o for o in outs.get(digest(e), []) if id(o) not in used
+                 and te is not None and _t(o["ts"]) is not None
+                 and 0 <= te - _t(o["ts"]) + 5 <= PAIR_WINDOW]
+        # Several candidates (a broadcast, or two senders with the same text): take
+        # one whose sender name agrees; a disagreeing name (a rename) is accepted
+        # only when it is the sole candidate. The recipient comes from this copy,
+        # so which of a broadcast's sent copies is consumed does not matter.
+        pick = (next((o for o in cands if o["from"] == e["from"]), None)
+                or (cands[0] if len(cands) == 1 else None))
+        if pick is None:
+            out.append(e)
+            continue
+        used.add(id(pick))
+        out.append(dict(pick, to=e["to"]))
+    out += [e for e in first if e["dir"] == "out" and id(e) not in used]
     return out
 
 def short(ts):

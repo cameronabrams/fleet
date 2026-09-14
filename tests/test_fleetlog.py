@@ -39,8 +39,8 @@ class Log(unittest.TestCase):
         self.assertEqual(events[0]["subject"], "Please look at the slug bug")
 
     def test_dedupe_keeps_one_copy_per_message(self):
-        e = {"from": "a", "to": "b", "ts": "2026-09-13T10:00:00.000Z", "body": "hello"}
-        other_side = dict(e, ts="2026-09-13T10:00:03.000Z")    # recipient's stamp
+        e = {"dir": "out", "from": "a", "to": "b", "ts": "2026-09-13T10:00:00.000Z", "body": "hello"}
+        other_side = dict(e, dir="in", ts="2026-09-13T10:00:03.000Z")    # recipient's copy
         different = dict(e, body="goodbye")
         self.assertEqual(len(self.log.dedupe([e, dict(e), other_side, different])), 2)
 
@@ -173,11 +173,96 @@ class Identity(unittest.TestCase):
         old = self.transcript("-home-u-runs", "old", [self.said("runs-41")])
         ident, how, _ = self.log.parse_transcript(old)
         self.assertEqual(ident, "study")
-        self.assertIn("directory", how)
+        self.assertIn("renamed", how)
+
+    def test_retired_name_renamed_in_a_later_transcript_elsewhere(self):
+        # a session named lit-98 in one directory, later resumed elsewhere and
+        # renamed there; its old transcript belongs to the session it became
+        old = self.transcript("-home-u-sync", "old", [self.said("lit-98")])
+        self.transcript("-home-u-mirror", "new", [self.said("lit-98"),
+                                                  {"type": "agent-name", "agentName": "notebook"}])
+        ident, how, _ = self.log.parse_transcript(old)
+        self.assertEqual(ident, "notebook", how)
 
     def test_retired_name_with_no_owner_stays_as_written(self):
         old = self.transcript("-home-u-gone", "old", [{"type": "agent-name", "agentName": "gone-9"}])
         self.assertEqual(self.log.parse_transcript(old)[0], "gone-9")
+
+
+class RenamedSender(Identity):
+    """A message from a session that has since been renamed. The sender's copy is
+    attributed to the transcript's current name; the receiver's envelope carries
+    the name it had then. Identity fixed without pairing made these two copies
+    disagree and counted each message twice again (measured 2026-09-14,
+    1470 -> 1675 edges)."""
+    def send(self, proj, uuid, name, sent_as, to, body, ts):
+        return self.transcript(proj, uuid, [
+            {"type": "agent-name", "agentName": name},
+            {"type": "assistant", "timestamp": ts,
+             "message": {"content": [{"type": "tool_use", "name": "SendMessage",
+                                      "input": {"to": to, "message": body}}]}}])
+
+    def receive(self, proj, uuid, name, sender_then, body, ts):
+        env = (f'<cross-session-message from="uds:/run/x/1.sock" from-name="{sender_then}" '
+               f'from-mode="prompting">\n{body}\n</cross-session-message>')
+        return self.transcript(proj, uuid, [
+            {"type": "agent-name", "agentName": name},
+            {"type": "user", "timestamp": ts, "message": {"content": env}}])
+
+    def test_message_from_renamed_sender_counts_once_under_current_name(self):
+        site = self.transcript("-home-u-site", "site", [self.said("x-7e"), self.said("notebook")])
+        coord = self.send("-home-u", "coord", "coord", "x-7e", "study", "please look at runs", "2026-08-20T10:00:00Z")
+        self.receive("-home-u-runs", "runs", "study", "x-7e", "please look at runs", "2026-08-20T10:00:02Z")
+        os.utime(coord, (1000, 1000)); os.utime(site, (2000, 2000))   # x-7e -> notebook in the table
+        _, edges = self.log.load_all()
+        self.assertEqual([(e["from"], e["to"]) for e in edges], [("coord", "study")])
+
+    def test_broadcast_counts_once_per_recipient(self):
+        body = "convention change: see the drop"
+        self.transcript("-home-u", "coord", [
+            {"type": "agent-name", "agentName": "coord"},
+            {"type": "assistant", "timestamp": "2026-09-01T10:00:00Z",
+             "message": {"content": [{"type": "tool_use", "name": "SendMessage",
+                                      "input": {"to": "notebook", "message": body}},
+                                     {"type": "tool_use", "name": "SendMessage",
+                                      "input": {"to": "study", "message": body}}]}}])
+        self.receive("-home-u-site", "site", "notebook", "coord", body, "2026-09-01T10:00:01Z")
+        self.receive("-home-u-runs", "runs", "study", "coord", body, "2026-09-01T10:00:02Z")
+        _, edges = self.log.load_all()
+        self.assertEqual(sorted((e["from"], e["to"]) for e in edges),
+                         [("coord", "notebook"), ("coord", "study")])
+
+    def test_same_text_days_apart_is_two_messages(self):
+        self.send("-home-u", "coord", "coord", "coord", "study", "status?", "2026-09-01T10:00:00Z")
+        self.receive("-home-u-runs", "runs", "study", "coord", "status?", "2026-09-01T10:00:01Z")
+        self.send("-home-u", "coord2", "coord", "coord", "study", "status?", "2026-09-05T10:00:00Z")
+        self.receive("-home-u-runs", "runs2", "study", "coord", "status?", "2026-09-05T10:00:01Z")
+        _, edges = self.log.load_all()
+        self.assertEqual(len(edges), 2)
+
+    def test_unpaired_copies_days_apart_are_not_merged(self):
+        # a received copy whose sender transcript is gone, and a later send whose
+        # receiver transcript is gone: two messages, not one
+        self.receive("-home-u-runs", "runs", "study", "coord", "status?", "2026-09-01T10:00:01Z")
+        self.send("-home-u", "coord", "coord", "coord", "study", "status?", "2026-09-05T10:00:00Z")
+        _, edges = self.log.load_all()
+        self.assertEqual(len(edges), 2)
+
+    def test_two_senders_same_text_pair_by_sender(self):
+        self.send("-home-u", "coord", "coord", "coord", "study", "ack", "2026-09-01T10:00:00Z")
+        self.send("-home-u-site", "site", "notebook", "notebook", "study", "ack", "2026-09-01T10:00:01Z")
+        self.receive("-home-u-runs", "r1", "study", "coord", "ack", "2026-09-01T10:00:02Z")
+        self.receive("-home-u-runs", "r2", "study", "notebook", "ack", "2026-09-01T10:00:03Z")
+        _, edges = self.log.load_all()
+        self.assertEqual(sorted((e["from"], e["to"]) for e in edges),
+                         [("coord", "study"), ("notebook", "study")])
+
+    # inherited identity tests are run by Identity itself
+    test_last_agent_name_wins_over_first_self_report = None
+    test_renamed_transcript_is_its_latest_name = None
+    test_retired_name_goes_to_its_own_directory_owner = None
+    test_retired_name_with_no_owner_stays_as_written = None
+    test_retired_name_renamed_in_a_later_transcript_elsewhere = None
 
 if __name__ == "__main__":
     unittest.main()
