@@ -169,10 +169,10 @@ code { font-family: var(--mono); color: var(--ink); }
   const hideTip = () => { tipEl.hidden = true; };
   const hover = (node, html) => { node.addEventListener("mousemove", e => tip(e, html)); node.addEventListener("mouseleave", hideTip); };
 
-  // Day grid: a label on Mondays, the first day shown, and the 1st of a month
-  D.days.forEach(([t, label, monday, first], i) => {
-    el("line", { x1: X(t), x2: X(t), y1: TOP - 6, y2: H - 24, stroke: monday || first ? "var(--rule-strong)" : "var(--rule)" }, gGrid);
-    if (t < D.t1 && (monday || i === 0 || first)) el("text", { x: X(t) + 3, y: H - 10, fill: "var(--ink-3)", "font-size": 11 }, gGrid).textContent = label;
+  // Day grid; which days carry a label is decided by fleetgantt (day_ticks)
+  D.days.forEach(([t, label, strong, show]) => {
+    el("line", { x1: X(t), x2: X(t), y1: TOP - 6, y2: H - 24, stroke: strong ? "var(--rule-strong)" : "var(--rule)" }, gGrid);
+    if (show) el("text", { x: X(t) + 3, y: H - 10, fill: "var(--ink-3)", "font-size": 11 }, gGrid).textContent = label;
   });
 
   // Events: declared in amber, derived in slate; a date without a time is a day band

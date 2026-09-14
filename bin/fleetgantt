@@ -85,11 +85,21 @@ def local_midnight(t, tz, days=0):
     return datetime.datetime(d.year, d.month, d.day, tzinfo=ZoneInfo(tz)).timestamp()
 
 def day_ticks(t0, t1, tz):
-    out, t = [], t0
+    """[epoch, label, strong gridline, show label] for each local midnight.
+
+    Labels go on Mondays, the first day shown, and the 1st of a month -- but a
+    month label within two days of a Monday or the first label is dropped, or the
+    two print on top of each other (observed: Aug 31, a Monday, over Sep 1)."""
+    days, t = [], t0
     while t <= t1:
-        d = datetime.datetime.fromtimestamp(t, ZoneInfo(tz))
-        out.append([t, d.strftime("%b ") + str(d.day), d.weekday() == 0, d.day == 1])
+        days.append((t, datetime.datetime.fromtimestamp(t, ZoneInfo(tz))))
         t = local_midnight(t, tz, 1)
+    anchors = [i for i, (_, d) in enumerate(days) if i == 0 or d.weekday() == 0]
+    out = []
+    for i, (t, d) in enumerate(days):
+        monday, first = d.weekday() == 0, d.day == 1
+        show = i == 0 or monday or (first and not any(abs(i - j) <= 2 for j in anchors))
+        out.append([t, d.strftime("%b ") + str(d.day), monday or first, show and t < t1])
     return out
 
 def scan_all():

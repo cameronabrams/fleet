@@ -122,5 +122,30 @@ class Gantt(unittest.TestCase):
         self.assertEqual(page.count("</script>"), 2)
         self.assertIn('"zone":"America/New_York"', page)
 
+
+class DayLabels(unittest.TestCase):
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.g = load_tool("fleetgantt")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def shown(self, since, until):
+        tz = "America/New_York"
+        t0 = self.g.parse_when(since, tz); t1 = self.g.parse_when(until, tz, end=True)
+        return [label for _, label, _, show in self.g.day_ticks(t0, t1, tz) if show]
+
+    def test_month_label_next_to_a_monday_is_dropped(self):
+        # 2026-08-31 is a Monday; Sep 1 would print on top of it
+        self.assertEqual(self.shown("2026-08-26", "2026-09-10"), ["Aug 26", "Aug 31", "Sep 7"])
+
+    def test_month_label_clear_of_mondays_is_kept(self):
+        # 2026-10-01 is a Thursday; the nearest Mondays are Sep 28 and Oct 5
+        self.assertEqual(self.shown("2026-09-24", "2026-10-06"), ["Sep 24", "Sep 28", "Oct 1", "Oct 5"])
+
+    def test_month_label_next_to_the_first_label_is_dropped(self):
+        self.assertEqual(self.shown("2026-09-30", "2026-10-06"), ["Sep 30", "Oct 5"])
+
 if __name__ == "__main__":
     unittest.main()
