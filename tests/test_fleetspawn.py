@@ -51,8 +51,11 @@ class Check(unittest.TestCase):
             if a[0] == "capture-pane":
                 return 0, screen, ""
             return 1, "", "unexpected"
+        names = getattr(self, "names", {})
         with mock.patch.object(self.spawn, "claude_procs", return_value=procs), \
              mock.patch.object(self.spawn, "tmux", side_effect=tmux), \
+             mock.patch.object(self.spawn, "session_name",
+                               side_effect=lambda p, c, v: (names.get(p, "alpha"), None, "")), \
              mock.patch("builtins.print"):
             return self.spawn.check(SimpleNamespace(name="alpha", dir=self.dir))
 
@@ -61,6 +64,10 @@ class Check(unittest.TestCase):
 
     def test_live_session_passes(self):
         self.assertEqual(self.run_check(LIVE_SCREEN), 0)
+
+    def test_session_renamed_away_is_not_running_under_its_launch_name(self):
+        self.names = {4242: "renamed"}
+        self.assertEqual(self.run_check(LIVE_SCREEN), 1)
 
     def test_screen_state(self):
         self.assertEqual(self.spawn.screen_state(TRUST_SCREEN), "trust")
@@ -93,7 +100,8 @@ class Resume(unittest.TestCase):
     def problems(self, name, resume=None):
         a = SimpleNamespace(name=name, dir=self.dir, beside=None, resume=resume)
         with mock.patch.object(self.spawn, "claude_procs", return_value=[]), \
-             mock.patch.object(self.spawn, "tmux", return_value=(0, "", "")):
+             mock.patch.object(self.spawn, "tmux", return_value=(0, "", "")), \
+             mock.patch.object(self.spawn, "session_name", return_value=(None, None, "")):
             return self.spawn.preflight(a, os.path.join(self.cfg.config, "briefs", f"{name}.md"))
 
     def test_parked_needs_its_own_resume_uuid(self):
@@ -111,6 +119,15 @@ class Resume(unittest.TestCase):
         # alpha's colour is declared; resuming beta's retired transcript under it is not allowed
         self.assertTrue(any("belongs to [retired.beta]" in p for p in
                             self.problems("alpha", "bbbbbbbb-0000-4000-8000-000000000002")))
+
+    def test_a_renamed_session_already_answering_to_the_name_blocks(self):
+        a = SimpleNamespace(name="gamma", dir=self.dir, beside=None, resume=None)
+        procs = [(777, self.dir, ["claude", "--name", "gamma-old"])]
+        with mock.patch.object(self.spawn, "claude_procs", return_value=procs), \
+             mock.patch.object(self.spawn, "tmux", return_value=(0, "", "")), \
+             mock.patch.object(self.spawn, "session_name", return_value=("gamma", None, "")):
+            problems = self.spawn.preflight(a, os.path.join(self.cfg.config, "briefs", "alpha.md"))
+        self.assertTrue(any("already running" in p for p in problems), problems)
 
     def test_resume_launch_has_no_first_prompt(self):
         a = SimpleNamespace(name="alpha", resume=UP)

@@ -29,6 +29,7 @@ import argparse, os, shlex, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.procs import claude_procs, named
+from fleet.transcripts import session_name
 CFG = fc.load()
 
 # Both still present in the prompt drawn by claude 2.1.270 (captured 2026-09-13;
@@ -64,7 +65,8 @@ def preflight(a, brief):
     rc, _, _ = tmux("has-session")
     if rc != 0:
         problems.append("no tmux server running")
-    clash = [(p, c) for p, c, v in claude_procs() if named(v, a.name)]
+    # By the name each session answers to now, which /rename changes and argv does not.
+    clash = [(p, c) for p, c, v in claude_procs() if session_name(p, c, v)[0] == a.name]
     if clash:
         problems.append(f"a claude named {a.name!r} is already running: "
                         + ", ".join(f"pid {p} in {c}" for p, c in clash))
@@ -123,7 +125,7 @@ def wait_for(pane, name, directory, timeout):
     return "timeout", None
 
 def check(a):
-    hits = [(p, c, v) for p, c, v in claude_procs() if named(v, a.name)]
+    hits = [(p, c, v) for p, c, v in claude_procs() if session_name(p, c, v)[0] == a.name]
     if not hits:
         print(f"  NOT RUNNING: no claude process named {a.name!r}")
         return 1

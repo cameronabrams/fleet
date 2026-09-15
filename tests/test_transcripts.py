@@ -98,5 +98,24 @@ class Transcripts(unittest.TestCase):
         finally:
             child.kill(); child.wait()
 
+    def test_session_name_follows_rename_not_argv(self):
+        u = "bbbbbbbb-0000-4000-8000-000000000002"
+        self.write(u, [rec(type="agent-name", agentName="old"), rec(type="user", timestamp="2026-09-13T10:00:00Z"),
+                       rec(type="agent-name", agentName="old-repo")])
+        argv = ["claude", "--name", "old", "--resume", u]
+        with mock.patch.object(tr, "process_start", return_value=None):
+            name, uuid, how = tr.session_name(1, "/home/u/work", argv)
+        self.assertEqual((name, uuid), ("old-repo", u))
+        self.assertIn("renamed since launch", how)
+        self.assertTrue(how.startswith("verified"), how)     # fleetretire requires it
+
+    def test_session_name_unrenamed_and_unresolved(self):
+        u = "bbbbbbbb-0000-4000-8000-000000000003"
+        self.write(u, [rec(type="agent-name", agentName="alpha"), rec(type="user", timestamp="2026-09-13T10:00:00Z")])
+        with mock.patch.object(tr, "process_start", return_value=None):
+            self.assertEqual(tr.session_name(1, "/w", ["claude", "--name", "alpha", "--resume", u])[0], "alpha")
+        with mock.patch.object(tr, "resume_handle", return_value=(None, "no transcript found")):
+            self.assertEqual(tr.session_name(1, "/w", ["claude", "--name", "beta"])[0], "beta")
+
 if __name__ == "__main__":
     unittest.main()

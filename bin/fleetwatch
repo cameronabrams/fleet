@@ -30,6 +30,7 @@ import json, os, re, subprocess, sys, glob
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.procs import alive
+from fleet.transcripts import session_name
 
 CFG     = fc.load()
 CLUSTER = fc.cluster(CFG)
@@ -168,7 +169,13 @@ def watchers():
             m = re.match(r"\s*claude\b.*?--name\s+(\S+)", cmd)
             if not m:
                 continue
-            name, found = m.group(1), set()
+            # the name it answers to now: /rename changes the transcript, not argv
+            try:
+                argv = [x for x in open(f"/proc/{c}/cmdline", "rb").read().decode(errors="replace").split("\0") if x]
+                name = session_name(int(c), os.readlink(f"/proc/{c}/cwd"), argv)[0] or m.group(1)
+            except OSError:
+                name = m.group(1)
+            found = set()
             for k in sh("pgrep", "-P", c).split():
                 if k == str(MYTREE) or k in ANCESTORS:
                     continue          # never count the process running this check

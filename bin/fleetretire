@@ -29,7 +29,7 @@ import argparse, glob, json, os, re, shlex, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.procs import alive, children, claude_procs, named, starttime
-from fleet.transcripts import resume_handle
+from fleet.transcripts import resume_handle, session_name
 
 CFG = fc.load()
 STATE = fc.state_dir(CFG)
@@ -100,7 +100,11 @@ def gather(a):
     """Facts and checks. Returns (facts, problems, notes)."""
     problems, notes, f = [], [], {"name": a.name}
     stopped = fc.stopped(CFG)
-    hits = [(p, c, v) for p, c, v in claude_procs() if named(v, a.name)]
+    resolved = [(p, c, v) + session_name(p, c, v) for p, c, v in claude_procs()]
+    hits = [(p, c, v) for p, c, v, n, _, _ in resolved if n == a.name]
+    renamed_away = [(p, n) for p, c, v, n, _, _ in resolved if named(v, a.name) and n != a.name]
+    for p, n in renamed_away:
+        notes.append(f"pid {p} was launched --name {a.name} but is now named {n!r}; not matched")
     if a.name in stopped:
         rec = stopped[a.name]
         f["recorded"] = rec
@@ -120,7 +124,7 @@ def gather(a):
     if pid == os.getpid() or pid in ancestors(os.getpid()):
         problems.append("that is the session running this tool; a session cannot stop itself")
 
-    uuid, how = resume_handle({"resume_uuid": argv_resume(argv), "pid": pid}, cwd, a.name)
+    uuid, how = next((u, h) for p, c, v, n, u, h in resolved if p == pid)
     f.update(uuid=uuid, uuid_source=how)
     if not uuid or not how.startswith("verified"):
         problems.append(f"resume uuid not verified ({how}) -- stopping it could lose the way back")

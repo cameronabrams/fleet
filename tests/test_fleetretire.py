@@ -24,6 +24,7 @@ class Base(unittest.TestCase):
         self.watch = ({"cluster_ok": True, "jobs": []}, "")
         self.kids = []
         self.handle = (UUID, "verified: --resume in process argv")
+        self.current = {}                       # pid -> name after a /rename
 
     def tearDown(self):
         self.cfg.close()
@@ -47,8 +48,12 @@ class Base(unittest.TestCase):
                 mock.patch.object(r, "fleetwatch_json", side_effect=lambda n: self.watch),
                 mock.patch.object(r, "starttime", return_value="123"),
                 mock.patch.object(r, "alive", side_effect=lambda pid, st=None: self.alive),
-                mock.patch.object(r, "resume_handle", side_effect=lambda *a: self.handle),
+                mock.patch.object(r, "session_name", side_effect=self.session_name),
                 mock.patch.object(r.time, "sleep")]
+
+    def session_name(self, pid, cwd, argv):
+        launched = next((argv[i + 1] for i, x in enumerate(argv[:-1]) if x == "--name"), None)
+        return (self.current.get(pid, launched),) + self.handle
 
     def gather(self, mode="park", allow_dirty=False):
         a = SimpleNamespace(name="alpha", mode=mode, allow_dirty=allow_dirty,
@@ -94,6 +99,20 @@ class Preflight(Base):
     def test_not_running_blocks(self):
         self.procs = []
         self.blocked(self.gather()[1], "no claude process")
+
+    def test_renamed_session_is_found_by_its_current_name(self):
+        # launched --name alpha-old, then /rename alpha (observed 2026-09-15)
+        self.procs = [(4242, self.cwd, ["claude", "--name", "alpha-old", "--resume", UUID])]
+        self.current = {4242: "alpha"}
+        f, problems, _ = self.gather()
+        self.assertEqual(problems, [])
+        self.assertEqual(f["pid"], 4242)
+
+    def test_session_renamed_away_is_not_matched_by_its_launch_name(self):
+        self.current = {4242: "something-else"}
+        f, problems, notes = self.gather()
+        self.blocked(problems, "no claude process")
+        self.assertTrue(any("now named 'something-else'" in n for n in notes))
 
     def test_duplicate_name_blocks(self):
         self.procs = self.procs + [(4343, self.cwd, ["claude", "--name", "alpha"])]

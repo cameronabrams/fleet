@@ -196,3 +196,40 @@ def resume_handle(proc, cwd, label):
     if u:
         return u, "verified: session's own scratchpad path, via a child process"
     return newest_transcript(cwd, label)
+
+def last_agent_name(uuid):
+    """The last agent-name record in transcript `uuid`, or None."""
+    last = None
+    for f in glob.glob(f"{PROJECTS}/*/{uuid}.jsonl") if uuid else []:
+        try:
+            with open(f, errors="replace") as fh:
+                for line in fh:
+                    if '"agent-name"' in line:
+                        found = _NAME_RE.findall(line)
+                        if found:
+                            last = found[-1]
+        except OSError:
+            pass
+    return last
+
+def session_name(pid, cwd, argv):
+    """(name, uuid, how) for a live claude process: the name it answers to NOW.
+
+    `--name` in argv is the name it was LAUNCHED with. `/rename` writes a new
+    agent-name record and leaves argv alone, so a tool matching argv cannot find
+    a renamed session under its real name -- OBSERVED 2026-09-15, fleetretire
+    reported a live, renamed session as not running. The transcript's last
+    agent-name record wins; argv is the fallback when no transcript resolves."""
+    launched = next((argv[i + 1] for i, x in enumerate(argv[:-1]) if x == "--name"), None)
+    resume = next((argv[i + 1] for i, x in enumerate(argv[:-1]) if x == "--resume"), None)
+    uuid, how = resume_handle({"resume_uuid": resume, "pid": pid}, cwd, launched)
+    current = last_agent_name(uuid)
+    if current and current != launched:
+        # A /clear after the rename rolled to a successor that self-reports the NEW
+        # name, which the lookup keyed on the launch name could not see.
+        again, how2 = resume_handle({"resume_uuid": resume, "pid": pid}, cwd, current)
+        if again and again != uuid and last_agent_name(again) == current:
+            uuid, how = again, how2
+        # keep `how` first: callers test it for "verified"
+        return current, uuid, f"{how}; renamed since launch (--name {launched})"
+    return launched or current, uuid, how
