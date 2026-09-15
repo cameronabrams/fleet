@@ -360,12 +360,14 @@ def main():
             s["name"][:22], s["pane"], s["version"] or "?",
             "YES" if s["version"] != inst else "no",
             "yes" if s["ledger"] else "MISSING",
-            s["color"] or ("LOST" if s["resume_uuid"] else "?"),
+            s["color"] or ("?" if s.get("background") or not s["resume_uuid"] else "LOST"),
             (s["resume_uuid"] or "?")[:8]))
     declared = fc.colors(CFG)
     # No resume uuid means no transcript was read, so no colour record could be
     # found: that is "unknown", not "lost". fleetsnap resolves more handles.
-    off = [x for x in ss if x["color"] != declared.get(x["name"])
+    # A background session's colour is not recorded where a tool can read it (see
+    # fleetsnap's live_color): unknown, not a mismatch.
+    off = [x for x in ss if x["color"] != declared.get(x["name"]) and not x.get("background")
            and (x["resume_uuid"] or not declared.get(x["name"]))]
     if off:
         print("\n!! colour differs from [colors] in fleet.toml (a /clear drops the colour")

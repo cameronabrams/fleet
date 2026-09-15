@@ -140,6 +140,19 @@ def corrected_label(repo, title, argv, cwd):
         return t, f"pane label said {repo!r}; corrected from pane_title (transcript self-reports it)"
     return repo, None
 
+def live_color(argv, uuid):
+    """(colour, knowable) for a pane's session.
+
+    A pane running `claude attach <id>` shows a session /exit moved to the
+    background. Its fork transcript starts with no colour record, and a /color
+    typed through the attach client is not written anywhere a tool can read --
+    OBSERVED 2026-09-15 on 2.1.272: the pane showed cyan, the fork transcript held
+    no agent-color record, and the session's metadata file has no colour field.
+    Reporting "NONE" there would be an alarm nobody can clear, so it is unknown."""
+    if argv[1:2] == ["attach"]:
+        return None, False
+    return agent_color(uuid), bool(uuid)
+
 def stopped_problems(label, uuid):
     """A live session that fleet.toml says is parked or retired: [(kind, text, fix)].
 
@@ -253,11 +266,11 @@ def main():
             "durable_files": durable_files(cwd, repo),
         })
         s = snap["sessions"][-1]
-        s["color"] = {"declared": fc.colors(CFG).get(s["label"]),
-                      "live": agent_color(s["resume_uuid"])}
+        live, known = live_color(proc["argv"], s["resume_uuid"])
+        s["color"] = {"declared": fc.colors(CFG).get(s["label"]), "live": live, "known": known}
         s["membership_problems"] = [
             {"kind": k, "problem": p, "fix": f} for k, p, f in fc.membership_problems(
-                CFG, s["label"], s["color"]["live"], color_known=bool(s["resume_uuid"]))]
+                CFG, s["label"], s["color"]["live"], color_known=known)]
         s["membership_problems"] += [
             {"kind": k, "problem": p, "fix": f} for k, p, f in stopped_problems(
                 s["label"], s["resume_uuid"])]

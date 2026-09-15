@@ -154,5 +154,22 @@ class StoppedProblems(unittest.TestCase):
     def test_unrelated_session(self):
         self.assertEqual(self.snap.stopped_problems("beta", "eeeeeeee-0000-4000-8000-000000000005"), [])
 
+
+class LiveColor(unittest.TestCase):
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.snap = load_tool("fleetsnap")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def test_attach_client_colour_is_unknown_not_none(self):
+        with mock.patch.object(self.snap, "agent_color", return_value=None):
+            self.assertEqual(self.snap.live_color(["claude", "attach", "b20bc72b"], "b20bc72b-x"), (None, False))
+            self.assertEqual(self.snap.live_color(["claude", "--name", "a", "--resume", "u"], "u"), (None, True))
+        with mock.patch.object(self.snap, "agent_color", return_value="cyan"):
+            self.assertEqual(self.snap.live_color(["claude", "--name", "a"], "u"), ("cyan", True))
+        self.assertEqual(self.snap.live_color(["claude", "--name", "a"], None)[1], False)
+
 if __name__ == "__main__":
     unittest.main()
