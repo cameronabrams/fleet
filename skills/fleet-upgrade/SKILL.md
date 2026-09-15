@@ -265,6 +265,11 @@ background session, and leaves it out of the plan; it also lists background sess
 that no pane shows. `fleetretire` stops with exit 3 when this happens and leaves the
 ledger unchanged.
 
+A reattached background session's color cannot be read (OBSERVED 2026-09-15 on 2.1.272:
+a `/color` typed through `claude attach` left no record in the fork transcript or the
+session metadata). `fleetupgrade` shows `?` and `fleetsnap` records it as unknown; neither
+flags a mismatch, so do not "fix" it by retyping `/color`.
+
 ### Escape sequences can corrupt `tmux send-keys '/exit' Enter`
 
 Seen 2026-09-07: a session received `8;32;42;52c/exit` — a terminal

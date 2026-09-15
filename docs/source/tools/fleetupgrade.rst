@@ -22,11 +22,13 @@ Columns
    whether ``<state>/rearm/<name>.md`` exists — existence only, not truth
 ``COLOR``
    the live color; ``LOST`` when a transcript was read and has none, ``?`` when no
-   transcript could be resolved
+   transcript could be resolved or the session is a background one (a ``/color``
+   typed through ``claude attach`` is not recorded anywhere a tool can read)
 ``RESUME UUID``
    the transcript ``--resume`` should reopen
 
-Warnings follow for colors that differ from ``[colors]``, pane titles that disagree
+Warnings follow for colors that differ from ``[colors]`` (never for an unknown
+color), pane titles that disagree
 with the session's name record, handles that could not be resolved (another claude
 outside tmux shares the directory — the tool refuses to guess), and names taken only
 from a pane title.

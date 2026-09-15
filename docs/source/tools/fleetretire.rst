@@ -20,7 +20,10 @@ Preflight
 
 Blocks, and changes nothing, on any of:
 
-- no claude process launched ``--name NAME``, or more than one
+- no claude process answering to ``NAME``, or more than one. The name is the
+  transcript's last ``agent-name`` record, else ``--name`` in the process arguments,
+  so a session renamed with ``/rename`` is found under its new name; a process
+  launched ``--name NAME`` but renamed since is not matched, and a note says so
 - a resume uuid that is not ``verified:`` (resolved as :doc:`fleetsnap` does)
 - the session's transcript already listed in ``[parked]`` or ``[retired]``
 - the pane busy (``esc to interrupt`` in its footer), at the folder-trust prompt,

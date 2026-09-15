@@ -23,7 +23,10 @@ What it records, per session
 - declared and live color, and any **membership problems**: no brief, no
   ``[colors]`` entry, a live color that differs from the declared one, or a
   ``[parked]``/``[retired]`` entry that lists its transcript (it would not be
-  restored) or its name with another transcript
+  restored) or its name with another transcript. ``known`` is false when the live
+  color cannot be read — no transcript resolved, or a pane running
+  ``claude attach <id>`` (a background session, whose ``/color`` is not recorded
+  anywhere a tool can read) — and then no color mismatch is raised
 
 Plus, fleet-wide: exact tmux window layouts, the installed claude version,
 ``~/.tmux.conf`` presence, systemd user units (flagging transient ones, which die at

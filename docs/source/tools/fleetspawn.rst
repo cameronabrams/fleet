@@ -20,9 +20,13 @@ Preflight
 ---------
 
 Blocks, and changes nothing, on any of: a missing directory, a missing brief, no
-``[colors]`` entry for the name, no tmux server, a live claude already launched
-``--name NAME``, a pane already labelled ``@repo=NAME``, or a nonexistent
+``[colors]`` entry for the name, no tmux server, a live claude already answering to
+``NAME``, a pane already labelled ``@repo=NAME``, or a nonexistent
 ``--beside`` pane. Fix the cause; do not work around it.
+
+A live claude answers to the name in its transcript's last ``agent-name`` record,
+else to ``--name`` in its process arguments: ``/rename`` changes the first and not
+the second. ``--check`` matches the same way.
 
 It also blocks on a name in ``[retired]`` (remove the entry to reuse the name for a
 new session), on a name in ``[parked]`` unless ``--resume`` gives its recorded
