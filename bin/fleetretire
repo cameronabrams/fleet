@@ -29,6 +29,7 @@ import argparse, glob, json, os, re, shlex, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.procs import alive, children, claude_procs, named, starttime
+from fleet.agents import background_named, list_agents
 from fleet.transcripts import resume_handle, session_name
 
 CFG = fc.load()
@@ -38,6 +39,11 @@ BIN = os.path.dirname(os.path.realpath(__file__))
 BUSY_MARKER = "esc to interrupt"           # footer while a turn runs (2.1.270)
 TRUST_MARKERS = ("trust this folder", "Is this a project you created")
 BACKGROUND_MARKER = "Background work is running"
+# /exit can move a session to the background instead of stopping it (2.1.272,
+# observed with Artifact comment auto-replies armed): the pane prints these, the
+# pid exits, and a fork carries on under a new pid and session id.
+MOVED_MARKERS = ("Moving to background", "backgrounded ·")
+TYPE_WAIT = 5.0                            # seconds for typed text to reach the input line
 
 def tmux(*a):
     r = subprocess.run(["tmux", *a], capture_output=True, text=True)
@@ -147,6 +153,15 @@ def gather(a):
         elif BUSY_MARKER in screen:
             problems.append(f"{a.name} is mid-turn (pane footer shows '{BUSY_MARKER}'); "
                             f"wait until it is idle")
+
+    agents = list_agents()
+    if agents is None:
+        notes.append("could not read `claude agents --json`: background sessions not checked")
+    else:
+        for b in background_named(agents, a.name):
+            problems.append(f"a BACKGROUND session already answers to {a.name!r} (session "
+                            f"{str(b.get('sessionId'))[:8]}, {b.get('state') or b.get('status')}); "
+                            f"resolve it first -- stopping this one would leave that one live")
 
     kids = children(pid)
     if kids:
@@ -267,25 +282,56 @@ def snippet(name, mode, uuid, note="", group="", cwd=""):
 def screen(pane):
     return tmux("capture-pane", "-p", "-t", pane)[1]
 
-def stop(f, wait):
-    """Type /exit and wait for the process to go. Returns (code, message)."""
+def moved_to_background(text):
+    """The background session id if the pane says /exit moved it there, else None."""
+    if not any(m in text for m in MOVED_MARKERS):
+        return None
+    m = re.search(r"backgrounded\s*·\s*([0-9a-f]{6,})", text)
+    return m.group(1) if m else "?"
+
+def stop(f, wait, name):
+    """Type /exit and wait for the session to STOP. Returns (code, message).
+
+    Stopped means the pid is gone AND the session did not move to the background:
+    the pane does not say so, and no background session answers to the name."""
     pane, pid, start = f["pane"]["pane"], f["pid"], f["start"]
     tmux("send-keys", "-t", pane, "-l", "/exit")          # text, no Enter
-    time.sleep(0.5)
-    lines = [l for l in screen(pane).splitlines() if l.strip()]
-    if not any(re.search(r"❯\s*/exit\s*$", l) for l in lines):
+    # Typing opens the slash-command menu, which pushes the input line up, and a busy
+    # pane can take seconds to echo: search the whole screen, for a while.
+    typed, t_end = False, time.time() + TYPE_WAIT
+    while not typed and time.time() < t_end:
+        time.sleep(0.5)
+        typed = any(re.search(r"❯\s*/exit\s*$", l) for l in screen(pane).splitlines())
+    if not typed:
         tmux("send-keys", "-t", pane, "C-u")
-        return 3, (f"the input line in {pane} did not read exactly '/exit' after typing it "
+        return 3, (f"the input line in {pane} did not read exactly '/exit' within {TYPE_WAIT:.0f}s "
                    f"(a terminal reply can corrupt keys); cleared it and stopped")
     tmux("send-keys", "-t", pane, "Enter")
     t_end = time.time() + wait
     while time.time() < t_end:
-        if not alive(pid, start):
-            return 0, f"pid {pid} exited"
-        if BACKGROUND_MARKER in screen(pane):
+        text = screen(pane)
+        bg = moved_to_background(text)
+        if bg:
+            return 3, (f"/exit MOVED {name} TO THE BACKGROUND (session {bg}) instead of stopping it; "
+                       f"it is still live. Reattach with `claude attach {bg}` in {pane}; do not "
+                       f"relaunch it. Something kept it alive -- e.g. armed Artifact comment replies")
+        if BACKGROUND_MARKER in text:
             return 3, (f"{pane} shows the background-work dialog: the session holds runtime "
                        f"these checks did not see. It is still running; answer the dialog "
                        f"(option 3, Stay) and find out what it holds")
+        if not alive(pid, start):
+            time.sleep(1)                     # let the pane draw what happened
+            bg = moved_to_background(screen(pane))
+            agents = list_agents()
+            live = background_named(agents, name) if agents is not None else []
+            if bg or live:
+                sid = bg or str(live[0].get("sessionId"))[:8]
+                return 3, (f"pid {pid} exited but {name} carries on in the background (session "
+                           f"{sid}); it is NOT stopped. Reattach with `claude attach {sid}`")
+            if agents is None:
+                return 0, (f"pid {pid} exited (could not read `claude agents --json` to confirm "
+                           f"nothing moved to the background -- check ListAgents)")
+            return 0, f"pid {pid} exited; no background session answers to {name}"
         time.sleep(1)
     return 4, f"pid {pid} still running after {wait}s; look at pane {pane}"
 
@@ -344,17 +390,23 @@ def main():
 
     previous = open(ledger).read() if os.path.exists(ledger) else ""
     os.makedirs(os.path.dirname(dest), exist_ok=True)
-    with open(dest, "w") as fh:
+    # The recipe must exist before anything stops (the uuid is only derivable from
+    # the live process), but the ledger must not claim PARKED/RETIRED until the stop
+    # is confirmed -- /exit can background a session instead. So: pending, then move.
+    pending = dest + ".pending"
+    with open(pending, "w") as fh:
         fh.write(ledger_text(f, a.mode, previous))
-    if not (os.path.exists(dest) and f["uuid"] in open(dest).read()):
-        sys.exit(f"  could not confirm the recipe in {dest}; nothing stopped")
-    print(f"\n  wrote {dest}")
+    if not (os.path.exists(pending) and f["uuid"] in open(pending).read()):
+        sys.exit(f"  could not confirm the recipe in {pending}; nothing stopped")
+    print(f"\n  wrote {pending}")
 
-    code, msg = stop(f, a.wait)
+    code, msg = stop(f, a.wait, a.name)
     print(f"  {msg}")
     if code:
-        print()
+        print(f"  ledger left unchanged; the recipe stays in {pending}\n")
         sys.exit(code)
+    os.replace(pending, dest)
+    print(f"  moved it to {dest}")
     if a.mode == "retire" and os.path.exists(ledger) and ledger != dest:
         os.remove(ledger)                      # its content is kept in the retired ledger
     pane = f["pane"]

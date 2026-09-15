@@ -36,5 +36,10 @@ session running the tool cannot restart itself, so it gets a separate block with
 two commands to type — ``/exit``, then ``cd <dir> && [env] claude --name <name>
 --resume <uuid>``, using the session id from its own environment.
 
+A pane running ``claude attach <id>`` — a session ``/exit`` moved to the background,
+reattached — is resolved through ``claude agents --json``, flagged as a background
+session and left out of the plan. Background sessions that no pane shows are listed
+too.
+
 It restarts nothing. The :doc:`fleet-upgrade skill <../skills/fleet-upgrade>` drives
 a roll.

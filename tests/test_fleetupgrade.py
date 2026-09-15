@@ -78,5 +78,35 @@ class Upgrade(unittest.TestCase):
             state["100"] = "T"
             self.assertEqual(self.up.claude_pid("1")[0], "200")   # all stopped: newest
 
+
+class AttachedBackground(Upgrade):
+    """A session /exit moved to the background, reattached in its pane: the pane runs
+    `claude attach <id>` with no --name or --resume (observed 2026-09-15)."""
+    def resolve(self, agent_list):
+        from tests.test_agents import SAMPLE
+        up = self.up
+        with mock.patch.object(up, "sh", return_value="%1\t100\ttitle\t/home/u/work\n"), \
+             mock.patch.object(up, "claude_pid", return_value=("200", "claude attach b20bc72b")), \
+             mock.patch.object(up, "agents", return_value=agent_list), \
+             mock.patch.object(up, "foreign_claude", return_value=[("543137", "x"), ("543125", "y")]), \
+             mock.patch.object(up, "uuid_from_descendants", return_value=None), \
+             mock.patch.object(up, "proc_version", side_effect=lambda pid: "2.1.272"):
+            return up.sessions()[0]
+
+    def test_resolved_through_claude_agents_despite_shared_cwd(self):
+        from tests.test_agents import SAMPLE
+        s = self.resolve(SAMPLE)
+        self.assertEqual((s["name"], s["resume_uuid"][:8], s["background"]), ("study", "b20bc72b", True))
+        self.assertTrue(s["name_source"].startswith("verified"), s["name_source"])
+
+    def test_unreadable_agents_is_unresolved_not_guessed(self):
+        s = self.resolve(None)
+        self.assertIn("UNRESOLVED", s["name_source"])
+        self.assertIsNone(s["resume_uuid"])
+
+    def test_attached_id(self):
+        self.assertEqual(self.up.attached_id("claude attach b20bc72b"), "b20bc72b")
+        self.assertIsNone(self.up.attached_id("claude --name x --resume b20bc72b-0000"))
+
 if __name__ == "__main__":
     unittest.main()

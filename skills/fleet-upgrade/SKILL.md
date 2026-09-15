@@ -145,6 +145,16 @@ Then confirm it came back: new pid under the pane, and `ListAgents` shows the
 name. **Do not batch this.** One session at a time, verified up before the next,
 so monitoring gaps do not overlap.
 
+### A persistent Monitor is not persistent (2.1.272)
+
+REPORTED by a sweep session and VERIFIED by a production session, 2026-09-15: a Monitor
+armed with `persistent: true` now says "expires in 30m unless the source ends first". A
+watcher built on one goes DEAD after 30 minutes on a longer job, and `fleetwatch` will
+say so — that is the registry working. For a job that outlives 30 minutes, either re-arm
+at expiry (and re-register the new pid), or run the watcher outside the session (a
+`setsid` loop or a transient `systemd-run --user` unit logging to a file) and register
+that pid. Re-check this on each new binary; it may change again.
+
 ### Run `fleetwatch` first — DERIVE the inventory, do not read it
 
     fleetwatch
@@ -229,18 +239,49 @@ live instruction.
 A ledger that mixes "re-arm X" with "the human owes a decision on Y" invites the
 same conflation from the other side; keep open decisions in a separate section.
 
+### `/exit` can move a session to the background instead of stopping it
+
+OBSERVED 2026-09-15 on 2.1.272, on a session with Artifact comment auto-replies armed,
+and with no background-work dialog shown. The pane printed:
+
+    Moving to background…
+    backgrounded · b20bc72b
+      claude attach b20bc72b    open in this terminal
+
+The pid exited — and a fork carried on under a **new pid and session id**
+(`--session-id <new> --fork-session --resume <old transcript>`), still replying, still
+holding its watcher. **"The pid is gone" is not "the session stopped."** Relaunching
+`claude --resume <old uuid>` there would start a second live session on a forked history.
+
+So after `/exit`, before relaunching anything:
+
+    tmux capture-pane -p -t <pane> | grep -E 'backgrounded ·|Moving to background'
+    claude agents --json        # a `kind: background` entry with the session's name?
+
+Either one means **stop**: reattach with `claude attach <id>` in the pane and decide with
+the human what to do with it — do not relaunch from the plan. `fleetupgrade` resolves a
+pane running `claude attach <id>` through `claude agents --json`, flags it as a
+background session, and leaves it out of the plan; it also lists background sessions
+that no pane shows. `fleetretire` stops with exit 3 when this happens and leaves the
+ledger unchanged.
+
 ### Escape sequences can corrupt `tmux send-keys '/exit' Enter`
 
 Seen 2026-09-07: a session received `8;32;42;52c/exit` — a terminal
 device-attributes reply concatenated onto the command — which ran as a *prompt*
 instead of exiting, and the session started a turn on garbage.
 
-**Send the text and the Enter as separate calls, and capture the input box in
+**Send the text and the Enter as separate calls, and capture the screen in
 between:**
 
     tmux send-keys -t <pane> '/exit'          # no Enter
-    tmux capture-pane -p -t <pane> | sed -n '/<name> ─/,+1p'   # must read exactly "/exit"
+    tmux capture-pane -p -t <pane> | grep -E '❯\s*/exit\s*$'   # the input line reads exactly "/exit"
     tmux send-keys -t <pane> Enter
+
+Search the whole screen, not a fixed row: typing `/exit` opens the slash-command menu,
+which pushes the input line up. The prompt glyph can be followed by a non-breaking
+space. And wait for the echo — a busy pane took ~3 s to show typed text (2026-09-15);
+1.5 s missed it.
 
 To recover: `Escape` to interrupt the turn, `C-u` to clear the input line,
 confirm the box is empty, then retype. Do not send `/exit` again on top of a

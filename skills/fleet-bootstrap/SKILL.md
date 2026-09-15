@@ -238,9 +238,9 @@ running the tool. Do not work around a block; fix its cause.
 With `--go` it writes the resume recipe to the ledger **before** stopping anything —
 the uuid is derivable only from the live process — then types `/exit` (text, check the
 input line, then Enter), waits for the pid to go, and closes the pane unless it is
-alone in its window. Exit `3` means it stopped at a screen it did not expect (a
-corrupted input line, the background-work dialog): the session may still be running;
-look. Exit `4` means the process did not exit in time.
+alone in its window. Exit `3` means the session did not stop: a corrupted input line,
+the background-work dialog, or `/exit` moved it to the background (the pane says
+`backgrounded · <id>`); it is still running, and the ledger is unchanged. Look. Exit `4` means the process did not exit in time.
 
 It never deletes a transcript, a memory folder or a working directory.
 

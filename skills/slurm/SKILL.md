@@ -183,6 +183,12 @@ so where it matters check `/proc/<pid>/stat` state too.
 
 **Do not report success because a job left the queue.** Read its final state.
 
+**Know how long the watcher itself lives.** A Claude Code Monitor armed `persistent`
+expired after 30 minutes on 2.1.272 (verified 2026-09-15). A job that runs for hours
+outlives it, and a dead watcher reports nothing. Watch long jobs from a process
+outside the session (`setsid` loop, or `systemd-run --user` with output to a file),
+or plan to re-arm at expiry; re-check on each new binary.
+
 ## Skill-file hygiene
 
 **Never write a bare dollar sign before a digit in a skill file.** When a skill

@@ -25,6 +25,7 @@ class Base(unittest.TestCase):
         self.kids = []
         self.handle = (UUID, "verified: --resume in process argv")
         self.current = {}                       # pid -> name after a /rename
+        self.agents = []                        # `claude agents --json`; None = unreadable
 
     def tearDown(self):
         self.cfg.close()
@@ -49,6 +50,7 @@ class Base(unittest.TestCase):
                 mock.patch.object(r, "starttime", return_value="123"),
                 mock.patch.object(r, "alive", side_effect=lambda pid, st=None: self.alive),
                 mock.patch.object(r, "session_name", side_effect=self.session_name),
+                mock.patch.object(r, "list_agents", side_effect=lambda *a, **k: self.agents),
                 mock.patch.object(r.time, "sleep")]
 
     def session_name(self, pid, cwd, argv):
@@ -113,6 +115,16 @@ class Preflight(Base):
         f, problems, notes = self.gather()
         self.blocked(problems, "no claude process")
         self.assertTrue(any("now named 'something-else'" in n for n in notes))
+
+    def test_background_session_with_the_name_blocks(self):
+        self.agents = [{"kind": "background", "name": "alpha", "sessionId": "b20bc72b-x", "state": "working"}]
+        self.blocked(self.gather()[1], "BACKGROUND session already answers")
+
+    def test_unreadable_agent_list_is_a_note_not_a_pass(self):
+        self.agents = None
+        f, problems, notes = self.gather()
+        self.assertEqual(problems, [])
+        self.assertTrue(any("background sessions not checked" in n for n in notes))
 
     def test_duplicate_name_blocks(self):
         self.procs = self.procs + [(4343, self.cwd, ["claude", "--name", "alpha"])]
@@ -205,9 +217,11 @@ class Act(Base):
     def test_park_writes_recipe_before_exit_then_closes_pane(self):
         seen = {}
         orig = self.tmux
+        pending = self.ledger() + ".pending"
         def tmux(*a):
             if a[0] == "send-keys" and "first_send" not in seen:
-                seen["first_send"] = os.path.exists(self.ledger()) and UUID in open(self.ledger()).read()
+                seen["first_send"] = os.path.exists(pending) and UUID in open(pending).read()
+                seen["ledger_untouched"] = open(self.ledger()).read() == "# old ledger\nre-arm nothing\n"
             return orig(*a)
         self.tmux = tmux
         os.makedirs(os.path.dirname(self.ledger()))
@@ -215,6 +229,8 @@ class Act(Base):
         code, out = self.main("alpha", "--park", "--go")
         self.assertEqual(code, 0, out)
         self.assertTrue(seen["first_send"])                        # recipe existed before any key
+        self.assertTrue(seen["ledger_untouched"])                  # ...but not yet as the ledger
+        self.assertFalse(os.path.exists(pending))
         text = open(self.ledger()).read()
         self.assertIn(f"claude --name alpha --resume {UUID}", text)
         self.assertIn("# old ledger", text)                        # previous content kept
@@ -266,6 +282,71 @@ class Act(Base):
         self.assertEqual(code, 3, out)
         self.assertFalse(any(c[0] == "kill-pane" for c in self.calls))
 
+    def moved(self, screen_after_enter=None, agents_after=None):
+        orig = self.tmux
+        def tmux(*a):
+            r = orig(*a)
+            if a[0] == "send-keys" and a[-1] == "Enter":
+                if screen_after_enter:
+                    self.screen = screen_after_enter
+                if agents_after is not None:
+                    self.agents = agents_after
+            return r
+        self.tmux = tmux
+        os.makedirs(os.path.dirname(self.ledger()))
+        open(self.ledger(), "w").write("# old ledger\n")
+        return self.main("alpha", "--park", "--go")
+
+    def test_exit_that_backgrounds_the_session_is_not_a_stop(self):
+        # observed 2026-09-15 on 2.1.272
+        code, out = self.moved(screen_after_enter="Moving to background…\nbackgrounded · b20bc72b\n"
+                                                  "  claude attach b20bc72b    open in this terminal\n")
+        self.assertEqual(code, 3, out)
+        self.assertIn("claude attach b20bc72b", out)
+        self.assertEqual(open(self.ledger()).read(), "# old ledger\n")        # not marked PARKED
+        self.assertTrue(os.path.exists(self.ledger() + ".pending"))
+        self.assertFalse(any(c[0] == "kill-pane" for c in self.calls))
+
+    def test_background_marker_while_the_old_pid_lingers(self):
+        orig = self.tmux
+        def tmux(*a):
+            r = orig(*a)
+            if a[0] == "send-keys" and a[-1] == "Enter":
+                self.alive = True                       # the old process has not exited yet
+                self.screen = "backgrounded · b20bc72b\n"
+            return r
+        self.tmux = tmux
+        code, out = self.main("alpha", "--park", "--go", "--wait", "30")
+        self.assertEqual(code, 3, out)
+        self.assertIn("MOVED alpha TO THE BACKGROUND", out)
+
+    def test_pid_gone_but_a_background_session_answers_to_the_name(self):
+        code, out = self.moved(agents_after=[{"kind": "background", "name": "alpha",
+                                              "sessionId": "b20bc72b-0000-4000-8000-000000000000"}])
+        self.assertEqual(code, 3, out)
+        self.assertIn("NOT stopped", out)
+        self.assertEqual(open(self.ledger()).read(), "# old ledger\n")
+
+    def test_unreadable_agent_list_still_stops_but_says_so(self):
+        self.agents = None
+        code, out = self.main("alpha", "--park", "--go")
+        self.assertEqual(code, 0, out)
+        self.assertIn("to confirm nothing moved to the background -- check ListAgents", out)
+
+    def test_slow_echo_is_waited_for(self):
+        orig = self.tmux
+        state = {"captures": 0}
+        def tmux(*a):
+            if a[0] == "capture-pane" and self.screen == TYPED:
+                state["captures"] += 1
+                if state["captures"] < 4:
+                    self.calls.append(a)
+                    return 0, IDLE, ""                   # not echoed yet
+            return orig(*a)
+        self.tmux = tmux
+        code, out = self.main("alpha", "--park", "--go")
+        self.assertEqual(code, 0, out)
+
     def test_timeout_exits_4(self):
         orig = self.tmux
         def tmux(*a):
@@ -273,7 +354,9 @@ class Act(Base):
             self.alive = True
             return r
         self.tmux = tmux
-        with mock.patch.object(self.r.time, "time", side_effect=[0, 0, 100, 100, 100]):
+        import itertools
+        clock = itertools.count(0, 0.6)                      # every reading advances 0.6 s
+        with mock.patch.object(self.r.time, "time", side_effect=lambda: next(clock)):
             code, out = self.main("alpha", "--park", "--go", "--wait", "1")
         self.assertEqual(code, 4, out)
 

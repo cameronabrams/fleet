@@ -33,20 +33,27 @@ Blocks, and changes nothing, on any of:
   ``--allow-dirty`` — or reported only, when another session shares the directory
 - **retire only:** other briefs naming the session as a whole word, unless
   ``--allow-references``
+- a background session already answering to the name (from ``claude agents --json``;
+  if that cannot be read, a note says background sessions were not checked)
 - the session being the one running the tool
 
 With ``--go``
 -------------
 
 1. Writes the resume recipe — ``cd <dir> && [spawn].env claude --name NAME
-   --resume <uuid>``, and the ``fleetspawn --resume`` form — to
-   ``<state>/rearm/NAME.md`` (park) or ``<state>/rearm/retired/NAME.md`` (retire),
-   keeping the previous ledger's content below it. It confirms the file holds the
-   uuid **before** anything is stopped.
+   --resume <uuid>``, and the ``fleetspawn --resume`` form — keeping the previous
+   ledger's content below it, to ``<ledger>.pending``, and confirms it holds the uuid
+   **before** anything is stopped. Only once the stop is confirmed does it become
+   ``<state>/rearm/NAME.md`` (park) or ``<state>/rearm/retired/NAME.md`` (retire); on
+   any other outcome the ledger is left as it was.
 2. Types ``/exit`` into the pane without Enter, checks that the input line reads
    exactly ``/exit`` (a terminal reply can corrupt keys; if it does not, the line is
    cleared and nothing is sent), then sends Enter.
-3. Waits for the process to exit — same pid and start time gone.
+3. Waits for the session to **stop**: the process exits (same pid and start time
+   gone) *and* it did not move to the background. ``/exit`` can background a session
+   instead of stopping it (observed on 2.1.272): the pane says ``backgrounded · <id>``
+   and a fork carries on under a new pid. The tool checks the pane and
+   ``claude agents --json``, and on either sign stops with exit ``3``.
 4. Closes the pane, unless it is the only pane in its window.
 5. Prints the ``fleet.toml`` entry for the configuration owner.
 
@@ -61,8 +68,8 @@ Exit codes
    * - ``2``
      - blocked by preflight
    * - ``3``
-     - stopped at an unexpected screen: a corrupted input line, or the
-       background-work dialog (the session is still running)
+     - not stopped: a corrupted input line, the background-work dialog, or the
+       session moved to the background (the session is still running)
    * - ``4``
      - the process did not exit within ``--wait`` seconds
 

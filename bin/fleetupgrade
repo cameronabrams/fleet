@@ -18,6 +18,7 @@ a re-arm ledger written BEFORE the restart. This flags who lacks one.
 import json, os, re, subprocess, sys, glob
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet.agents import by_session_prefix, list_agents
 from fleet.transcripts import cleared_successor, project_slug, uuid_from_descendants
 CFG = fc.load()
 
@@ -230,6 +231,22 @@ def claude_pid(pane_pid):
     pick = max(live or cands, key=lambda x: int(x[0]))
     return pick[0], pick[1]
 
+_AGENTS = []
+def agents():
+    """`claude agents --json`, read once; None if it could not be read."""
+    if _AGENTS == []:
+        _AGENTS.append(list_agents())
+    return _AGENTS[0]
+
+def attached_id(cmd):
+    """The session id prefix a `claude attach <id>` client is showing, or None.
+
+    `/exit` can move a session to the background (2.1.272); reattaching it in its
+    pane leaves the pane running an attach client with no --name or --resume, so
+    nothing in its argv identifies the session. claude agents --json does."""
+    m = re.match(r"^\s*claude\s+attach\s+([0-9a-f]{6,})\b", cmd or "")
+    return m.group(1) if m else None
+
 def sessions():
     fmt = "\t".join(["#{pane_id}", "#{pane_pid}", "#{pane_title}", "#{pane_current_path}"])
     rows = []
@@ -261,9 +278,21 @@ def sessions():
         for r in group:
             uuid = name = None
             src = ""
+            background = False
+            version = proc_version(r["pid"])
+            aid = attached_id(r["cmd"])
             # AUTHORITATIVE FIRST: what did this very process resume?
             argv_uuid = uuid_from_cmdline(r["cmd"])
-            if argv_uuid:
+            if aid:
+                a = by_session_prefix(agents(), aid) if agents() is not None else None
+                if a:
+                    uuid, name, background = a.get("sessionId"), a.get("name"), True
+                    version = proc_version(a["pid"]) if a.get("pid") else version
+                    src = "verified: background session %s attached in this pane (claude agents)" % aid
+                else:
+                    src = ("UNRESOLVED (pane runs `claude attach %s`; claude agents --json %s)"
+                           % (aid, "unreadable" if agents() is None else "lists no such session"))
+            elif argv_uuid:
                 uuid = argv_uuid
                 name = name_from_transcript(cwd, uuid)
                 src = "verified: --resume in argv"
@@ -310,7 +339,7 @@ def sessions():
                 "name": name or r["title"], "pane_title": r["title"],
                 "name_source": src, "title_disagrees": disagree,
                 "pane": r["pane"], "pid": r["pid"], "cwd": cwd, "cmd": r["cmd"],
-                "version": proc_version(r["pid"]), "resume_uuid": uuid,
+                "version": version, "resume_uuid": uuid, "background": background,
                 "ledger": led if os.path.exists(led) else None,
                 "color": color_from_transcript(cwd, uuid),
             })
@@ -364,6 +393,25 @@ def main():
         print("     tr '\\0' ' ' < /proc/<pid>/cmdline")
         print("   or close the other session and re-run.")
 
+    bg = [x for x in ss if x.get("background")]
+    if bg:
+        print("\n!! BACKGROUND SESSIONS shown in a pane through `claude attach`. /exit moved them to")
+        print("   the background instead of stopping them. Do not restart these from the plan below:")
+        print("   /exit in the pane may only detach the client, and --resume of the old uuid would")
+        print("   start a second session on a forked history. Restart by hand, then re-run this.")
+        for x in bg:
+            print("   %s %s: session %s" % (x["pane"], x["name"], (x["resume_uuid"] or "?")[:8]))
+    shown = {x["resume_uuid"] for x in ss}
+    if agents() is None:
+        print("\n   (could not read `claude agents --json`: background sessions not checked)")
+    else:
+        loose = [a for a in agents() if a.get("kind") == "background" and a.get("sessionId") not in shown]
+        if loose:
+            print("\n!! background sessions with no pane (they run, and no roll reaches them):")
+            for a in loose:
+                print("   %-22s session %s  pid %s  %s" % (a.get("name"), str(a.get("sessionId"))[:8],
+                      a.get("pid") or "-", a.get("state") or a.get("status") or ""))
+
     noname = [x for x in ss if "pane-title" in x["name_source"]]
     if noname:
         print("\n!! no agent-name record, so the name below is only the pane title:")
@@ -381,6 +429,10 @@ def main():
         return
     print("\nOrdered plan (coord last, since restarting it kills the driver):")
     for i, s in enumerate(stale, 1):
+        if s.get("background"):
+            print("  %d. %-20s pane %-4s  BACKGROUND session -- restart by hand (see above)"
+                  % (i, s["name"], s["pane"]))
+            continue
         warn = "" if s["ledger"] else "   <-- NO LEDGER: ask it to write one first"
         print("  %d. %-20s pane %-4s  %sclaude --name %s --resume %s%s"
               % (i, s["name"], s["pane"], ENV, s["name"], s["resume_uuid"], warn))
