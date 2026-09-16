@@ -28,7 +28,7 @@ unexpected screen, 4 timed out waiting for the process to exit.
 import argparse, glob, json, os, re, shlex, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
-from fleet.procs import alive, children, claude_procs, named, starttime
+from fleet.procs import alive, ancestors, children, claude_procs, named, ppid, starttime
 from fleet.agents import background_named, list_agents
 from fleet.transcripts import resume_handle, session_name
 
@@ -66,21 +66,6 @@ def fleetwatch_json(name):
         return json.loads(r.stdout), ""
     except ValueError:
         return None, "unparseable output"
-
-def ppid(pid):
-    try:
-        raw = open("/proc/%d/stat" % pid).read()
-        return int(raw[raw.rindex(")") + 2:].split()[1])
-    except (OSError, ValueError, IndexError):
-        return None
-
-def ancestors(pid):
-    out = set()
-    while pid and pid > 1 and len(out) < 64:
-        pid = ppid(pid)
-        if pid:
-            out.add(pid)
-    return out
 
 def pane_of(pid):
     """(pane_id, window_id, panes_in_window, @repo, @fleet) of the pane whose shell is

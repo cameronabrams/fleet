@@ -3,7 +3,7 @@
 Shared by fleetsnap and fleetupgrade, because both print a `--resume` handle and
 a handle that is right in one tool and wrong in the other is worse than either.
 """
-import datetime, glob, os, re, subprocess, time
+import datetime, glob, json, os, re, subprocess, time
 
 PROJECTS = os.path.expanduser("~/.claude/projects")
 _NAME_RE = re.compile(r'"agentName"\s*:\s*"([^"]+)"')
@@ -81,6 +81,88 @@ def first_timestamp(path):
     except (OSError, ValueError):
         pass
     return None
+
+def _epoch(ts):
+    try:
+        return datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+def context_stats(uuid):
+    """How much context session `uuid` carries now, from its own transcript, or None.
+
+    `tokens` is the last main-thread assistant turn's input + cache_read +
+    cache_creation: what the model was sent on that turn. A compaction writes a
+    `system` record with subtype `compact_boundary` into the SAME file, carrying
+    `compactMetadata` {preTokens, postTokens, trigger} (OBSERVED on manual /compact,
+    2026-09-02); until the next assistant turn, postTokens is the size. `turns` counts
+    `turn_duration` records since the last boundary -- None when the file has none
+    at all, since older binaries did not write them."""
+    path = next(iter(glob.glob(f"{PROJECTS}/*/{uuid}.jsonl")), None) if uuid else None
+    if not path:
+        return None
+    out = {"path": path, "tokens": None, "compactions": 0, "last_compact": None,
+           "turns": 0, "since": first_timestamp(path), "mtime": None}
+    any_turns = False
+    try:
+        out["mtime"] = os.path.getmtime(path)
+        with open(path, errors="replace") as fh:
+            for line in fh:
+                if not ('"compact_boundary"' in line or '"turn_duration"' in line
+                        or ('"assistant"' in line and '"usage"' in line)):
+                    continue
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                kind, sub = r.get("type"), r.get("subtype")
+                if kind == "system" and sub == "compact_boundary":
+                    meta = r.get("compactMetadata") or {}
+                    out["compactions"] += 1
+                    out["last_compact"] = {"at": _epoch(r.get("timestamp")),
+                                           "pre": meta.get("preTokens"),
+                                           "post": meta.get("postTokens"),
+                                           "trigger": meta.get("trigger")}
+                    out["since"] = out["last_compact"]["at"]
+                    out["tokens"] = meta.get("postTokens")
+                    out["turns"] = 0
+                elif kind == "system" and sub == "turn_duration":
+                    any_turns = True
+                    out["turns"] += 1
+                elif kind == "assistant" and not r.get("isSidechain"):
+                    msg = r.get("message")
+                    u = msg.get("usage") if isinstance(msg, dict) else None
+                    if isinstance(u, dict):
+                        n = sum(int(u.get(k) or 0) for k in (
+                            "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+                        if n:                      # a synthetic message carries zeros
+                            out["tokens"] = n
+    except OSError:
+        return None
+    if not any_turns:
+        out["turns"] = None
+    return out
+
+def compactions(uuid):
+    """The compact_boundary records in transcript `uuid`, oldest first: [dict]."""
+    found = []
+    for f in glob.glob(f"{PROJECTS}/*/{uuid}.jsonl") if uuid else []:
+        try:
+            with open(f, errors="replace") as fh:
+                for line in fh:
+                    if '"compact_boundary"' not in line:
+                        continue
+                    try:
+                        r = json.loads(line)
+                    except ValueError:
+                        continue
+                    if r.get("type") == "system" and r.get("subtype") == "compact_boundary":
+                        meta = r.get("compactMetadata") or {}
+                        found.append({"uuid": r.get("uuid"), "at": _epoch(r.get("timestamp")),
+                                      "pre": meta.get("preTokens"), "post": meta.get("postTokens")})
+        except OSError:
+            pass
+    return found
 
 def process_start(pid):
     """Epoch at which `pid` started, or None."""

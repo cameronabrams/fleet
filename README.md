@@ -46,6 +46,7 @@ when you need it.
 | `fleetgantt` | every session's life as a Gantt chart (standalone HTML) |
 | `fleetspawn` | bring one new session in, or a parked one back (plan by default) |
 | `fleetretire` | park or retire one session: checks, resume recipe, `/exit` (plan by default) |
+| `fleetcontext` | context size per session and what to trim; `/compact` or `/color` one (plan by default) |
 
 ## Skills
 

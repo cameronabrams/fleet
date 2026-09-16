@@ -1,6 +1,6 @@
 """Live claude processes and process identity, read from /proc.
 
-Shared by fleetspawn, fleetwatch and fleetretire, so "is this session running"
+Shared by fleetspawn, fleetwatch, fleetretire and fleetcontext, so "is this session running"
 and "is this the same process" have one answer.
 """
 import os
@@ -75,3 +75,20 @@ def children(pid):
     except OSError:
         return []
     return [int(x) for x in out.split()]
+
+def ppid(pid):
+    """The parent pid of `pid`, or None."""
+    try:
+        raw = open("/proc/%d/stat" % pid).read()
+        return int(raw[raw.rindex(")") + 2:].split()[1])
+    except (OSError, ValueError, IndexError):
+        return None
+
+def ancestors(pid):
+    """The set of ancestor pids of `pid`."""
+    out = set()
+    while pid and pid > 1 and len(out) < 64:
+        pid = ppid(pid)
+        if pid:
+            out.add(pid)
+    return out

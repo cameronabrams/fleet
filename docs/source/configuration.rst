@@ -118,6 +118,26 @@ to the first session whose fragment appears in the job's working directory.
 **First match wins**, so put specific fragments before general ones. A job matching
 no fragment is reported ``UNATTRIBUTED``, never guessed.
 
+``[context]``
+~~~~~~~~~~~~~
+
+Optional. When :doc:`tools/fleetcontext` recommends trimming a session, and what
+the ``/compact`` it types asks the summary to keep. Each key has a default; an
+unknown key is an error.
+
+``compact_above``
+   Tokens of context above which an idle session is a compaction candidate.
+   Default ``250000``.
+``clear_above``
+   Tokens above which a repo or writing session with a clean tree and no runtime
+   is also a *clear candidate*, for the human to decide on. Not below
+   ``compact_above``. Default ``500000``.
+``idle_minutes``
+   A session active more recently than this is left for later. Default ``10``.
+``compact_focus``
+   One line appended to every ``/compact``. Default
+   ``"keep job ids, file paths, open decisions and commitments"``.
+
 ``[parked.<name>]`` and ``[retired.<name>]``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

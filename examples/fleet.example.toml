@@ -32,6 +32,13 @@ coordinator    = "purple"
 project-a-repo = "red"
 project-a-runs = "cyan"
 
+# fleetcontext: when to recommend trimming a session's context. All optional.
+[context]
+compact_above = 250000                            # tokens; idle sessions above this: compact
+clear_above   = 500000                            # repo/writing, clean, no runtime: clear candidate
+idle_minutes  = 10                                # active more recently: later
+compact_focus = "keep job ids, file paths, open decisions and commitments"
+
 # Sessions stopped with fleetretire. Keyed by transcript: fleetrestore will not
 # relaunch a listed uuid; a new session that reuses the name is unaffected.
 # [parked.project-a-runs]

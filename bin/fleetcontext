@@ -1,0 +1,441 @@
+#!/usr/bin/env python3
+"""fleetcontext - how much context each session carries; trim one at a time.
+
+  fleetcontext                       report and recommendations (changes nothing)
+  fleetcontext --json                same, machine-readable
+  fleetcontext --compact NAME        plan: checks, then what --go would type
+  fleetcontext --compact NAME --go [--saved]
+                                     type `/compact <focus>` in NAME's pane and wait
+                                     for the compaction boundary in its transcript
+  fleetcontext --color NAME [--go]   type `/color <declared>` from [colors]
+
+Nothing runs by itself and nothing is decided here: the report recommends, the
+human chooses. Thresholds and the focus text are [context] in fleet.toml.
+
+Per session: context now (the last turn's input + cache tokens), turns and hours
+since the last compaction, minutes since it was last active, state (idle, busy,
+dialog, input), kind (from its brief), runtime held (child processes, live
+registered watchers), and a recommendation:
+
+  leave     below compact_above
+  later     busy, at a dialog, text in its input line, or active within
+            idle_minutes
+  compact   above compact_above and idle
+  clear?    above clear_above, kind repo or writing, clean tree, no runtime -- a
+            CANDIDATE: whether its state is all on disk is the human's call
+  manual    the coordinator, the session running this tool, or a background
+            session: the human types /compact in its pane
+  unknown   its transcript could not be verified, so its size is not known
+
+A candidate is marked save-first when it holds runtime, is kind production, or
+has uncommitted work: ask it to write down what it would not want summarized,
+and pass --saved once it confirms. Otherwise it is marked skip. --saved is also
+the human's per-session override.
+
+There is no --clear. A clear discards everything not on disk; that is a judgement
+about one session's state, so it stays a human keystroke.
+
+Exit codes: 0 done (or a plan with no blocks), 2 blocked, 3 stopped at an
+unexpected screen, 4 timed out waiting for the result.
+"""
+import argparse, glob, json, os, re, subprocess, sys, time
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from fleet import config as fc
+from fleet.agents import by_session_prefix, list_agents
+from fleet.procs import alive, ancestors, children, claude_procs, ppid, starttime
+from fleet.transcripts import agent_color, compactions, context_stats, session_name
+
+CFG = fc.load()
+CTX = fc.context(CFG)
+STATE = fc.state_dir(CFG)
+# The session running a tool exports its own id to child processes.
+SELF_UUID = os.environ.get("CLAUDE_CODE_SESSION_ID")
+
+BUSY_MARKER = "esc to interrupt"           # footer while a turn runs (2.1.270)
+TRUST_MARKERS = ("trust this folder", "Is this a project you created")
+BACKGROUND_MARKER = "Background work is running"
+PROMPT = "❯"                              # the input line, followed by a no-break space when empty (2.1.272)
+RULE = re.compile(r"^\s*─{3,}")           # the rules drawn above and below the input line
+CLEAR_KINDS = ("repo", "writing")
+TYPE_WAIT = 5.0                            # seconds for typed text to reach the input line
+COLOR_WAIT = 15.0                          # seconds for the agent-color record to appear
+
+def tmux(*a):
+    r = subprocess.run(["tmux", *a], capture_output=True, text=True)
+    return r.returncode, r.stdout.rstrip("\n"), r.stderr.strip()
+
+def git(cwd, *a):
+    r = subprocess.run(["git", "-C", cwd, *a], capture_output=True, text=True)
+    return r.returncode, r.stdout.strip()
+
+def panes():
+    """pane_pid -> pane_id, for every tmux pane."""
+    fmt = "\t".join(["#{pane_id}", "#{pane_pid}"])
+    rc, out, _ = tmux("list-panes", "-a", "-F", fmt)
+    found = {}
+    for row in out.splitlines() if rc == 0 else []:
+        p = row.split("\t")
+        if len(p) == 2 and p[1].isdigit():
+            found[int(p[1])] = p[0]
+    return found
+
+def screen(pane):
+    return tmux("capture-pane", "-p", "-t", pane)[1]
+
+def input_line(text):
+    """What the input line holds, whitespace-collapsed ("" when empty), or None if
+    no input line is drawn. The input line is a PROMPT line followed, after any
+    wrapped continuation, by a rule; earlier prompt lines on screen are history,
+    so the last such line wins."""
+    lines, found = text.splitlines(), None
+    for i, line in enumerate(lines):
+        if not re.match(r"^\s*" + PROMPT, line):
+            continue
+        j = i + 1
+        while j < len(lines) and not RULE.match(lines[j]):
+            j += 1
+        if j < len(lines):
+            found = " ".join([line.split(PROMPT, 1)[1]] + lines[i + 1:j])
+    return None if found is None else " ".join(found.split())
+
+def screen_state(text):
+    """idle, busy, trust, dialog, input (text already typed) or no-prompt."""
+    if any(m in text for m in TRUST_MARKERS):
+        return "trust"
+    if BACKGROUND_MARKER in text:
+        return "dialog"
+    if BUSY_MARKER in text:
+        return "busy"
+    held = input_line(text)
+    if held is None:
+        return "no-prompt"
+    return "input" if held else "idle"
+
+def brief_kind(name):
+    """The `Kind:` a session's brief declares (repo, production, ...), or None."""
+    try:
+        with open(fc.brief_path(name), errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return None
+    m = re.search(r"(?i)\bkind\s*:\s*\**\s*([a-z]+)", text)
+    return m.group(1).lower() if m else None
+
+def watchers(name):
+    """Live registered watchers of session `name`: ["job 123 (pid 4)"]."""
+    out = []
+    for path in sorted(glob.glob(os.path.join(STATE, "watchers", "*.json"))):
+        try:
+            with open(path) as f:
+                r = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if r.get("session") == name and r.get("starttime") and alive(r.get("pid"), r["starttime"]):
+            out.append(f"watcher on job {r.get('job')} (pid {r.get('pid')})")
+    return out
+
+def uncommitted(cwd):
+    """Number of uncommitted paths in cwd's work tree, or None if it is not one."""
+    rc, inside = git(cwd, "rev-parse", "--is-inside-work-tree")
+    if rc != 0 or inside != "true":
+        return None
+    return len(git(cwd, "status", "--porcelain")[1].splitlines())
+
+def sessions():
+    """(rows, agents): one row per live claude session, and `claude agents --json`
+    (None if it could not be read). The agents list is claude's own record of each
+    session's name, id and status, so it is preferred; a process it does not list
+    is resolved from its transcript."""
+    agents = list_agents()
+    by_pid = {a.get("pid"): a for a in agents or [] if a.get("pid")}
+    pane_pids = panes()
+    procs = claude_procs()
+    attached = {}
+    for pid, cwd, argv in procs:
+        if argv[1:2] == ["attach"] and len(argv) > 2:
+            pane = pane_pids.get(pid) or pane_pids.get(ppid(pid))
+            a = by_session_prefix(agents, argv[2]) if agents is not None else None
+            if pane and a:
+                attached[a.get("sessionId")] = pane
+    rows = []
+    for pid, cwd, argv in procs:
+        if argv[1:2] == ["attach"]:
+            continue                  # a client showing a background session, not a session
+        a = by_pid.get(pid)
+        if a:
+            name, uuid, how = a.get("name"), a.get("sessionId"), "verified: claude agents"
+        else:
+            name, uuid, how = session_name(pid, cwd, argv)
+        background = bool(a) and a.get("kind") == "background"
+        rows.append({"name": name, "pid": pid, "cwd": cwd, "uuid": uuid, "uuid_source": how,
+                     "status": (a or {}).get("status"), "background": background,
+                     "pane": attached.get(uuid) if background
+                             else (pane_pids.get(pid) or pane_pids.get(ppid(pid)))})
+    return rows, agents
+
+def enrich(r, now=None):
+    """Add everything the recommendation needs to a row from sessions()."""
+    now = now or time.time()
+    me = ancestors(os.getpid())
+    r["self"] = bool(SELF_UUID and r["uuid"] == SELF_UUID) or r["pid"] == os.getpid() or r["pid"] in me
+    r["kind"] = brief_kind(r["name"]) if r["name"] else None
+    r["verified"] = bool(r["uuid"]) and str(r["uuid_source"]).startswith("verified")
+    st = context_stats(r["uuid"]) if r["verified"] else None
+    r["tokens"] = st["tokens"] if st else None
+    r["turns"] = st["turns"] if st else None
+    r["compactions"] = st["compactions"] if st else None
+    r["since_h"] = (now - st["since"]) / 3600 if st and st["since"] else None
+    r["idle_s"] = now - st["mtime"] if st and st["mtime"] else None
+    text = screen(r["pane"]) if r["pane"] else ""
+    r["state"] = screen_state(text) if r["pane"] else "no-pane"
+    if r["state"] == "idle" and r.get("status") == "busy":
+        r["state"] = "busy"
+    kids = children(r["pid"])
+    r["runtime"] = [f"{len(kids)} child process(es)"] if kids else []
+    if r["name"]:
+        r["runtime"] += watchers(r["name"])
+    r["dirty"] = uncommitted(r["cwd"])
+    r["action"], r["why"] = recommend(r)
+    over = r["tokens"] is not None and r["tokens"] >= CTX["compact_above"]
+    r["save"] = save_first(r) if over else ""
+    return r
+
+def recommend(r):
+    """(action, reason) for one enriched row. Pure: tested directly."""
+    t = r["tokens"]
+    if t is None:
+        return "unknown", ("resume handle not verified (%s)" % r["uuid_source"]
+                           if not r["verified"] else "no usage in its transcript")
+    if t < CTX["compact_above"]:
+        return "leave", ""
+    if r["self"]:
+        return "manual", "the session running this tool"
+    if r["kind"] == "coordinator":
+        return "manual", "the coordinator's compaction is never scripted"
+    if r["background"]:
+        return "manual", "a background session; type it in its `claude attach` pane"
+    if r["state"] != "idle":
+        return "later", r["state"]
+    if r["idle_s"] is not None and r["idle_s"] < CTX["idle_minutes"] * 60:
+        return "later", f"active {r['idle_s'] / 60:.0f} min ago"
+    if t >= CTX["clear_above"] and r["kind"] in CLEAR_KINDS and not r["dirty"] and not r["runtime"]:
+        return "clear?", "the human decides whether its state is all on disk"
+    return "compact", ""
+
+def save_first(r):
+    """save-first when a summary could lose something that is not on disk."""
+    return "save-first" if (r["runtime"] or r["kind"] == "production" or r["dirty"]) else "skip"
+
+def ktok(n):
+    return "?" if n is None else f"{n / 1000:.0f}k"
+
+def hours(h):
+    return "?" if h is None else (f"{h:.0f}h" if h >= 1 else f"{h * 60:.0f}m")
+
+def compact_command():
+    return f"/compact {CTX['compact_focus']}".rstrip()
+
+def report(rows, agents, as_json):
+    if as_json:
+        print(json.dumps({"context": CTX, "agents_read": agents is not None, "sessions": rows}, indent=2))
+        return
+    print(f"\n  compact above {ktok(CTX['compact_above'])}, clear candidate above "
+          f"{ktok(CTX['clear_above'])}, idle at least {CTX['idle_minutes']} min\n")
+    head = ("SESSION", "CONTEXT", "TURNS", "SINCE", "ACTIVE", "STATE", "KIND", "RUNTIME", "SAVE", "DO")
+    fmt = "  {:<22} {:>7} {:>5} {:>6} {:>6}  {:<9} {:<11} {:<7} {:<10} {}"
+    print(fmt.format(*head))
+    for r in sorted(rows, key=lambda x: -(x["tokens"] or 0)):
+        print(fmt.format((r["name"] or f"(pid {r['pid']})")[:22], ktok(r["tokens"]),
+                         "?" if r["turns"] is None else r["turns"], hours(r["since_h"]),
+                         hours(r["idle_s"] / 3600 if r["idle_s"] is not None else None),
+                         r["state"], r["kind"] or "?", len(r["runtime"]) or "-", r["save"] or "-",
+                         r["action"] + (f"  ({r['why']})" if r["why"] else "")))
+    if agents is None:
+        print("\n  note: could not read `claude agents --json`; names and ids come from transcripts")
+    todo = [r for r in rows if r["action"] == "compact"]
+    if todo:
+        print("\n  Compact, one at a time:")
+        for r in todo:
+            flag = " --saved" if r["save"] == "save-first" else ""
+            print(f"    fleetcontext --compact {r['name']} --go{flag}")
+        if any(r["save"] == "save-first" for r in todo):
+            print("  First ask each save-first session (one line): \"compaction pending; write anything you "
+                  "would not want summarized to your ledger, checkpoint or repo; reply 'compact ready'.\"")
+    for r in rows:
+        if r["action"] == "manual":
+            print(f"\n  {r['name']}: the human types, in pane {r['pane'] or '?'}:  {compact_command()}")
+        if r["action"] == "clear?":
+            print(f"\n  {r['name']} is a clear candidate ({ktok(r['tokens'])}). A clear keeps nothing that is not "
+                  f"on disk. If the human chooses it:\n"
+                  f"    1. the session writes its state down and says so\n"
+                  f"    2. the human types /clear in pane {r['pane'] or '?'}\n"
+                  f"    3. fleetcontext --color {r['name']} --go   (a clear drops the color)\n"
+                  f"    4. fleetsnap   (the transcript id changed)\n"
+                  f"    5. tell the session to re-read its brief")
+    print()
+
+def find(rows, name):
+    hits = [r for r in rows if r["name"] == name]
+    if not hits:
+        return None, [f"no live session answers to {name!r}"]
+    if len(hits) > 1:
+        return None, [f"{len(hits)} sessions answer to {name!r}: "
+                      + ", ".join(f"pid {r['pid']}" for r in hits) + " -- resolve the duplicate first"]
+    return hits[0], []
+
+def preflight(r, mode, saved):
+    """(problems, notes) before typing into r's pane."""
+    problems, notes = [], []
+    if r["self"]:
+        problems.append("that is the session running this tool; it cannot type into its own pane")
+    if r["background"]:
+        problems.append("a background session: type it by hand in its `claude attach` pane")
+    if not r["pane"]:
+        problems.append("no tmux pane shows this session")
+    elif r["state"] == "trust":
+        problems.append(f"pane {r['pane']} shows the folder-trust prompt")
+    elif r["state"] == "dialog":
+        problems.append(f"pane {r['pane']} shows the background-work dialog")
+    elif r["state"] == "busy":
+        problems.append(f"{r['name']} is mid-turn; wait until it is idle")
+    elif r["state"] == "input":
+        problems.append(f"the input line in {r['pane']} already holds text (a draft, or a dialog); "
+                        f"typing would add to it")
+    elif r["state"] == "no-prompt":
+        problems.append(f"pane {r['pane']} shows no input line (a dialog or a menu?)")
+    if mode == "compact":
+        if r["kind"] == "coordinator":
+            problems.append(f"the coordinator's compaction is never scripted; the human types "
+                            f"`{compact_command()}` in its pane")
+        if not r["verified"]:
+            problems.append(f"transcript not verified ({r['uuid_source']}) -- the compaction could not be confirmed")
+        if save_first(r) == "save-first":
+            why = list(r["runtime"])
+            if r["kind"] == "production":
+                why.append("kind production")
+            if r["dirty"]:
+                why.append(f"{r['dirty']} uncommitted path(s)")
+            why = ", ".join(why)
+            if saved:
+                notes.append(f"save-first ({why}); --saved given")
+            else:
+                problems.append(f"save-first ({why}): ask it to write down what it would not want "
+                                f"summarized, then re-run with --saved")
+        if r["tokens"] is not None and r["tokens"] < CTX["compact_above"]:
+            notes.append(f"context {ktok(r['tokens'])} is below compact_above ({ktok(CTX['compact_above'])})")
+        if r["idle_s"] is not None and r["idle_s"] < CTX["idle_minutes"] * 60:
+            notes.append(f"active {r['idle_s'] / 60:.0f} min ago (expected, if it just confirmed it saved)")
+    else:
+        want = fc.colors(CFG).get(r["name"])
+        if not want:
+            problems.append(f"no [colors] entry for {r['name']} in fleet.toml")
+    return problems, notes
+
+def type_command(pane, command):
+    """Type `command` without Enter and confirm the input line holds exactly it.
+    Returns None, or the reason it did not (the line is then cleared)."""
+    tmux("send-keys", "-t", pane, "-l", command)
+    want = " ".join(command.split())
+    t_end = time.time() + TYPE_WAIT
+    while time.time() < t_end:
+        time.sleep(0.5)
+        if input_line(screen(pane)) == want:
+            return None
+    tmux("send-keys", "-t", pane, "C-u")
+    return (f"the input line in {pane} did not read exactly {command!r} within {TYPE_WAIT:.0f}s "
+            f"(a terminal reply can corrupt keys); cleared it and stopped")
+
+def do_compact(r, wait):
+    before = len(compactions(r["uuid"]))
+    start = r.get("start")
+    command = compact_command()
+    err = type_command(r["pane"], command)
+    if err:
+        return 3, err
+    tmux("send-keys", "-t", r["pane"], "Enter")
+    t_end = time.time() + wait
+    while time.time() < t_end:
+        time.sleep(5)
+        found = compactions(r["uuid"])
+        if len(found) > before:
+            c = found[-1]
+            return 0, (f"compacted {r['name']}: {ktok(c['pre'])} -> {ktok(c['post'])} "
+                       f"(measured before: {ktok(r['tokens'])})")
+        if not alive(r["pid"], start):
+            return 3, f"pid {r['pid']} exited while compacting; look at pane {r['pane']}"
+    return 4, (f"no new compaction boundary in {r['name']}'s transcript after {wait}s; "
+               f"look at pane {r['pane']}")
+
+def do_color(r):
+    want = fc.colors(CFG)[r["name"]]
+    err = type_command(r["pane"], f"/color {want}")
+    if err:
+        return 3, err
+    tmux("send-keys", "-t", r["pane"], "Enter")
+    t_end = time.time() + COLOR_WAIT
+    while time.time() < t_end:
+        time.sleep(1)
+        if agent_color(r["uuid"]) == want:
+            return 0, f"{r['name']} is {want} (agent-color record written)"
+    return 4, (f"typed /color {want}, but no {want} agent-color record appeared in "
+               f"{COLOR_WAIT:.0f}s; look at pane {r['pane']}")
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--compact", metavar="NAME")
+    g.add_argument("--color", metavar="NAME")
+    ap.add_argument("--go", action="store_true")
+    ap.add_argument("--saved", action="store_true",
+                    help="the session has written down what it needs (or the human waives it)")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--wait", type=int, default=600, help="seconds to wait for the compaction")
+    a = ap.parse_args()
+
+    rows, agents = sessions()
+    name = a.compact or a.color
+    if not name:
+        report([enrich(r) for r in rows], agents, a.json)
+        return
+
+    mode = "compact" if a.compact else "color"
+    r, problems = find(rows, name)
+    notes = []
+    if r:
+        enrich(r)
+        r["start"] = starttime(r["pid"])
+        more, notes = preflight(r, mode, a.saved)
+        problems += more
+        if mode == "color" and not problems and not r["background"]:
+            have = agent_color(r["uuid"])
+            if have == fc.colors(CFG)[name]:
+                print(f"\n  {name} is already {have}; nothing to do.\n")
+                return
+    print(f"\n  {mode} {name}")
+    if r:
+        print(f"  pid   {r['pid']}  pane {r['pane'] or '?'}  state {r['state']}  kind {r['kind'] or '?'}")
+        print(f"  uuid  {r['uuid']}  ({r['uuid_source']})")
+        print(f"  context {ktok(r['tokens'])}, {r['compactions'] if r['compactions'] is not None else '?'} "
+              f"compaction(s) so far")
+    for n in notes:
+        print(f"  note: {n}")
+    if problems:
+        print()
+        for p in problems:
+            print(f"  BLOCKED: {p}")
+        print()
+        sys.exit(2)
+    typed = compact_command() if mode == "compact" else f"/color {fc.colors(CFG)[name]}"
+    then = ("wait up to %ds for a new compaction boundary in its transcript" % a.wait
+            if mode == "compact" else "check its transcript for the agent-color record")
+    print(f"\n  --go would: type `{typed}` in {r['pane']}, confirm the input line, press Enter, and {then}.")
+    if not a.go:
+        print("\n  plan only -- re-run with --go\n")
+        return
+    code, msg = do_compact(r, a.wait) if mode == "compact" else do_color(r)
+    print(f"\n  {msg}\n")
+    if code:
+        sys.exit(code)
+
+if __name__ == "__main__":
+    main()

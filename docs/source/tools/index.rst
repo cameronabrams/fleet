@@ -47,6 +47,9 @@ script at build time, so it cannot drift from the code.
    * - :doc:`fleetgantt`
      - every session's life as a Gantt chart
      - writes a page
+   * - :doc:`fleetcontext`
+     - context size per session; compact one, or reset its color
+     - tmux, with ``--go``
 
 Most tools read ``~/.claude/projects/`` (transcripts), ``/proc`` and
 ``tmux list-panes``. All take their configuration from :doc:`../configuration`.
@@ -66,3 +69,4 @@ Most tools read ``~/.claude/projects/`` (transcripts), ``/proc`` and
    fleetlog
    fleetcost
    fleetgantt
+   fleetcontext

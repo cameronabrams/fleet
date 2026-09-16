@@ -1,4 +1,4 @@
-import os, unittest
+import os, tomllib, unittest
 from tests.support import FakeConfig
 from fleet import config as fc
 
@@ -60,6 +60,28 @@ class Sections(unittest.TestCase):
         self.assertEqual(fc.launch_env({"spawn": {"env": {"A": 1, "B": "two words"}}}),
                          "A=1 B='two words'")
 
+
+class Context(unittest.TestCase):
+    def ctx(self, body):
+        return fc.context(tomllib.loads(body))
+
+    def test_defaults(self):
+        c = self.ctx("")
+        self.assertEqual((c["compact_above"], c["clear_above"], c["idle_minutes"]), (250000, 500000, 10))
+        self.assertIn("job ids", c["compact_focus"])
+
+    def test_override_one_key(self):
+        c = self.ctx("[context]\ncompact_above = 100000\n")
+        self.assertEqual((c["compact_above"], c["clear_above"]), (100000, 500000))
+
+    def test_invalid(self):
+        for body in ("[context]\ncompact_abve = 1\n",
+                     "[context]\ncompact_above = \"250k\"\n",
+                     "[context]\ncompact_above = true\n",
+                     "[context]\nclear_above = 1000\n",
+                     "[context]\ncompact_focus = \"a\\nb\"\n"):
+            with self.subTest(body=body), self.assertRaises(fc.ConfigError):
+                self.ctx(body)
 
 class Membership(unittest.TestCase):
     def setUp(self):

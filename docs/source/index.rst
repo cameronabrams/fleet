@@ -40,6 +40,9 @@ What it gives you:
 - **Onboarding and spin-down.** :doc:`tools/fleetspawn` brings one new session in —
   pane, labels, launch, verification — and never answers the folder-trust prompt;
   :doc:`tools/fleetretire` parks or retires one, recording how to resume it first.
+- **Context trimming.** :doc:`tools/fleetcontext` measures what each session
+  carries and recommends; it compacts one session at a time, on the human's word,
+  and confirms the compaction in the transcript.
 - **Visibility.** :doc:`tools/fleetlog`, :doc:`tools/fleetcost` and
   :doc:`tools/fleetwaiting` reconstruct who talks to whom, what it costs, and who is
   blocked on the human.

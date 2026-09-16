@@ -1,6 +1,6 @@
 ---
 name: fleet-upgrade
-description: Roll agent sessions onto a newer claude binary without losing their context or silently killing their monitors. Use when the user says sessions are nagging about an update, asks to upgrade/restart the fleet, or asks which sessions are on an old version. Also use before any deliberate fleet-wide restart. Triggers on "update the binary", "restart the fleet", "upgrade the agents", "everyone wants to update", "which sessions are stale".
+description: Roll agent sessions onto a newer claude binary without losing their context or silently killing their monitors. Use when the user says sessions are nagging about an update, asks to upgrade/restart the fleet, or asks which sessions are on an old version. Also use before any deliberate fleet-wide restart, and when asked to trim the sessions' contexts (fleetcontext). Triggers on "update the binary", "restart the fleet", "upgrade the agents", "everyone wants to update", "which sessions are stale", "trim the contexts", "compact the agents", "fleetcontext".
 ---
 
 # Rolling a fleet upgrade
@@ -19,6 +19,10 @@ Never restart a session on a hunch that it "probably needs it". Measure.
 
 Reports every session: pane, running version, whether it is stale, whether it has
 a re-arm ledger, and its resume UUID. It restarts nothing.
+
+Run `fleetcontext` too, and note which sessions are over the compaction threshold.
+Put them in the report as a **suggestion** (section 8). A roll never compacts
+anything on its own.
 
 **If nothing is stale, say so and stop.** The most common right answer is "do not
 restart anything" — sessions ask for updates far more often than they need them,
@@ -416,6 +420,29 @@ Do it after the LAST session is up (including coord, so hand the human its
 restart commands if you cannot). See the `fleet-snapshot` skill for what to
 verify. On 2026-09-08 the manifest was found 13 days stale — three rolls had gone
 by without one.
+
+## 8. Context trimming: suggest, never act
+
+Trimming is on demand only. During a roll, list what `fleetcontext` recommends
+and let the human choose. When the human asks for a trim, one session at a time:
+
+1. `fleetcontext` to measure and pick the candidates. `compact` rows are ready;
+   `later` rows are busy or were active in the last `idle_minutes`; `manual` rows
+   (the coordinator, yourself, a background session) get the command printed for
+   the human to type.
+2. For each `save-first` row, message the session (pointer, one line): "compaction
+   pending; write anything you would not want summarized to your ledger,
+   checkpoint or repo; reply 'compact ready'". `skip` rows need no message.
+3. On its reply, run `fleetcontext --compact NAME --go --saved`, or leave out
+   `--saved` for a `skip` row. Check the `before -> after` line it prints.
+4. `clear?` rows are candidates for the human, never for you. If the human
+   clears one, run `fleetcontext --color NAME --go`, then `fleetsnap` (the
+   transcript id changed), then tell the session to re-read its brief.
+5. Never compact or clear a session mid-turn, and never script the
+   coordinator's own compaction.
+
+Every `/compact` the tool types carries `[context] compact_focus`, so the summary
+keeps job ids, paths and open decisions without an extra turn.
 
 ## Reporting
 

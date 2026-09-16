@@ -194,6 +194,32 @@ def events(tz):
         out.append((when.timestamp(), label, str(e.get("detail", "")), bool(t)))
     return sorted(out)
 
+CONTEXT_DEFAULTS = {
+    "compact_above": 250_000,
+    "clear_above": 500_000,
+    "idle_minutes": 10,
+    "compact_focus": "keep job ids, file paths, open decisions and commitments",
+}
+
+def context(cfg):
+    """[context]: when fleetcontext recommends trimming a session, and what every
+    /compact it types asks the summary to keep. Defaults apply per key."""
+    raw = cfg.get("context", {})
+    unknown = sorted(set(raw) - set(CONTEXT_DEFAULTS))
+    if unknown:
+        raise ConfigError(f"[context] unknown key(s): {', '.join(unknown)} "
+                          f"(known: {', '.join(CONTEXT_DEFAULTS)})")
+    out = dict(CONTEXT_DEFAULTS, **raw)
+    for k in ("compact_above", "clear_above", "idle_minutes"):
+        if not isinstance(out[k], int) or isinstance(out[k], bool) or out[k] < 0:
+            raise ConfigError(f"[context] {k} must be a non-negative integer, got {out[k]!r}")
+    if out["clear_above"] < out["compact_above"]:
+        raise ConfigError("[context] clear_above must not be below compact_above")
+    focus = out["compact_focus"]
+    if not isinstance(focus, str) or "\n" in focus:
+        raise ConfigError("[context] compact_focus must be one line of text")
+    return out
+
 def launch_env(cfg):
     """`KEY=val ...` prefix for launching a claude session, from [spawn].env.
 

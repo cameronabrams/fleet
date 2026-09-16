@@ -117,5 +117,64 @@ class Transcripts(unittest.TestCase):
         with mock.patch.object(tr, "resume_handle", return_value=(None, "no transcript found")):
             self.assertEqual(tr.session_name(1, "/w", ["claude", "--name", "beta"])[0], "beta")
 
+    def asst(self, n_in, n_read, n_create, sidechain=False):
+        return rec(type="assistant", isSidechain=sidechain,
+                   message={"usage": {"input_tokens": n_in, "cache_read_input_tokens": n_read,
+                                      "cache_creation_input_tokens": n_create, "output_tokens": 9}})
+
+    def boundary(self, pre, post, ts="2026-09-15T12:00:00Z"):
+        return rec(type="system", subtype="compact_boundary", timestamp=ts, uuid="b",
+                   compactMetadata={"trigger": "manual", "preTokens": pre, "postTokens": post})
+
+    def turn(self):
+        return rec(type="system", subtype="turn_duration")
+
+    def test_context_is_last_main_thread_turn(self):
+        self.write("u1", [rec(type="user", timestamp="2026-09-13T12:00:00Z"),
+                          self.asst(2, 1000, 50), self.turn(),
+                          self.asst(3, 2000, 10), self.turn(),
+                          self.asst(5, 90000, 0, sidechain=True),      # a subagent's turn
+                          self.asst(0, 0, 0)])                          # a synthetic message
+        st = tr.context_stats("u1")
+        self.assertEqual(st["tokens"], 2013)
+        self.assertEqual((st["compactions"], st["turns"]), (0, 2))
+        self.assertEqual(st["since"], 1789300800.0)                   # no compaction: first record
+        self.assertIsNone(st["last_compact"])
+
+    def test_compaction_resets_size_turns_and_since(self):
+        self.write("u1", [rec(type="user", timestamp="2026-09-13T12:00:00Z"),
+                          self.asst(2, 300000, 0), self.turn(), self.turn(),
+                          self.boundary(300002, 9000)])
+        st = tr.context_stats("u1")
+        self.assertEqual(st["tokens"], 9000)                           # postTokens until the next turn
+        self.assertEqual((st["compactions"], st["turns"]), (1, 0))
+        self.assertEqual(st["since"], 1789473600.0)
+        self.assertEqual(st["last_compact"]["pre"], 300002)
+        self.write("u1", [self.boundary(300002, 9000), self.asst(1, 12000, 500), self.turn()])
+        self.assertEqual(tr.context_stats("u1")["tokens"], 12501)
+        self.assertEqual(tr.context_stats("u1")["turns"], 1)
+
+    def test_text_mentioning_a_boundary_is_not_one(self):
+        self.write("u1", [rec(type="user", message={"content": 'grep "compact_boundary" x'}),
+                          rec(type="attachment", name="compact_boundary"),     # the bare word, unescaped
+                          rec(type="assistant", message={"content": "subtype compact_boundary",
+                                                         "usage": {"input_tokens": 7}})])
+        self.assertEqual(tr.context_stats("u1")["compactions"], 0)
+        self.assertEqual(tr.compactions("u1"), [])
+
+    def test_turns_unknown_without_turn_records(self):
+        self.write("u1", [self.asst(1, 1, 1)])
+        self.assertIsNone(tr.context_stats("u1")["turns"])
+
+    def test_missing_transcript(self):
+        self.assertIsNone(tr.context_stats("absent"))
+        self.assertIsNone(tr.context_stats(None))
+        self.assertEqual(tr.compactions(None), [])
+
+    def test_compactions_in_order(self):
+        self.write("u1", [self.boundary(10, 1, "2026-09-15T12:00:00Z"), self.asst(1, 1, 1),
+                          self.boundary(20, 2, "2026-09-16T12:00:00Z")])
+        self.assertEqual([(c["pre"], c["post"]) for c in tr.compactions("u1")], [(10, 1), (20, 2)])
+
 if __name__ == "__main__":
     unittest.main()
