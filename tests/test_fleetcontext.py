@@ -164,6 +164,8 @@ class Recommend(Base):
         self.assertEqual(sf(self.row()), "skip")
         self.assertEqual(sf(self.row(runtime=["1 child process(es)"])), "save-first")
         self.assertEqual(sf(self.row(kind="production")), "save-first")
+        self.assertEqual(sf(self.row(kind="service")), "save-first")
+        self.assertEqual(sf(self.row(kind="writing")), "skip")
         self.assertEqual(sf(self.row(dirty=2)), "save-first")
         self.assertEqual(sf(self.row(dirty=None)), "skip")       # not a git work tree
 
@@ -279,6 +281,10 @@ class CompactPreflight(Base):
     def test_production_kind_is_save_first(self):
         self.brief("alpha", "Kind: production\n")
         self.blocked(text="kind production")
+
+    def test_service_kind_is_save_first(self):
+        self.brief("alpha", "Kind: service — owns a shared record\n")
+        self.blocked(text="kind service")
 
     def test_live_registered_watcher_is_save_first(self):
         d = os.path.join(self.cfg.state, "watchers"); os.makedirs(d)

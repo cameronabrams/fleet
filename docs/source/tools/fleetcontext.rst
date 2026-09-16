@@ -41,7 +41,7 @@ Save first
 A session over ``compact_above`` is marked ``save-first`` when any of these hold:
 
 - it holds runtime
-- its brief says ``Kind: production``
+- its brief says ``Kind: production`` or ``Kind: service``
 - its working directory has uncommitted paths
 
 Otherwise it is marked ``skip``. For a ``save-first`` session, ask it to write down

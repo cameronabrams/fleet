@@ -27,8 +27,8 @@ registered watchers), and a recommendation:
             session: the human types /compact in its pane
   unknown   its transcript could not be verified, so its size is not known
 
-A candidate is marked save-first when it holds runtime, is kind production, or
-has uncommitted work: ask it to write down what it would not want summarized,
+A candidate is marked save-first when it holds runtime, is kind production or
+service, or has uncommitted work: ask it to write down what it would not want summarized,
 and pass --saved once it confirms. Otherwise it is marked skip. --saved is also
 the human's per-session override.
 
@@ -57,6 +57,7 @@ BACKGROUND_MARKER = "Background work is running"
 PROMPT = "❯"                              # the input line, followed by a no-break space when empty (2.1.272)
 RULE = re.compile(r"^\s*─{3,}")           # the rules drawn above and below the input line
 CLEAR_KINDS = ("repo", "writing")
+SAVE_FIRST_KINDS = ("production", "service")
 TYPE_WAIT = 5.0                            # seconds for typed text to reach the input line
 COLOR_WAIT = 15.0                          # seconds for the agent-color record to appear
 
@@ -224,7 +225,7 @@ def recommend(r):
 
 def save_first(r):
     """save-first when a summary could lose something that is not on disk."""
-    return "save-first" if (r["runtime"] or r["kind"] == "production" or r["dirty"]) else "skip"
+    return "save-first" if (r["runtime"] or r["kind"] in SAVE_FIRST_KINDS or r["dirty"]) else "skip"
 
 def ktok(n):
     return "?" if n is None else f"{n / 1000:.0f}k"
@@ -311,8 +312,8 @@ def preflight(r, mode, saved):
             problems.append(f"transcript not verified ({r['uuid_source']}) -- the compaction could not be confirmed")
         if save_first(r) == "save-first":
             why = list(r["runtime"])
-            if r["kind"] == "production":
-                why.append("kind production")
+            if r["kind"] in SAVE_FIRST_KINDS:
+                why.append(f"kind {r['kind']}")
             if r["dirty"]:
                 why.append(f"{r['dirty']} uncommitted path(s)")
             why = ", ".join(why)
