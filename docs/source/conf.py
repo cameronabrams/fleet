@@ -84,6 +84,9 @@ html_theme_options = {
 }
 
 html_static_path = ['_static']
+# The icon on a white disc, so it shows on dark tab bars too. The 16 and 32 px
+# images crop to the conductor; the whole orchestra is mush at that size.
+html_favicon = '_static/img/favicon.ico'
 
 # -- Options for EPUB output
 epub_show_urls = 'footnote'
