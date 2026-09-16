@@ -1,6 +1,16 @@
 fleet
 =====
 
+.. image:: _static/img/fleet.png
+   :alt: A robot orchestra: a conductor on a podium, its players at their stands
+   :class: only-light banner
+   :width: 100%
+
+.. image:: _static/img/fleet-dark.png
+   :alt: A robot orchestra: a conductor on a podium, its players at their stands
+   :class: only-dark banner
+   :width: 100%
+
 .. |docs| image:: https://readthedocs.org/projects/fleet-of-agents/badge/?version=latest
    :target: https://fleet-of-agents.readthedocs.io/en/latest/
    :alt: Documentation status

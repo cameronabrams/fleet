@@ -47,6 +47,10 @@ myst_heading_anchors = 3
 
 html_theme = 'furo'
 html_theme_options = {
+    # Line art in black: the inverted copies are what make it visible in the dark
+    # theme. Paths are relative to html_static_path.
+    "light_logo": "img/fleet-icon.png",
+    "dark_logo": "img/fleet-icon-dark.png",
     "light_css_variables": {
         "color-icon": "#000000"  # Black for light mode
     },

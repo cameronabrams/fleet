@@ -1,3 +1,17 @@
+/* Landing-page banner: full width of the content column, a little air below it,
+   and no border box from the theme's image styling. */
+img.banner {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin: 0 0 1.5rem;
+}
+
+/* The sidebar logo is line art with a lot of detail; give it room. */
+.sidebar-logo {
+    max-width: 70%;
+}
+
 .github-icon svg,
 .linkedin-icon svg {
     transition: fill 0.3s;
