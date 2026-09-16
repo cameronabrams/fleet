@@ -155,6 +155,19 @@ at expiry (and re-register the new pid), or run the watcher outside the session 
 `setsid` loop or a transient `systemd-run --user` unit logging to a file) and register
 that pid. Re-check this on each new binary; it may change again.
 
+### A `systemd-run --user` unit does not get your shell's PATH
+
+OBSERVED 2026-09-16 after a reboot, and verified: the user manager's PATH was
+`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin`. It does not include `~/bin`, where
+`install` links the fleet tools. A transient unit watcher that called `fleetregister`
+failed with "command not found". Before the reboot the same unit had worked, because
+the manager had inherited a login environment, so a unit that works once proves nothing.
+Inside any script meant to run as a unit, set `PATH` or call tools by absolute path
+(`$HOME/bin/fleetregister`). Do not `systemctl --user import-environment` to paper over
+it: that changes every later unit and is lost at the next boot anyway. Check with
+
+    systemd-run --user --wait --pipe -q sh -c 'command -v fleetregister || echo MISSING'
+
 ### Run `fleetwatch` first — DERIVE the inventory, do not read it
 
     fleetwatch

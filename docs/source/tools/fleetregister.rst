@@ -14,6 +14,12 @@ Usage
    # when the job has ended and its result has been read:
    fleetregister --clear <session> <jobid>
 
+From a watcher that runs as a ``systemd-run --user`` unit, call it by absolute path
+(``$HOME/bin/fleetregister``, or wherever ``install`` linked it). A unit gets the
+user manager's ``PATH``, which after a reboot is only the system directories, so a
+bare ``fleetregister`` there fails with "command not found", even if the same unit
+worked before the reboot.
+
 A registration is ``<state>/watchers/<session>-<jobid>-<pid>.json``:
 
 .. code-block:: json

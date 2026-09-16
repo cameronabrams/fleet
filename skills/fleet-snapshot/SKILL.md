@@ -145,6 +145,12 @@ it does not restart jobs. Local runs died with the power cycle and whether to
 rerun them is a judgement call, not a recovery step. Jobs on a remote cluster are
 unaffected by anything that happens to this workstation.
 
+**Watchers.** Each session re-arms its own from its ledger. One trap when a
+watcher is re-armed as a `systemd-run --user` unit: after a reboot the user
+manager's PATH has no `~/bin`, so a unit calling `fleetregister` by bare name fails
+with "command not found" (OBSERVED 2026-09-16). The fix is absolute paths or `PATH`
+set inside the script (see `fleet-upgrade`).
+
 **Session context beyond the transcript.** Restore resumes by uuid, so context
 comes back only as far as `--resume` carries it — and if the human chose a summary
 resume, the compaction is already baked into that transcript.

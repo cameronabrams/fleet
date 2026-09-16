@@ -187,7 +187,9 @@ so where it matters check `/proc/<pid>/stat` state too.
 expired after 30 minutes on 2.1.272 (verified 2026-09-15). A job that runs for hours
 outlives it, and a dead watcher reports nothing. Watch long jobs from a process
 outside the session (`setsid` loop, or `systemd-run --user` with output to a file),
-or plan to re-arm at expiry; re-check on each new binary.
+or plan to re-arm at expiry; re-check on each new binary. A `systemd-run --user` unit
+runs with the user manager's PATH, not your shell's (after a reboot, no `~/bin`), so use
+absolute paths or set `PATH` inside the unit's script.
 
 ## Skill-file hygiene
 
