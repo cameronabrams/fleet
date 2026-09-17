@@ -46,7 +46,8 @@ With ``--go``
 -------------
 
 Each attempt resolves the session afresh from ``claude agents --json`` and ``/proc``.
-It types only when the pane is idle, shows no dialog and has an empty input line; a
+It types only when the pane is idle, shows no dialog and has an empty input line. A dim
+prompt suggestion counts as empty, as in :doc:`fleetcontext`. A
 ``busy`` or ``waiting`` status also counts as not typeable. ``shell`` and ``monitor``
 mean the session is at its prompt, so they are typeable. The typed line must read back
 exactly before Enter, as in :doc:`fleetcontext`. Delivery is confirmed when the tag

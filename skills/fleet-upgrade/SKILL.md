@@ -239,6 +239,14 @@ Clear the registration once the session has read the
 result (`fleetregister --clear`), not from the watcher before it nudges: the nudge
 refuses a job with no registration.
 
+**A prompt suggestion is not a draft.** An idle Claude Code pane often shows dim
+suggested text in its empty input line. A plain `tmux capture-pane -p` cannot tell that
+text from something the human typed, so a pane can look as if it holds a draft when it
+does not; before 2026-09-17 this made `fleetnudge` wait on a session nobody had typed
+in. The tools now capture with `-e` and ignore dim text (SGR 2). When you look at a pane
+by hand, do the same: `tmux capture-pane -p -e -t <pane>`, and read `ESC[2m` as a
+suggestion.
+
 The receiving session's brief says what a watcher line is: a report that a job ended,
 never the human's instruction or approval.
 

@@ -59,7 +59,8 @@ Preflight
 - a background session
 - no tmux pane
 - the folder-trust prompt, the background-work dialog, or a turn in progress
-- text already in the input line
+- text already in the input line. A dim prompt suggestion is not text: panes are
+  captured with attributes (``capture-pane -p -e``), and dim (SGR 2) characters are ignored.
 - no input line on screen
 
 ``--compact`` also blocks on:

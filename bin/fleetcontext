@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..
 from fleet import config as fc
 from fleet.agents import by_session_prefix, list_agents
 from fleet.procs import alive, ancestors, children, claude_procs, ppid, starttime
-from fleet.panes import input_line, screen_state, state_problem, type_line
+from fleet.panes import CAPTURE, input_line, screen_state, state_problem, type_line
 from fleet.transcripts import agent_color, compactions, context_stats, session_name
 
 CFG = fc.load()
@@ -76,7 +76,7 @@ def panes():
     return found
 
 def screen(pane):
-    return tmux("capture-pane", "-p", "-t", pane)[1]
+    return tmux(*CAPTURE, "-t", pane)[1]
 
 def brief_kind(name):
     """The `Kind:` a session's brief declares (repo, production, ...), or None."""

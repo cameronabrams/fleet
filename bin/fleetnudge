@@ -40,7 +40,7 @@ import argparse, glob, json, os, re, subprocess, sys, time, urllib.request
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.agents import list_agents
-from fleet.panes import screen_state, state_problem, type_line
+from fleet.panes import CAPTURE, screen_state, state_problem, type_line
 from fleet.procs import ancestors, claude_procs, ppid
 from fleet.transcripts import PROJECTS, session_name
 
@@ -74,7 +74,7 @@ def panes():
     return found
 
 def screen(pane):
-    return tmux("capture-pane", "-p", "-t", pane)[1]
+    return tmux(*CAPTURE, "-t", pane)[1]
 
 def tag(session, job):
     return f"[watcher: {session} job {job}]"
