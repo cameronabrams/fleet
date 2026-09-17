@@ -161,7 +161,7 @@ that pid. Re-check this on each new binary; it may change again.
 
 ### In-session background tasks die on a false low-memory alarm
 
-REPORTED and VERIFIED in the fleet, 2026-09-17: Claude Code killed a session's background
+REPORTED and VERIFIED in the fleet, 2026-09-16: Claude Code killed a session's background
 watcher, twice, with "system is running low on memory". Physical memory was not short:
 MemFree was ~0.5 G but MemAvailable was ~58 G, because page cache had filled the rest. A
 host doing heavy I/O will get there on its own. Any watcher that must last belongs
@@ -172,7 +172,7 @@ line), because the pid you see at launch may not be the watcher:
     setsid -f nohup ./watch.sh >log 2>&1 &   # $! is the forking setsid, gone at once
 
 Plain `setsid cmd &` from a shell without job control execs in place, so `$!` happens to
-be right (checked 2026-09-17). `setsid -f`, or a caller that is a process-group leader,
+be right (checked 2026-09-16). `setsid -f`, or a caller that is a process-group leader,
 forks, and then `$!` names a process that has already exited. Self-registration is
 right in every case, so do not rely on `$!` at all.
 

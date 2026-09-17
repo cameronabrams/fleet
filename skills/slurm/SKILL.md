@@ -191,7 +191,7 @@ or plan to re-arm at expiry; re-check on each new binary. A `systemd-run --user`
 runs with the user manager's PATH, not your shell's (after a reboot, no `~/bin`), so use
 absolute paths or set `PATH` inside the unit's script. In-session background tasks
 are no safer: Claude Code has killed them on a "low on memory" alarm while page cache
-was merely full (verified 2026-09-17). A detached watcher should register its own pid
+was merely full (verified 2026-09-16). A detached watcher should register its own pid
 (`$$` inside the script), not the `$!` of whatever launched it.
 
 ## Skill-file hygiene
