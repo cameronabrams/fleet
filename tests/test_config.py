@@ -1,4 +1,4 @@
-import os, tomllib, unittest
+import os, tempfile, tomllib, unittest
 from tests.support import FakeConfig
 from fleet import config as fc
 
@@ -82,6 +82,32 @@ class Context(unittest.TestCase):
                      "[context]\ncompact_focus = \"a\\nb\"\n"):
             with self.subTest(body=body), self.assertRaises(fc.ConfigError):
                 self.ctx(body)
+
+class Notify(unittest.TestCase):
+    def test_unconfigured_and_defaults(self):
+        self.assertEqual(fc.notify({}), {})
+        n = fc.notify(tomllib.loads('[notify]\nntfy_topic_file = "~/t"\n'))
+        self.assertEqual(n["ntfy_server"], "https://ntfy.sh")
+        self.assertEqual(n["ntfy_topic_file"], os.path.expanduser("~/t"))
+        self.assertEqual(n["mute_file"], "")
+
+    def test_invalid(self):
+        for body in ('[notify]\nntfy_server = "https://x"\n', '[notify]\ntopic = "t"\n'):
+            with self.subTest(body=body), self.assertRaises(fc.ConfigError):
+                fc.notify(tomllib.loads(body))
+
+    def test_topic_from_hook_script_or_plain_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "t")
+            for text, want in (('#!/bin/sh\nTOPIC="abc-1"\ncurl ...\n', "abc-1"),
+                               ("TOPIC=plain_2\n", "plain_2"),
+                               ("\n  my-topic\n", "my-topic"),
+                               ("#!/bin/sh\necho hi\n", None),
+                               ("two words\n", None)):
+                with open(p, "w") as f:
+                    f.write(text)
+                self.assertEqual(fc.ntfy_topic(p), want, text)
+            self.assertIsNone(fc.ntfy_topic(os.path.join(d, "absent")))
 
 class Membership(unittest.TestCase):
     def setUp(self):

@@ -43,6 +43,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..
 from fleet import config as fc
 from fleet.agents import by_session_prefix, list_agents
 from fleet.procs import alive, ancestors, children, claude_procs, ppid, starttime
+from fleet.panes import input_line, screen_state, state_problem, type_line
 from fleet.transcripts import agent_color, compactions, context_stats, session_name
 
 CFG = fc.load()
@@ -51,14 +52,8 @@ STATE = fc.state_dir(CFG)
 # The session running a tool exports its own id to child processes.
 SELF_UUID = os.environ.get("CLAUDE_CODE_SESSION_ID")
 
-BUSY_MARKER = "esc to interrupt"           # footer while a turn runs (2.1.270)
-TRUST_MARKERS = ("trust this folder", "Is this a project you created")
-BACKGROUND_MARKER = "Background work is running"
-PROMPT = "❯"                              # the input line, followed by a no-break space when empty (2.1.272)
-RULE = re.compile(r"^\s*─{3,}")           # the rules drawn above and below the input line
 CLEAR_KINDS = ("repo", "writing")
 SAVE_FIRST_KINDS = ("production", "service")
-TYPE_WAIT = 5.0                            # seconds for typed text to reach the input line
 COLOR_WAIT = 15.0                          # seconds for the agent-color record to appear
 
 def tmux(*a):
@@ -82,35 +77,6 @@ def panes():
 
 def screen(pane):
     return tmux("capture-pane", "-p", "-t", pane)[1]
-
-def input_line(text):
-    """What the input line holds, whitespace-collapsed ("" when empty), or None if
-    no input line is drawn. The input line is a PROMPT line followed, after any
-    wrapped continuation, by a rule; earlier prompt lines on screen are history,
-    so the last such line wins."""
-    lines, found = text.splitlines(), None
-    for i, line in enumerate(lines):
-        if not re.match(r"^\s*" + PROMPT, line):
-            continue
-        j = i + 1
-        while j < len(lines) and not RULE.match(lines[j]):
-            j += 1
-        if j < len(lines):
-            found = " ".join([line.split(PROMPT, 1)[1]] + lines[i + 1:j])
-    return None if found is None else " ".join(found.split())
-
-def screen_state(text):
-    """idle, busy, trust, dialog, input (text already typed) or no-prompt."""
-    if any(m in text for m in TRUST_MARKERS):
-        return "trust"
-    if BACKGROUND_MARKER in text:
-        return "dialog"
-    if BUSY_MARKER in text:
-        return "busy"
-    held = input_line(text)
-    if held is None:
-        return "no-prompt"
-    return "input" if held else "idle"
 
 def brief_kind(name):
     """The `Kind:` a session's brief declares (repo, production, ...), or None."""
@@ -291,19 +257,9 @@ def preflight(r, mode, saved):
         problems.append("that is the session running this tool; it cannot type into its own pane")
     if r["background"]:
         problems.append("a background session: type it by hand in its `claude attach` pane")
-    if not r["pane"]:
-        problems.append("no tmux pane shows this session")
-    elif r["state"] == "trust":
-        problems.append(f"pane {r['pane']} shows the folder-trust prompt")
-    elif r["state"] == "dialog":
-        problems.append(f"pane {r['pane']} shows the background-work dialog")
-    elif r["state"] == "busy":
-        problems.append(f"{r['name']} is mid-turn; wait until it is idle")
-    elif r["state"] == "input":
-        problems.append(f"the input line in {r['pane']} already holds text (a draft, or a dialog); "
-                        f"typing would add to it")
-    elif r["state"] == "no-prompt":
-        problems.append(f"pane {r['pane']} shows no input line (a dialog or a menu?)")
+    why = state_problem(r["state"], r["name"], r["pane"])
+    if why:
+        problems.append(why)
     if mode == "compact":
         if r["kind"] == "coordinator":
             problems.append(f"the coordinator's compaction is never scripted; the human types "
@@ -332,25 +288,11 @@ def preflight(r, mode, saved):
             problems.append(f"no [colors] entry for {r['name']} in fleet.toml")
     return problems, notes
 
-def type_command(pane, command):
-    """Type `command` without Enter and confirm the input line holds exactly it.
-    Returns None, or the reason it did not (the line is then cleared)."""
-    tmux("send-keys", "-t", pane, "-l", command)
-    want = " ".join(command.split())
-    t_end = time.time() + TYPE_WAIT
-    while time.time() < t_end:
-        time.sleep(0.5)
-        if input_line(screen(pane)) == want:
-            return None
-    tmux("send-keys", "-t", pane, "C-u")
-    return (f"the input line in {pane} did not read exactly {command!r} within {TYPE_WAIT:.0f}s "
-            f"(a terminal reply can corrupt keys); cleared it and stopped")
-
 def do_compact(r, wait):
     before = len(compactions(r["uuid"]))
     start = r.get("start")
     command = compact_command()
-    err = type_command(r["pane"], command)
+    err = type_line(tmux, r["pane"], command)
     if err:
         return 3, err
     tmux("send-keys", "-t", r["pane"], "Enter")
@@ -369,7 +311,7 @@ def do_compact(r, wait):
 
 def do_color(r):
     want = fc.colors(CFG)[r["name"]]
-    err = type_command(r["pane"], f"/color {want}")
+    err = type_line(tmux, r["pane"], f"/color {want}")
     if err:
         return 3, err
     tmux("send-keys", "-t", r["pane"], "Enter")

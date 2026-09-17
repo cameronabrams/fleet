@@ -39,6 +39,14 @@ clear_above   = 500000                            # repo/writing, clean, no runt
 idle_minutes  = 10                                # active more recently: later
 compact_focus = "keep job ids, file paths, open decisions and commitments"
 
+# fleetnudge: the phone push sent when a watcher's line cannot be delivered.
+# The topic is read from a file -- the topic alone, or a script with a TOPIC="..."
+# line, so an existing notification hook stays the one place it is written.
+# [notify]
+# ntfy_server     = "https://ntfy.sh"
+# ntfy_topic_file = "~/.claude/hooks/ntfy-notify.sh"
+# mute_file       = "~/.claude/ntfy-off"             # exists -> no push
+
 # Sessions stopped with fleetretire. Keyed by transcript: fleetrestore will not
 # relaunch a listed uuid; a new session that reuses the name is unaffected.
 # [parked.project-a-runs]

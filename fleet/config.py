@@ -220,6 +220,40 @@ def context(cfg):
         raise ConfigError("[context] compact_focus must be one line of text")
     return out
 
+def notify(cfg):
+    """[notify]: where a tool sends a phone push when it could not reach a session.
+
+    ntfy_topic_file names a file holding the topic -- either the topic alone, or a
+    shell script with a TOPIC="..." line, so an existing notification hook can stay
+    the one place the topic is written. mute_file, when it exists, silences the push
+    (the tool still says it did not deliver). Returns {} when unconfigured."""
+    raw = cfg.get("notify", {})
+    known = {"ntfy_server", "ntfy_topic_file", "mute_file"}
+    unknown = sorted(set(raw) - known)
+    if unknown:
+        raise ConfigError(f"[notify] unknown key(s): {', '.join(unknown)} (known: {', '.join(sorted(known))})")
+    if not raw:
+        return {}
+    out = {"ntfy_server": str(raw.get("ntfy_server", "https://ntfy.sh")).rstrip("/"),
+           "ntfy_topic_file": os.path.expanduser(raw.get("ntfy_topic_file", "")),
+           "mute_file": os.path.expanduser(raw.get("mute_file", ""))}
+    if not out["ntfy_topic_file"]:
+        raise ConfigError("[notify] needs ntfy_topic_file")
+    return out
+
+def ntfy_topic(path):
+    """The topic in `path` (see notify()), or None if it cannot be read."""
+    try:
+        with open(path, errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return None
+    m = re.search(r'^\s*TOPIC\s*=\s*["\']?([A-Za-z0-9_-]+)', text, re.M)
+    if m:
+        return m.group(1)
+    first = next((l.strip() for l in text.splitlines() if l.strip()), "")
+    return first if re.fullmatch(r"[A-Za-z0-9_-]+", first) else None
+
 def launch_env(cfg):
     """`KEY=val ...` prefix for launching a claude session, from [spawn].env.
 

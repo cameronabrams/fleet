@@ -1,0 +1,290 @@
+#!/usr/bin/env python3
+"""fleetnudge - a detached watcher wakes its idle session with one tagged line.
+
+  fleetnudge SESSION JOB "TEXT"          plan: the checks, and the line it would type
+  fleetnudge SESSION JOB "TEXT" --go     type it when SESSION is idle; retry while busy
+
+The line typed is always
+
+  [watcher: SESSION job JOB] TEXT
+
+The tag is added here and cannot be left out. It marks the line as a watcher's
+report that a job changed state, never as the human's instruction; each session's
+brief says to check the job and report, and to take no other action on the tag's
+authority. TEXT is one line of printable text, at most 200 characters.
+
+It types only into a pane that is idle, shows no dialog, and has an empty input
+line, and presses Enter only when the input line reads back exactly the tagged
+line. It then waits for the line to appear in the session's transcript. While the
+session is busy or not typeable it retries (every --every seconds, for up to
+--wait seconds); it never queues a line behind a draft.
+
+Refused, and not retried: a session that is not a fleet member (no [colors] entry)
+or is parked or retired; the coordinator; a background (`claude attach`) session;
+the session running this tool; a JOB with no registration for SESSION
+(fleetregister); an unverified transcript; bad TEXT.
+
+When the line is not delivered, it sends a phone push through [notify] in
+fleet.toml (ntfy) unless the mute file exists, and exits non-zero. Every attempt
+and outcome is appended to <state>/nudges.log.
+
+Built to run from a systemd unit or a setsid'd script: call it by absolute path.
+A unit's PATH lacks ~/.local/bin (where claude lives), so the tool adds it and the
+system directories to its own PATH before calling `claude` or `tmux`.
+
+Exit codes: 0 delivered (or a plan with no blocks), 2 refused, 3 the typed line did
+not read back (cleared), 4 not delivered in time (busy throughout, or never seen
+in the transcript).
+"""
+import argparse, glob, json, os, re, subprocess, sys, time, urllib.request
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from fleet import config as fc
+from fleet.agents import list_agents
+from fleet.panes import screen_state, state_problem, type_line
+from fleet.procs import ancestors, claude_procs, ppid
+from fleet.transcripts import PROJECTS, session_name
+
+# A systemd user unit's PATH is only the system directories (observed 2026-09-16).
+os.environ["PATH"] = os.pathsep.join(
+    [os.path.expanduser("~/.local/bin")]
+    + (os.environ.get("PATH") or "/usr/local/bin:/usr/bin:/bin").split(os.pathsep))
+
+CFG = fc.load()
+STATE = fc.state_dir(CFG)
+LOG = os.path.join(STATE, "nudges.log")
+MAX_TEXT = 200
+JOB_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:+\[\]-]{0,63}")
+CONFIRM_WAIT = 60.0                        # seconds for the typed line to reach the transcript
+
+def tmux(*a):
+    try:
+        r = subprocess.run(["tmux", *a], capture_output=True, text=True)
+    except OSError as e:
+        return 1, "", str(e)
+    return r.returncode, r.stdout.rstrip("\n"), r.stderr.strip()
+
+def panes():
+    """pane_pid -> pane_id, for every tmux pane."""
+    rc, out, _ = tmux("list-panes", "-a", "-F", "#{pane_id}\t#{pane_pid}")
+    found = {}
+    for row in out.splitlines() if rc == 0 else []:
+        p = row.split("\t")
+        if len(p) == 2 and p[1].isdigit():
+            found[int(p[1])] = p[0]
+    return found
+
+def screen(pane):
+    return tmux("capture-pane", "-p", "-t", pane)[1]
+
+def tag(session, job):
+    return f"[watcher: {session} job {job}]"
+
+def brief_kind(name):
+    try:
+        with open(fc.brief_path(name), errors="replace") as f:
+            m = re.search(r"(?i)\bkind\s*:\s*\**\s*([a-z]+)", f.read())
+    except OSError:
+        return None
+    return m.group(1).lower() if m else None
+
+def registered(session, job):
+    """True if some watcher registered (session, job), live or not."""
+    for path in glob.glob(os.path.join(STATE, "watchers", "*.json")):
+        try:
+            with open(path) as f:
+                r = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if r.get("session") == session and str(r.get("job")) == job:
+            return True
+    return False
+
+def static_problems(session, job, text):
+    """Refusals that no amount of waiting fixes."""
+    out = []
+    if not JOB_RE.fullmatch(job):
+        out.append(f"job {job!r} is not a job id")
+    if not text.strip():
+        out.append("TEXT is empty")
+    elif len(text) > MAX_TEXT:
+        out.append(f"TEXT is {len(text)} characters; the limit is {MAX_TEXT}")
+    elif any(not c.isprintable() for c in text):
+        out.append("TEXT must be one line of printable characters")
+    if session not in fc.colors(CFG):
+        out.append(f"{session!r} is not a fleet member (no [colors] entry)")
+    rec = fc.stopped(CFG).get(session)
+    if rec:
+        out.append(f"{session} is [{rec['state']}] in fleet.toml")
+    if brief_kind(session) == "coordinator":
+        out.append("the coordinator is not nudged; its watchers report to the human directly")
+    if not registered(session, job):
+        out.append(f"no watcher registration for {session} job {job} (fleetregister {session} {job} <pid>)")
+    return out
+
+def resolve(session):
+    """(row, problem): the live session, or why it cannot be typed into now.
+    problem is (kind, text) with kind "refuse" (final) or "wait" (retry)."""
+    agents = list_agents()
+    by_pid = {a.get("pid"): a for a in agents or [] if a.get("pid")}
+    hits = []
+    for pid, cwd, argv in claude_procs():
+        if argv[1:2] == ["attach"]:
+            continue
+        a = by_pid.get(pid)
+        if a:
+            name, uuid, how = a.get("name"), a.get("sessionId"), "verified: claude agents"
+        else:
+            name, uuid, how = session_name(pid, cwd, argv)
+        if name == session:
+            hits.append({"pid": pid, "uuid": uuid, "how": how, "agent": a or {}})
+    if agents is not None:
+        for a in agents:
+            if a.get("name") == session and a.get("kind") == "background":
+                return None, ("refuse", f"{session} is a background session; nudge it by hand "
+                                        f"in its `claude attach` pane")
+    if not hits:
+        return None, ("wait", f"no live session answers to {session!r}")
+    if len(hits) > 1:
+        return None, ("refuse", f"{len(hits)} sessions answer to {session!r}: "
+                                + ", ".join(f"pid {h['pid']}" for h in hits))
+    r = hits[0]
+    # By ancestry only. A setsid'd watcher still carries its session's
+    # CLAUDE_CODE_SESSION_ID although it was reparented to init (all three live
+    # watchers checked 2026-09-17), so that variable would refuse exactly the
+    # callers this tool exists for.
+    if r["pid"] in ancestors(os.getpid()):
+        return None, ("refuse", "this is running inside the session itself; an in-session "
+                                "task already notifies it")
+    if not r["uuid"] or not str(r["how"]).startswith("verified"):
+        return None, ("refuse", f"transcript not verified ({r['how']}); delivery could not be confirmed")
+    pane_pids = panes()
+    r["pane"] = pane_pids.get(r["pid"]) or pane_pids.get(ppid(r["pid"]))
+    r["state"] = screen_state(screen(r["pane"])) if r["pane"] else "no-pane"
+    # `shell` and `monitor` mean at the prompt while holding runtime: typeable.
+    if r["state"] == "idle" and r["agent"].get("status") in ("busy", "waiting"):
+        r["state"] = "busy"
+    why = state_problem(r["state"], session, r["pane"])
+    if why:
+        return r, ("wait", why)
+    return r, None
+
+def tag_count(uuid, marker):
+    """How many times `marker` appears in the session's transcript."""
+    n = 0
+    for f in glob.glob(f"{PROJECTS}/*/{uuid}.jsonl"):
+        try:
+            with open(f, errors="replace") as fh:
+                n += sum(line.count(marker) for line in fh)
+        except OSError:
+            pass
+    return n
+
+def log(**rec):
+    rec = dict(time=time.strftime("%Y-%m-%dT%H:%M:%S%z"), **rec)
+    try:
+        os.makedirs(STATE, exist_ok=True)
+        with open(LOG, "a") as f:
+            f.write(json.dumps(rec) + "\n")
+    except OSError as e:
+        print(f"  could not write {LOG}: {e}", file=sys.stderr)
+
+def push(title, body):
+    """Send the phone push. Returns what happened, for the log."""
+    n = fc.notify(CFG)
+    if not n:
+        return "no [notify] in fleet.toml: no push sent"
+    if n["mute_file"] and os.path.exists(n["mute_file"]):
+        return f"push muted ({n['mute_file']} exists)"
+    topic = fc.ntfy_topic(n["ntfy_topic_file"])
+    if not topic:
+        return f"no ntfy topic readable in {n['ntfy_topic_file']}: no push sent"
+    req = urllib.request.Request(f"{n['ntfy_server']}/{topic}", data=body.encode(),
+                                 headers={"Title": title}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return f"push sent (HTTP {resp.status})"
+    except OSError as e:
+        return f"push FAILED: {e}"
+
+def give_up(code, session, job, text, reason):
+    pushed = push(f"fleetnudge: {session} not reached",
+                  f"{tag(session, job)} {text}\nNot delivered: {reason}")
+    log(session=session, job=job, text=text, outcome="not delivered", code=code,
+        reason=reason, push=pushed)
+    print(f"\n  NOT DELIVERED: {reason}\n  {pushed}\n")
+    sys.exit(code)
+
+def deliver(r, session, job, text):
+    """Type, Enter, confirm. Returns (code, detail)."""
+    line = f"{tag(session, job)} {text}"
+    before = tag_count(r["uuid"], tag(session, job))
+    err = type_line(tmux, r["pane"], line)
+    if err:
+        return 3, err
+    tmux("send-keys", "-t", r["pane"], "Enter")
+    t_end = time.time() + CONFIRM_WAIT
+    while time.time() < t_end:
+        time.sleep(2)
+        if tag_count(r["uuid"], tag(session, job)) > before:
+            return 0, f"delivered to {session} in {r['pane']} (seen in its transcript)"
+    return 4, (f"typed into {r['pane']} and entered, but the line did not appear in "
+               f"{session}'s transcript within {CONFIRM_WAIT:.0f}s")
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("session")
+    ap.add_argument("job")
+    ap.add_argument("text")
+    ap.add_argument("--go", action="store_true")
+    ap.add_argument("--wait", type=int, default=1800, help="seconds to keep retrying (default 1800)")
+    ap.add_argument("--every", type=int, default=60, help="seconds between attempts (default 60)")
+    a = ap.parse_args()
+    session, job, text = a.session, a.job, a.text.strip()
+    print(f"\n  nudge {session}: {tag(session, job)} {text}")
+
+    problems = static_problems(session, job, text)
+    if problems:
+        for p in problems:
+            print(f"  REFUSED: {p}")
+        if a.go:
+            give_up(2, session, job, text, "; ".join(problems))
+        print()
+        sys.exit(2)
+
+    if not a.go:
+        r, problem = resolve(session)
+        if problem and problem[0] == "refuse":
+            print(f"  REFUSED: {problem[1]}\n")
+            sys.exit(2)
+        now = f"now: {problem[1]}" if problem else f"now: idle in {r['pane']}"
+        print(f"  {now}")
+        print(f"\n  --go would type the line when {session} is idle (retrying every {a.every}s "
+              f"for up to {a.wait}s), press Enter, and confirm it in the transcript;")
+        print("  otherwise send the [notify] push and exit non-zero.\n\n  plan only -- re-run with --go\n")
+        return
+
+    t_end = time.time() + a.wait
+    attempt = 0
+    while True:
+        attempt += 1
+        r, problem = resolve(session)
+        if problem is None:
+            code, detail = deliver(r, session, job, text)
+            if code == 0:
+                log(session=session, job=job, text=text, outcome="delivered", attempt=attempt,
+                    pane=r["pane"], detail=detail)
+                print(f"  {detail}\n")
+                return
+            give_up(code, session, job, text, detail)
+        kind, why = problem
+        log(session=session, job=job, text=text, outcome="waiting" if kind == "wait" else "refused",
+            attempt=attempt, reason=why)
+        if kind == "refuse":
+            give_up(2, session, job, text, why)
+        if time.time() + a.every > t_end:
+            give_up(4, session, job, text, f"still not typeable after {a.wait}s: {why}")
+        print(f"  attempt {attempt}: {why}; retrying in {a.every}s")
+        time.sleep(a.every)
+
+if __name__ == "__main__":
+    main()

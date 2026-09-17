@@ -192,7 +192,10 @@ runs with the user manager's PATH, not your shell's (after a reboot, no `~/bin`)
 absolute paths or set `PATH` inside the unit's script. In-session background tasks
 are no safer: Claude Code has killed them on a "low on memory" alarm while page cache
 was merely full (verified 2026-09-16). A detached watcher should register its own pid
-(`$$` inside the script), not the `$!` of whatever launched it.
+(`$$` inside the script), not the `$!` of whatever launched it. A detached watcher
+cannot wake its session; in a fleet it calls `fleetnudge` on the terminal state (the
+recipe is in `fleet-upgrade`), and elsewhere it needs some other channel, such as a push
+notification. Otherwise a job that ends overnight goes unnoticed.
 
 ## Skill-file hygiene
 

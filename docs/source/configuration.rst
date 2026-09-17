@@ -138,6 +138,22 @@ unknown key is an error.
    One line appended to every ``/compact``. Default
    ``"keep job ids, file paths, open decisions and commitments"``.
 
+``[notify]``
+~~~~~~~~~~~~
+
+Optional. Where :doc:`tools/fleetnudge` sends a phone push (`ntfy <https://ntfy.sh>`_)
+when it could not deliver a watcher's line. Without it, nothing is pushed; the tool
+still exits non-zero and logs the failure.
+
+``ntfy_topic_file``
+   Required in the section. A file holding the topic: either the topic alone, or a shell
+   script with a ``TOPIC="..."`` line. An existing notification hook can then stay the
+   one place the topic is written; it never needs to be copied into configuration.
+``ntfy_server``
+   Default ``"https://ntfy.sh"``.
+``mute_file``
+   Optional. While this file exists, no push is sent.
+
 ``[parked.<name>]`` and ``[retired.<name>]``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

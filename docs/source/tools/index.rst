@@ -50,6 +50,9 @@ script at build time, so it cannot drift from the code.
    * - :doc:`fleetcontext`
      - context size per session; compact one, or reset its color
      - tmux, with ``--go``
+   * - :doc:`fleetnudge`
+     - a detached watcher wakes its idle session with one tagged line
+     - tmux, with ``--go``
 
 Most tools read ``~/.claude/projects/`` (transcripts), ``/proc`` and
 ``tmux list-panes``. All take their configuration from :doc:`../configuration`.
@@ -70,3 +73,4 @@ Most tools read ``~/.claude/projects/`` (transcripts), ``/proc`` and
    fleetcost
    fleetgantt
    fleetcontext
+   fleetnudge

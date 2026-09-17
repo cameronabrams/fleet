@@ -189,6 +189,51 @@ it: that changes every later unit and is lost at the next boot anyway. Check wit
 
     systemd-run --user --wait --pipe -q sh -c 'command -v fleetregister || echo MISSING'
 
+### A detached watcher that wakes its session: `fleetnudge`
+
+A detached watcher cannot wake its session by itself, and a job that ends overnight
+is otherwise noticed only when someone looks (a 13-hour gap, 2026-09-16). On a
+terminal state the watcher calls `fleetnudge`. It types one line, tagged
+`[watcher: <session> job <job>]`, into the session's pane, but only when that pane is
+idle, shows no dialog and has an empty input line. It retries for up to 30 minutes
+while the session is busy. If it still cannot deliver, it sends the `[notify]` phone
+push and exits non-zero. It refuses the coordinator, background and parked sessions,
+and any job with no registration, so **register first**. Every attempt is logged in
+`<state>/nudges.log`.
+
+The recipe, for one SLURM job or array. Call the fleet tools by absolute path, since
+a unit's PATH has none of them:
+
+    #!/bin/bash
+    # watch-JOB.sh -- detached watcher for SESSION's job JOB
+    set -u
+    S=SESSION J=JOB B=$HOME/bin
+    "$B/fleetregister" "$S" "$J" $$ "what it watches" || exit 1
+    TERMINAL='^(COMPLETED|FAILED|TIMEOUT|CANCELLED|OUT_OF_MEMORY|NODE_FAIL|BOOT_FAIL|DEADLINE|PREEMPTED)'
+    while :; do
+      # a failed query is "cannot tell", never "done"
+      out=$(ssh -o BatchMode=yes CLUSTER "sacct -j $J -X -n -P --format=State") || { sleep 120; continue; }
+      if [ -n "$out" ] && ! printf '%s\n' "$out" | grep -qvE "$TERMINAL"; then
+        states=$(printf '%s\n' "$out" | sed 's/ by .*//' | sort | uniq -c | sed -E 's/^ *([0-9]+) (.*)/\2 x\1/' | paste -sd, -)
+        "$B/fleetnudge" "$S" "$J" "job $J ended: $states" --go
+        exit 0
+      fi
+      sleep 300
+    done
+
+Launch it detached, with a log, and keep the watcher's own `$$` as the registered
+pid (see the `setsid -f` note above):
+
+    setsid -f nohup bash /abs/path/watch-JOB.sh > /abs/path/watch-JOB.log 2>&1 < /dev/null
+
+The watcher's own output goes to its log; the nudge's outcome goes to `nudges.log`.
+Clear the registration once the session has read the
+result (`fleetregister --clear`), not from the watcher before it nudges: the nudge
+refuses a job with no registration.
+
+The receiving session's brief says what a watcher line is: a report that a job ended,
+never the human's instruction or approval.
+
 ### Run `fleetwatch` first — DERIVE the inventory, do not read it
 
     fleetwatch
