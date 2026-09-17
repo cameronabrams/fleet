@@ -22,6 +22,10 @@ The pages below are the skills themselves, rendered from ``skills/<name>/SKILL.m
    Roll sessions onto a newer claude binary without losing their context or silently
    killing their monitors.
 
+:doc:`waiting`
+   Which sessions are blocked on the human, and what each is asking, reconciled from
+   ``ListAgents``, :doc:`../tools/fleetwaiting` and the sessions themselves.
+
 :doc:`slurm`
    SLURM mechanics and the traps that give confident wrong answers. Site-independent:
    pair it with a *site skill* in your configuration for hosts, accounts, partitions
@@ -34,4 +38,5 @@ The pages below are the skills themselves, rendered from ``skills/<name>/SKILL.m
    fleet-bootstrap
    fleet-snapshot
    fleet-upgrade
+   waiting
    slurm

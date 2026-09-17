@@ -55,6 +55,8 @@ when you need it.
   `examples/brief.example.md` and `examples/conventions.example.md`.
 - `fleet-upgrade`, `fleet-snapshot` — rolling a binary upgrade without losing
   monitors; snapshotting for recovery.
+- `waiting` — who is blocked on the human and what each is asking, reconciled
+  from `ListAgents`, `fleetwaiting` and the sessions themselves.
 - `slurm` — SLURM mechanics and the traps that give confident wrong answers.
   Site-independent; pair with a **site skill** in your configuration for hosts,
   accounts, partitions and rates.
