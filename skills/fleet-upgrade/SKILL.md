@@ -226,6 +226,14 @@ pid (see the `setsid -f` note above):
 
     setsid -f nohup bash /abs/path/watch-JOB.sh > /abs/path/watch-JOB.log 2>&1 < /dev/null
 
+**Never edit a running watcher script in place.** bash reads a script from disk as it
+runs, so an in-place edit changes what the live loop executes next. At a shifted byte
+offset that is garbage, not the new version (REPORTED by a production session,
+2026-09-17; checked here: a running script printed the edited lines, and one replaced
+with `mv` kept its own). To change a watcher, write a new file and `mv` it into place,
+or use a new name. Then stop the old watcher by its pid, start the new one, and let it
+register itself.
+
 The watcher's own output goes to its log; the nudge's outcome goes to `nudges.log`.
 Clear the registration once the session has read the
 result (`fleetregister --clear`), not from the watcher before it nudges: the nudge
