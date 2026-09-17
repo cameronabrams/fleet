@@ -72,6 +72,45 @@ class TypeLine(unittest.TestCase):
         self.assertIsNone(err)
         self.assertNotIn(("send-keys", "-t", "%1", "C-u"), calls)
 
+    def test_a_trailing_semicolon_goes_as_a_key_code(self):
+        calls = []
+        panes.send_text(lambda *a: calls.append(a) or (0, "", ""), "%1", "all 8 tasks: COMPLETED;;")
+        self.assertEqual(calls, [("send-keys", "-t", "%1", "-l", "all 8 tasks: COMPLETED"),
+                                 ("send-keys", "-t", "%1", "-H", "3b"),
+                                 ("send-keys", "-t", "%1", "-H", "3b")])
+        calls.clear()
+        panes.send_text(lambda *a: calls.append(a) or (0, "", ""), "%1", "mid;dle")
+        self.assertEqual(calls, [("send-keys", "-t", "%1", "-l", "mid;dle")])
+
+    def test_readback_survives_a_mid_word_wrap(self):
+        err, _ = self.run_type("\x1b[39m❯\xa0/color re\n  d")     # wrapped mid-word
+        self.assertIsNone(err)
+
+    def test_clearing_falls_back_to_backspaces(self):
+        held = ["still here", ""]
+        calls = []
+        def tmux(*a):
+            calls.append(a)
+            if a[0] == "capture-pane":
+                return 0, box(f"\x1b[39m❯\xa0{held[0]}"), ""
+            if a[-1] == "BSpace":
+                held[0] = held.pop(1) if len(held) > 1 else ""
+            return 0, "", ""
+        with mock.patch.object(panes.time, "sleep"):
+            self.assertTrue(panes.clear_input(tmux, "%1"))
+        self.assertIn(("send-keys", "-t", "%1", "C-u"), calls)
+        self.assertIn(("send-keys", "-t", "%1", "-N", "60", "BSpace"), calls)
+
+    def test_input_that_will_not_clear_is_reported(self):
+        def tmux(*a):
+            if a[0] == "capture-pane":
+                return 0, box("\x1b[39m❯\xa0stuck"), ""
+            return 0, "", ""
+        with mock.patch.object(panes.time, "sleep"):
+            self.assertFalse(panes.clear_input(tmux, "%1"))
+            err = panes.type_line(tmux, "%1", "/color red", wait=0)
+        self.assertIn("COULD NOT BE CLEARED", err)
+
     def test_a_suggestion_left_in_place_is_not_a_readback(self):
         err, calls = self.run_type(f"\x1b[39m❯\xa0{D}/color red{R}")
         self.assertIsNotNone(err)

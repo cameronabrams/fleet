@@ -50,7 +50,10 @@ It types only when the pane is idle, shows no dialog and has an empty input line
 prompt suggestion counts as empty, as in :doc:`fleetcontext`. A
 ``busy`` or ``waiting`` status also counts as not typeable. ``shell`` and ``monitor``
 mean the session is at its prompt, so they are typeable. The typed line must read back
-exactly before Enter, as in :doc:`fleetcontext`. Delivery is confirmed when the tag
+before Enter, as in :doc:`fleetcontext` (compared ignoring whitespace, since a line that
+wraps mid-word gains a space at the wrap). A trailing ``;`` in ``TEXT`` is sent as a key
+code: tmux reads one at the end of a ``send-keys`` argument as its own command separator
+and drops it, which cost a production nudge its readback on 2026-09-17. Delivery is confirmed when the tag
 appears once more in the session's transcript.
 
 While the session is busy, holds a draft, or is not running, it retries every

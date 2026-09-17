@@ -19,7 +19,7 @@ TRUST_MARKERS = ("trust this folder", "Is this a project you created")
 BACKGROUND_MARKER = "Background work is running"
 PROMPT = "❯"                              # the input line, followed by a no-break space when empty (2.1.272)
 RULE = re.compile(r"^\s*─{3,}")           # the rules drawn above and below the input line
-TYPE_WAIT = 5.0                            # seconds for typed text to reach the input line
+TYPE_WAIT = 10.0                           # seconds for typed text to reach the input line
 CAPTURE = ("capture-pane", "-p", "-e")     # -e keeps the attributes that mark a suggestion
 _ESC = re.compile(r"\x1b\[([0-9;:]*)([A-Za-z])|\x1b[^\[]")
 
@@ -99,16 +99,51 @@ def state_problem(state, name, pane):
         "no-pane": "no tmux pane shows this session",
     }.get(state)
 
+def send_text(tmux, pane, text):
+    """Type `text` literally, including a trailing ';'.
+
+    tmux reads a ';' at the END of a send-keys argument as its own command
+    separator and drops it -- OBSERVED 2026-09-17: "trail;" arrived as "trail",
+    and a watcher line ending ";" failed its readback in production. A ';'
+    anywhere else is safe. So the trailing ones go as key codes instead."""
+    head = text.rstrip(";")
+    if head:
+        tmux("send-keys", "-t", pane, "-l", head)
+    for _ in range(len(text) - len(head)):
+        tmux("send-keys", "-t", pane, "-H", "3b")
+
+def squashed(text):
+    """`text` with all whitespace removed. What the input line reads back is
+    compared this way because a line wrapped mid-word gains a space at the wrap."""
+    return "".join(text.split())
+
+def clear_input(tmux, pane):
+    """Empty the input line. Returns True if it is empty afterwards.
+
+    C-u alone is not enough: on a wrapped, multi-line input it leaves earlier
+    lines behind (OBSERVED 2026-09-17), and the next thing typed is appended to
+    them."""
+    tmux("send-keys", "-t", pane, "C-u")
+    for _ in range(4):
+        time.sleep(0.5)
+        held = input_line(tmux(*CAPTURE, "-t", pane)[1])
+        if not held:
+            return True
+        tmux("send-keys", "-t", pane, "-N", str(len(held) + 50), "BSpace")
+    return not input_line(tmux(*CAPTURE, "-t", pane)[1])
+
 def type_line(tmux, pane, line, wait=TYPE_WAIT):
     """Type `line` without Enter and confirm the input line holds exactly it.
     Returns None, or the reason it did not (the input line is then cleared)."""
-    tmux("send-keys", "-t", pane, "-l", line)
-    want = " ".join(line.split())
+    send_text(tmux, pane, line)
+    want = squashed(line)
     t_end = time.time() + wait
     while time.time() < t_end:
         time.sleep(0.5)
-        if input_line(tmux(*CAPTURE, "-t", pane)[1]) == want:
+        if squashed(input_line(tmux(*CAPTURE, "-t", pane)[1]) or "") == want:
             return None
-    tmux("send-keys", "-t", pane, "C-u")
+    cleared = clear_input(tmux, pane)
     return (f"the input line in {pane} did not read exactly {line!r} within {wait:.0f}s "
-            f"(a terminal reply can corrupt keys); cleared it and stopped")
+            f"(a terminal reply can corrupt keys); "
+            + ("cleared it and stopped" if cleared
+               else "AND COULD NOT BE CLEARED -- look at the pane"))

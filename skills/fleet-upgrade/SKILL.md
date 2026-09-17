@@ -239,6 +239,15 @@ Clear the registration once the session has read the
 result (`fleetregister --clear`), not from the watcher before it nudges: the nudge
 refuses a job with no registration.
 
+**A trailing `;` is eaten by `tmux send-keys`**, which reads it as its own command
+separator: `send-keys -l "trail;"` arrives as `trail`. It cost a watcher line its
+readback on 2026-09-17. `fleetnudge` handles it, but any hand-written `send-keys` must
+send such a character as a key code (`send-keys -H 3b`) or escape it.
+
+**`C-u` does not empty a wrapped input line.** It leaves the earlier visual lines, and
+the next thing typed is appended to them (observed 2026-09-17, in a pane holding 846
+characters). To clear by hand, follow it with `send-keys -N <n> BSpace`.
+
 **A prompt suggestion is not a draft.** An idle Claude Code pane often shows dim
 suggested text in its empty input line. A plain `tmux capture-pane -p` cannot tell that
 text from something the human typed, so a pane can look as if it holds a draft when it
