@@ -32,6 +32,19 @@ class Plan(unittest.TestCase):
         env = dict(os.environ, TMUX_TMPDIR=self.tmux); env.pop("TMUX", None)
         return subprocess.run([TOOL, *args], capture_output=True, text=True, env=env)
 
+    def test_an_unnamed_session_is_not_relaunched(self):
+        man = json.load(open(os.path.join(self.cfg.state, "f.json")))
+        man["sessions"].append(dict(session(None, 4, 0, uuid="u-unnamed"),
+                                    cwd="/tmp/unnamed-cwd"))
+        man["sessions"][-1]["tmux"]["pane_id"] = "%21"
+        json.dump(man, open(os.path.join(self.cfg.state, "f.json"), "w"))
+        r = self.run_tool("f")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("could not name these panes", r.stdout)
+        self.assertIn("%21", r.stdout)
+        self.assertNotIn("u-unnamed", r.stdout)          # no relaunch line for it
+        self.assertIn("--resume", r.stdout)              # the named ones still planned
+
     def test_lists_fleets(self):
         r = self.run_tool()
         self.assertEqual(r.returncode, 0, r.stderr)

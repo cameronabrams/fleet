@@ -148,6 +148,18 @@ def main():
     print(f"  manifest captured {m['captured']}  ({age/3600:.1f} h ago)")
     print(f"  {len(m['sessions'])} sessions, claude {m['installed_claude']}\n")
 
+    # A session the snapshot could not name cannot be relaunched: --name and its
+    # brief both need the name, and a made-up one would pin the wrong identity.
+    unnamed = [s for s in m["sessions"] if not s.get("label")]
+    if unnamed:
+        print("  !! not relaunched -- the snapshot could not name these panes; "
+              "name them and re-run fleetsnap:")
+        for s in unnamed:
+            print(f"     pane {s['tmux'].get('pane_id')} in {s['cwd']}  "
+                  f"(tmux set -p -t {s['tmux'].get('pane_id')} @repo <name>)")
+        print()
+        m["sessions"] = [s for s in m["sessions"] if s.get("label")]
+
     unver = [s for s in m["sessions"] if s["resume_uuid_source"].startswith("UNVER")]
     if unver:
         print("  !! unverified resume targets — check these before --go:")

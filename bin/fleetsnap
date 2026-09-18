@@ -10,8 +10,9 @@ live process arguments; once tmux dies it is unrecoverable. Writes:
 import json, os, re, shutil, subprocess, glob, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet.agents import list_agents
 from fleet.procs import proc_cwd
-from fleet.transcripts import agent_color, newest_transcript, resume_handle
+from fleet.transcripts import agent_color, newest_transcript, resume_handle, session_name
 CFG = fc.load()
 
 STATE = fc.state_dir(CFG)
@@ -141,6 +142,33 @@ def corrected_label(repo, title, argv, cwd):
         return t, f"pane label said {repo!r}; corrected from pane_title (transcript self-reports it)"
     return repo, None
 
+def shown(s):
+    """A session's label for display: never a made-up name for an unnamed pane."""
+    return s["label"] or f"(unnamed, pane {s['tmux']['pane_id']})"
+
+def resolve_label(repo, title, proc, cwd, agents):
+    """(label or None, note): what this session is called.
+
+    `@repo` is the hand-set pane label and wins when it is there (corrected by the
+    pane title, above). A pane launched as a bare `claude`, named later, has NO
+    label -- OBSERVED 2026-09-18, when fleetsnap invented "(unlabeled %21)" for a
+    session fleetupgrade resolved as `literature`, and then asked the reader to
+    write a brief under that invented name. So fall back to the sources that carry
+    a name the session answers to, and to None rather than to a fiction."""
+    if repo:
+        return corrected_label(repo, title, proc["argv"], cwd)
+    a = next((x for x in agents or [] if x.get("pid") == proc["pid"] and x.get("name")), None)
+    if a:
+        return a["name"], f"no @repo on the pane; name from `claude agents` ({a['name']})"
+    name = session_name(proc["pid"], cwd, proc["argv"])[0]
+    if name:
+        return name, f"no @repo on the pane; name from its transcript ({name})"
+    t = title.lstrip("\u2733\u2734\u2735 ").strip()
+    if t and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", t) \
+            and newest_transcript(cwd, t)[1].startswith("verified"):
+        return t, f"no @repo on the pane; name from pane_title, which a transcript self-reports ({t})"
+    return None, None
+
 def live_color(argv, uuid):
     """(colour, knowable) for a pane's session.
 
@@ -222,6 +250,7 @@ def main():
               file=sys.stderr)
         sys.exit(2)
     prior = prior_snapshot()
+    agents = list_agents()          # claude's own names; None when it cannot be read
     meta = window_meta()
     layouts = window_layouts(meta)
     winnotes = []
@@ -256,9 +285,9 @@ def main():
         # so a `cd` in one of the session's shell calls would be snapshotted as its
         # directory and rebuilt there (fleet.procs.proc_cwd).
         cwd = proc_cwd(proc["pid"]) or pane_path
-        repo, label_note = corrected_label(repo, title, proc["argv"], cwd)
+        repo, label_note = resolve_label(repo, title, proc, cwd, agents)
         snap["sessions"].append({
-            "label": repo or f"(unlabeled {pane})",
+            "label": repo,
             "fleet": fleet,
             "label_note": label_note,
             "tmux": {"session": sess, "window": int(win),
@@ -273,12 +302,21 @@ def main():
         s = snap["sessions"][-1]
         live, known = live_color(proc["argv"], s["resume_uuid"])
         s["color"] = {"declared": fc.colors(CFG).get(s["label"]), "live": live, "known": known}
-        s["membership_problems"] = [
-            {"kind": k, "problem": p, "fix": f} for k, p, f in fc.membership_problems(
-                CFG, s["label"], s["color"]["live"], color_known=known)]
-        s["membership_problems"] += [
-            {"kind": k, "problem": p, "fix": f} for k, p, f in stopped_problems(
-                s["label"], s["resume_uuid"])]
+        if s["label"]:
+            s["membership_problems"] = [
+                {"kind": k, "problem": p, "fix": f} for k, p, f in fc.membership_problems(
+                    CFG, s["label"], s["color"]["live"], color_known=known)]
+            s["membership_problems"] += [
+                {"kind": k, "problem": p, "fix": f} for k, p, f in stopped_problems(
+                    s["label"], s["resume_uuid"])]
+        else:
+            # No name: say so against the PANE, and do not invent one. A restore
+            # cannot relaunch this row, since --name and the brief both need a name.
+            s["membership_problems"] = [{
+                "kind": "name",
+                "problem": f"pane {pane}: name unresolved -- no @repo, and neither "
+                           f"`claude agents` nor its transcript names it",
+                "fix": f"tmux set -p -t {pane} @repo <name>   (or relaunch it with --name <name>)"}]
     # Correct the window names only now: which windows are fleet windows is not
     # known until the sessions have been collected.
     fleet_wins = {f"{s['tmux']['session']}:{s['tmux']['window']}"
@@ -315,7 +353,7 @@ def main():
            "`fleetrestore --all` rebuilds everything with exact geometry.\n",
            "| fleet | sessions | file |", "|---|---|---|"]
     for name, members in sorted(fleets.items()):
-        idx.append(f"| **{name}** | {', '.join(m['label'] for m in members)} | "
+        idx.append(f"| **{name}** | {', '.join(shown(m) for m in members)} | "
                    f"`{name}.json` |")
     idx.append(f"\nCoordinator: **{coord or '_none_'}** — restore once, not per fleet.\n")
     idx.append("Fleet membership comes from the tmux pane option `@fleet` "
@@ -338,19 +376,19 @@ def main():
     L.append("|---|---|---|---|---|---|")
     for s in snap["sessions"]:
         t = s["tmux"]
-        L.append(f"| {s['fleet']} | {s['label']} | {t['window']}.{t['pane_index']} | `{s['cwd']}` | "
+        L.append(f"| {s['fleet']} | {shown(s)} | {t['window']}.{t['pane_index']} | `{s['cwd']}` | "
                  f"`{s['resume_uuid']}` | {s['version']} |")
     L.append("\n## Durable state each session should re-read\n")
     for s in snap["sessions"]:
         files = ", ".join(f"`{f}`" for f in s["durable_files"]) or "_none found_"
-        L.append(f"- **{s['label']}** — {files}")
+        L.append(f"- **{shown(s)}** — {files}")
     L.append("\n## Membership: every session needs a brief and a declared colour\n")
     incomplete = [s for s in snap["sessions"] if s["membership_problems"]]
     if not incomplete:
         L.append(f"All {len(snap['sessions'])} complete.")
     for s in incomplete:
         for p in s["membership_problems"]:
-            L.append(f"- **{s['label']}** — {p['problem']}; {p['fix']}")
+            L.append(f"- **{shown(s)}** — {p['problem']}; {p['fix']}")
     L.append("\n## tmux\n")
     tc = snap["tmux_conf"]
     L.append(f"`~/.tmux.conf` {'present' if tc['exists'] else 'MISSING'}"
@@ -383,17 +421,17 @@ def main():
         print(f"    ! window name: {n}")
     stale = [x for x in snap["sessions"] if x.get("label_note")]
     for x in stale:
-        print(f"    ! {x['label']}: {x['label_note']}")
+        print(f"    ! {shown(x)}: {x['label_note']}")
     print(f"captured {len(snap['sessions'])} sessions in {len(fleets)} fleets -> {STATE}/")
     for name, members in sorted(fleets.items()):
-        print(f"    {name:<12} {len(members)}  {', '.join(m['label'] for m in members)}")
+        print(f"    {name:<12} {len(members)}  {', '.join(shown(m) for m in members)}")
     incomplete = [s for s in snap["sessions"] if s["membership_problems"]]
     if incomplete:
         print(f"\n!! {len(incomplete)} of {len(snap['sessions'])} sessions incomplete "
               "(every member needs a brief and a declared colour, and none may be parked or retired):")
         for s in incomplete:
             for p in s["membership_problems"]:
-                print(f"   {s['label']:<20} {p['problem']}\n   {'':<20} -> {p['fix']}")
+                print(f"   {shown(s):<20} {p['problem']}\n   {'':<20} -> {p['fix']}")
     else:
         print(f"    membership: all {len(snap['sessions'])} have a brief and their declared colour")
 

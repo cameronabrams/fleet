@@ -1,4 +1,4 @@
-import os, tempfile, unittest
+import json, os, tempfile, unittest
 from unittest import mock
 from tests.support import FakeConfig, load_tool
 from fleet import transcripts
@@ -13,14 +13,18 @@ class SnapshotDirectory(unittest.TestCase):
     def tearDown(self):
         self.cfg.close()
 
-    def manifest(self, proc_cwd="/home/u/work"):
-        row = ["fleet", "1", "win", "0", "%1", "alpha", "grp", "title",
+    def manifest(self, proc_cwd="/home/u/work", repo="alpha", title="title",
+                 agents=None, transcript_name=None):
+        row = ["fleet", "1", "win", "0", "%1", repo, "grp", title,
                "/home/u/somewhere-else", "100", "80x40"]
         proc = {"pid": 200, "version": "2.1.276", "resume_uuid": None, "started": "",
                 "argv": ["claude", "--name", "alpha"]}
         sn = self.snap
         with mock.patch.object(sn, "pane_rows", return_value=[row]), \
              mock.patch.object(sn, "claude_proc", return_value=proc), \
+             mock.patch.object(sn, "list_agents", return_value=agents), \
+             mock.patch.object(sn, "session_name", return_value=(transcript_name, None, "x")), \
+             mock.patch.object(sn, "newest_transcript", return_value=(None, "UNVERIFIED")), \
              mock.patch.object(sn, "proc_cwd", side_effect=lambda pid: proc_cwd), \
              mock.patch.object(sn, "resume_handle", return_value=(None, "UNVERIFIED: test")), \
              mock.patch.object(sn, "durable_files", return_value=[]), \
@@ -43,6 +47,35 @@ class SnapshotDirectory(unittest.TestCase):
 
     def test_pane_path_is_the_fallback(self):
         self.assertEqual(self.manifest(proc_cwd=None)["sessions"][0]["cwd"], "/home/u/somewhere-else")
+
+
+class UnlabelledPane(SnapshotDirectory):
+    """A pane launched as a bare `claude` and named later has no @repo. fleetsnap
+    used to invent "(unlabeled %1)" and then ask for a brief under that name, while
+    fleetupgrade resolved the session fine (OBSERVED 2026-09-18)."""
+    def session(self, **kw):
+        return self.manifest(repo="", **kw)["sessions"][0]
+
+    def test_name_from_claude_agents(self):
+        s = self.session(agents=[{"pid": 200, "name": "literature"}])
+        self.assertEqual(s["label"], "literature")
+        self.assertIn("claude agents", s["label_note"])
+        self.assertEqual(s["membership_problems"][0]["kind"], "brief")   # named: normal checks
+
+    def test_name_from_the_transcript_when_agents_cannot_be_read(self):
+        s = self.session(agents=None, transcript_name="literature")
+        self.assertEqual(s["label"], "literature")
+        self.assertIn("transcript", s["label_note"])
+
+    def test_no_name_is_not_invented(self):
+        s = self.session(agents=[], transcript_name=None)
+        self.assertIsNone(s["label"])
+        problems = s["membership_problems"]
+        self.assertEqual([p["kind"] for p in problems], ["name"])
+        self.assertIn("pane %1", problems[0]["problem"])
+        self.assertIn("@repo", problems[0]["fix"])
+        self.assertNotIn("unlabeled", json.dumps(s))
+        self.assertNotIn("brief", json.dumps(problems))     # no brief asked for under a fiction
 
 
 class CorrectedLabel(unittest.TestCase):
