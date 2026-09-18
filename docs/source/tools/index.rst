@@ -53,6 +53,9 @@ script at build time, so it cannot drift from the code.
    * - :doc:`fleetnudge`
      - a detached watcher wakes its idle session with one tagged line
      - tmux, with ``--go``
+   * - :doc:`fleetmail`
+     - messages between fleets owned by different people, through a git mailbox
+     - the mailbox and tmux, with ``--go``
 
 Most tools read ``~/.claude/projects/`` (transcripts), ``/proc`` and
 ``tmux list-panes``. All take their configuration from :doc:`../configuration`.
@@ -74,3 +77,4 @@ Most tools read ``~/.claude/projects/`` (transcripts), ``/proc`` and
    fleetgantt
    fleetcontext
    fleetnudge
+   fleetmail

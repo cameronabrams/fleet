@@ -154,6 +154,23 @@ still exits non-zero and logs the failure.
 ``mute_file``
    Optional. While this file exists, no push is sent.
 
+``[mail]``
+~~~~~~~~~~
+
+Optional. This fleet's identity in a shared mailbox, for :doc:`tools/fleetmail`.
+
+``fleet``
+   Required in the section. This fleet's name in addresses (``abrams`` in
+   ``abrams/coord``). Short and lowercase.
+``repo``
+   Required in the section. The mailbox: any git URL or path.
+``clone``
+   Optional. The working copy, ``<state>/mailbox`` by default. It is observed state,
+   not a declaration, so it belongs under the state directory.
+
+Who may correspond, and any extra guarded wording, are declared in the mailbox's own
+``fleets.toml`` rather than here: both fleets must agree on them.
+
 ``[parked.<name>]`` and ``[retired.<name>]``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

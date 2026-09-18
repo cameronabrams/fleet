@@ -23,6 +23,11 @@ What it types
 
    [watcher: SESSION job JOB] TEXT
 
+With ``--mail-from FLEET/SESSION`` the line is tagged ``[mail: FLEET/SESSION -> SESSION]``
+instead: mail relayed by :doc:`fleetmail` from another person's fleet. ``JOB`` is then
+the message id, and no watcher registration is required, because fleetmail checks its
+own allowlist and guard before relaying.
+
 The tag is added by the tool and cannot be left out. The brief template tells each
 session that such a line only reports that a job ended. It is never the human's
 instruction or approval: the session checks the job and reports, and takes no other

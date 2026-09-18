@@ -254,6 +254,29 @@ def ntfy_topic(path):
     first = next((l.strip() for l in text.splitlines() if l.strip()), "")
     return first if re.fullmatch(r"[A-Za-z0-9_-]+", first) else None
 
+def mail(cfg):
+    """[mail]: this fleet's name in a shared mailbox, and where that mailbox lives.
+
+    `fleet` is the namespace addresses use (`abrams/coord`), because two fleets both
+    have a `coord`. `repo` is any git URL or path; `clone` is the working copy, under
+    the state dir by default -- observed state, not a declaration. Returns {} when
+    unconfigured, so a fleet with no correspondents needs no section."""
+    raw = cfg.get("mail", {})
+    known = {"fleet", "repo", "clone"}
+    unknown = sorted(set(raw) - known)
+    if unknown:
+        raise ConfigError(f"[mail] unknown key(s): {', '.join(unknown)} (known: {', '.join(sorted(known))})")
+    if not raw:
+        return {}
+    for k in ("fleet", "repo"):
+        if not raw.get(k):
+            raise ConfigError(f"[mail] needs {k}")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", str(raw["fleet"])):
+        raise ConfigError(f"[mail] fleet must be a short lowercase name, got {raw['fleet']!r}")
+    return {"fleet": str(raw["fleet"]), "repo": os.path.expanduser(str(raw["repo"])),
+            "clone": os.path.expanduser(str(raw.get("clone")
+                                            or os.path.join(state_dir(cfg), "mailbox")))}
+
 def launch_env(cfg):
     """`KEY=val ...` prefix for launching a claude session, from [spawn].env.
 

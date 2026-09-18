@@ -22,6 +22,10 @@ line. It then waits for the line to appear in the session's transcript. While th
 session is busy or not typeable it retries (every --every seconds, for up to
 --wait seconds); it never queues a line behind a draft.
 
+With `--mail-from FLEET/SESSION` the line is tagged `[mail: FLEET/SESSION -> SESSION]`
+instead, for mail relayed by fleetmail; no watcher registration is required, and JOB
+is the message id.
+
 Refused, and not retried: a session that is not a fleet member (no [colors] entry)
 or is parked or retired; the coordinator; a background (`claude attach`) session;
 the session running this tool; a JOB with no registration for SESSION
@@ -80,7 +84,12 @@ def panes():
 def screen(pane):
     return tmux(*CAPTURE, "-t", pane)[1]
 
-def tag(session, job):
+def tag(session, job, mail_from=None):
+    """The fixed prefix of the typed line: what the line IS and where it came from.
+    A watcher's report about a job, or mail fleetmail relayed from a named remote
+    fleet. The caller cannot leave it out or forge the other form."""
+    if mail_from:
+        return f"[mail: {mail_from} -> {session}]"
     return f"[watcher: {session} job {job}]"
 
 def brief_kind(name):
@@ -103,9 +112,11 @@ def registered(session, job):
             return True
     return False
 
-def static_problems(session, job, text):
+def static_problems(session, job, text, mail_from=None):
     """Refusals that no amount of waiting fixes."""
     out = []
+    if mail_from and not re.fullmatch(r"[a-z0-9][a-z0-9_-]*/[A-Za-z0-9][A-Za-z0-9_-]*", mail_from):
+        out.append(f"--mail-from {mail_from!r} is not a <fleet>/<session> address")
     if not JOB_RE.fullmatch(job):
         out.append(f"job {job!r} is not a job id")
     if not text.strip():
@@ -121,7 +132,9 @@ def static_problems(session, job, text):
         out.append(f"{session} is [{rec['state']}] in fleet.toml")
     if brief_kind(session) == "coordinator":
         out.append("the coordinator is not nudged; its watchers report to the human directly")
-    if not registered(session, job):
+    if not mail_from and not registered(session, job):
+        # Relayed mail has no watcher: fleetmail checks its own allowlist before it
+        # calls this, and the tag says the line came from another fleet.
         out.append(f"no watcher registration for {session} job {job} (fleetregister {session} {job} <pid>)")
     return out
 
@@ -239,10 +252,11 @@ def give_up(code, session, job, text, reason):
     print(f"\n  NOT DELIVERED: {reason}\n  {pushed}\n")
     sys.exit(code)
 
-def deliver(r, session, job, text):
+def deliver(r, session, job, text, mail_from=None):
     """Type, Enter, confirm. Returns (code, detail)."""
-    line = f"{tag(session, job)} {text}"
-    before = tag_count(r["uuid"], tag(session, job))
+    marker = tag(session, job, mail_from)
+    line = f"{marker} {text}"
+    before = tag_count(r["uuid"], marker)
     err = type_line(tmux, r["pane"], line)
     if err:
         return 3, err
@@ -250,7 +264,7 @@ def deliver(r, session, job, text):
     t_end = time.time() + CONFIRM_WAIT
     while time.time() < t_end:
         time.sleep(2)
-        if tag_count(r["uuid"], tag(session, job)) > before:
+        if tag_count(r["uuid"], marker) > before:
             return 0, f"delivered to {session} in {r['pane']} (seen in its transcript)"
     return 4, (f"typed into {r['pane']} and entered, but the line did not appear in "
                f"{session}'s transcript within {CONFIRM_WAIT:.0f}s")
@@ -263,11 +277,15 @@ def main():
     ap.add_argument("--go", action="store_true")
     ap.add_argument("--wait", type=int, default=1800, help="seconds to keep retrying (default 1800)")
     ap.add_argument("--every", type=int, default=60, help="seconds between attempts (default 60)")
+    ap.add_argument("--mail-from", metavar="FLEET/SESSION",
+                    help="relayed mail: tag the line as coming from that remote address "
+                         "(fleetmail's use; no watcher registration is required)")
     a = ap.parse_args()
     session, job, text = a.session, a.job, a.text.strip()
-    print(f"\n  nudge {session}: {tag(session, job)} {text}")
+    mail_from = a.mail_from
+    print(f"\n  nudge {session}: {tag(session, job, mail_from)} {text}")
 
-    problems = static_problems(session, job, text)
+    problems = static_problems(session, job, text, mail_from)
     if problems:
         for p in problems:
             print(f"  REFUSED: {p}")
@@ -299,10 +317,11 @@ def main():
             else:
                 r, problem = resolve(session)
                 if problem is None:
-                    code, detail = deliver(r, session, job, text)
+                    code, detail = deliver(r, session, job, text, mail_from)
                     if code == 0:
                         log(session=session, job=job, text=text, outcome="delivered",
-                            attempt=attempt, pane=r["pane"], detail=detail)
+                            attempt=attempt, pane=r["pane"], detail=detail,
+                            mail_from=mail_from)
                         print(f"  {detail}\n")
                         return
                     give_up(code, session, job, text, detail)

@@ -47,6 +47,12 @@ compact_focus = "keep job ids, file paths, open decisions and commitments"
 # ntfy_topic_file = "~/.claude/hooks/ntfy-notify.sh"
 # mute_file       = "~/.claude/ntfy-off"             # exists -> no push
 
+# fleetmail: this fleet's identity in a shared mailbox with another person's fleet.
+# [mail]
+# fleet = "mygroup"                                 # addresses read <fleet>/<session>
+# repo  = "git@github.com:myorg/fleet-mail.git"     # who may write is decided there
+# clone = "~/.local/state/fleet/mailbox"            # the default
+
 # Sessions stopped with fleetretire. Keyed by transcript: fleetrestore will not
 # relaunch a listed uuid; a new session that reuses the name is unaffected.
 # [parked.project-a-runs]

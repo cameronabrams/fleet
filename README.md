@@ -47,6 +47,7 @@ when you need it.
 | `fleetspawn` | bring one new session in, or a parked one back (plan by default) |
 | `fleetretire` | park or retire one session: checks, resume recipe, `/exit` (plan by default) |
 | `fleetnudge` | a detached watcher wakes its idle session with one tagged line; phone push if it cannot (plan by default) |
+| `fleetmail` | messages between fleets owned by different people, through a git mailbox (plan by default) |
 | `fleetcontext` | context size per session and what to trim; `/compact` or `/color` one (plan by default) |
 
 ## Skills
