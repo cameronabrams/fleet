@@ -167,6 +167,9 @@ Optional. This fleet's identity in a shared mailbox, for :doc:`tools/fleetmail`.
 ``clone``
    Optional. The working copy, ``<state>/mailbox`` by default. It is observed state,
    not a declaration, so it belongs under the state directory.
+``poll_minutes``
+   Optional, default 5. How often the timer printed by ``fleetmail timer`` fetches.
+   A poll interval is the latency floor for mail.
 
 Who may correspond, and any extra guarded wording, are declared in the mailbox's own
 ``fleets.toml`` rather than here: both fleets must agree on them.

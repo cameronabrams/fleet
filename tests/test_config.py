@@ -109,6 +109,25 @@ class Notify(unittest.TestCase):
                 self.assertEqual(fc.ntfy_topic(p), want, text)
             self.assertIsNone(fc.ntfy_topic(os.path.join(d, "absent")))
 
+class Mail(unittest.TestCase):
+    def mail(self, body):
+        return fc.mail(tomllib.loads(body))
+
+    def test_defaults(self):
+        m = self.mail('[mail]\nfleet = "north"\nrepo = "/m.git"\n')
+        self.assertEqual((m["fleet"], m["poll_minutes"]), ("north", 5))
+        self.assertTrue(m["clone"].endswith("/mailbox"))
+
+    def test_invalid(self):
+        for body in ('[mail]\nfleet = "north"\n',                      # no repo
+                     '[mail]\nrepo = "/m.git"\n',                      # no fleet
+                     '[mail]\nfleet = "North Fleet"\nrepo = "/m.git"\n',
+                     '[mail]\nfleet = "north"\nrepo = "/m.git"\npoll_minutes = 0\n',
+                     '[mail]\nfleet = "north"\nrepo = "/m.git"\nwho = "x"\n'):
+            with self.subTest(body=body), self.assertRaises(fc.ConfigError):
+                self.mail(body)
+        self.assertEqual(fc.mail({}), {})
+
 class Membership(unittest.TestCase):
     def setUp(self):
         self.cfg = FakeConfig(briefs=("alpha",))

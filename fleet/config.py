@@ -262,7 +262,7 @@ def mail(cfg):
     the state dir by default -- observed state, not a declaration. Returns {} when
     unconfigured, so a fleet with no correspondents needs no section."""
     raw = cfg.get("mail", {})
-    known = {"fleet", "repo", "clone"}
+    known = {"fleet", "repo", "clone", "poll_minutes"}
     unknown = sorted(set(raw) - known)
     if unknown:
         raise ConfigError(f"[mail] unknown key(s): {', '.join(unknown)} (known: {', '.join(sorted(known))})")
@@ -273,7 +273,11 @@ def mail(cfg):
             raise ConfigError(f"[mail] needs {k}")
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", str(raw["fleet"])):
         raise ConfigError(f"[mail] fleet must be a short lowercase name, got {raw['fleet']!r}")
+    poll = raw.get("poll_minutes", 5)
+    if not isinstance(poll, int) or isinstance(poll, bool) or poll < 1:
+        raise ConfigError(f"[mail] poll_minutes must be a positive integer, got {poll!r}")
     return {"fleet": str(raw["fleet"]), "repo": os.path.expanduser(str(raw["repo"])),
+            "poll_minutes": poll,
             "clone": os.path.expanduser(str(raw.get("clone")
                                             or os.path.join(state_dir(cfg), "mailbox")))}
 

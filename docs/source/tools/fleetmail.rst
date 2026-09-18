@@ -93,6 +93,24 @@ but never reached its session must be visible where a human looks, not only in a
 
 **A mailbox that cannot be read is never "no mail".** A failed pull says so and exits 4.
 
+On a schedule
+-------------
+
+Until something runs ``fetch``, mail sits in the mailbox. ``fleetmail timer`` prints a
+``systemd --user`` service and timer that fetch every ``[mail] poll_minutes`` (5 by
+default), with the commands to install them. It writes nothing itself.
+
+The units use absolute paths, because a user unit's ``PATH`` holds only the system
+directories. They must be files in ``~/.config/systemd/user/``: a transient unit from
+``systemd-run --user`` lives in ``/run`` and is gone after a reboot. ``Persistent=true``
+means a tick missed while the machine was off runs once at boot, so overnight mail is
+not skipped. The service's exit code is left unmasked, so an unreachable mailbox (4) or
+an undelivered message (5) shows in ``systemctl --user status``. For the timer to run
+while nobody is logged in, the user manager needs ``loginctl enable-linger``.
+
+A fetch under a timer waits less patiently for a busy session than a hand-run one
+(``--nudge-wait``, 600 s in the printed unit): the next tick will try again.
+
 Exit codes
 ----------
 

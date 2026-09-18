@@ -208,6 +208,27 @@ class Inbox(Base):
         self.assertIn("not fetched", self.inbox_text())
 
 
+class Timer(Base):
+    def test_units_use_absolute_paths_and_the_configured_interval(self):
+        code, out = self.run_main("timer")
+        self.assertEqual(code, 0, out)
+        self.assertIn("ExecStart=" + os.path.join(self.m.BIN, "fleetmail") + " fetch --go", out)
+        self.assertIn("OnUnitActiveSec=5min", out)             # the default
+        self.assertIn("Persistent=true", out)                  # a tick missed while off still runs
+        self.assertIn("fleetmail-north.timer", out)
+        self.assertIn("enable-linger", out)
+        self.assertIn(f"Environment=FLEET_CONFIG={os.environ['FLEET_CONFIG']}", out)
+
+    def test_the_interval_comes_from_configuration(self):
+        with open(os.path.join(self.cfg.config, "fleet.toml"), "a") as f:
+            f.write("poll_minutes = 15\n")
+        m = load_tool("fleetmail")
+        with mock.patch.object(sys, "argv", ["fleetmail", "timer"]), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            m.main()
+        self.assertIn("OnUnitActiveSec=15min", out.getvalue())
+
+
 class Addresses(unittest.TestCase):
     def setUp(self):
         self.cfg = FakeConfig(toml=TOML, briefs=("mailtest",))

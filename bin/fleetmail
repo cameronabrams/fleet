@@ -4,6 +4,7 @@
   fleetmail send TO "TEXT" --as SESSION [--kind K] [--thread T] [--attach FILE] [--go]
   fleetmail fetch [--go]          deliver new mail addressed to this fleet
   fleetmail inbox                 what is open, and what could not be delivered
+  fleetmail timer                 the systemd --user units that fetch on a schedule
   fleetmail ack ID --as SESSION [--go]
 
 Addresses are `<fleet>/<session>`: two fleets both have a `coord`, and bare names
@@ -382,6 +383,59 @@ def do_fetch(a):
     print()
     sys.exit(5 if problems else 0)
 
+UNITS = """# {service}
+[Unit]
+Description=fleetmail: fetch mail for the {fleet} fleet
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Absolute paths: a user unit's PATH is only the system directories, so neither
+# ~/bin nor ~/.local/bin (where claude lives) is on it.
+ExecStart={tool} fetch --go --nudge-wait {nudge_wait}
+{env}
+# A fetch that cannot reach the mailbox exits 4, and one that could not tell a
+# session exits 5. Both are worth seeing in `systemctl --user status`, so they are
+# NOT masked here.
+
+# {timer}
+[Unit]
+Description=fleetmail: fetch every {poll} min for the {fleet} fleet
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={poll}min
+# A tick missed while the machine was off runs once at boot, rather than silently
+# skipping whatever arrived overnight.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+
+def do_timer(a):
+    need_mail()
+    tool = os.path.join(BIN, "fleetmail")
+    service, timer = f"fleetmail-{MAIL['fleet']}.service", f"fleetmail-{MAIL['fleet']}.timer"
+    env = ""
+    if os.environ.get("FLEET_CONFIG"):
+        env = f"Environment=FLEET_CONFIG={os.environ['FLEET_CONFIG']}"
+    print(f"\n  Two files for ~/.config/systemd/user/ -- {service} and {timer}.")
+    print(f"  They must be FILES ON DISK: a transient `systemd-run --user` unit lives in")
+    print(f"  /run and is gone after a reboot.\n")
+    print(UNITS.format(service=service, timer=timer, fleet=MAIL["fleet"], tool=tool,
+                       poll=MAIL["poll_minutes"], nudge_wait=a.nudge_wait, env=env))
+    print(f"""  Install them (each block above goes in its own file):
+
+    systemctl --user daemon-reload
+    systemctl --user enable --now {timer}
+    systemctl --user list-timers {timer}      # when it next runs
+    journalctl --user -u {service} -n 20      # what the last fetch did
+
+  The user manager must survive logout for the timer to keep running without you
+  logged in:  loginctl enable-linger {os.environ.get('USER', '<you>')}
+""")
+
 def do_inbox(a):
     need_mail()
     seen = delivered()
@@ -431,6 +485,10 @@ def main():
                    help="seconds fleetnudge may keep retrying a busy session (default 1800)")
     f.set_defaults(fn=do_fetch)
     i = sub.add_parser("inbox"); i.set_defaults(fn=do_inbox)
+    t = sub.add_parser("timer")
+    t.add_argument("--nudge-wait", type=int, default=600, dest="nudge_wait",
+                   help="seconds a queued delivery may wait for a busy session (default 600)")
+    t.set_defaults(fn=do_timer)
     k = sub.add_parser("ack")
     k.add_argument("message"); k.add_argument("text", nargs="?", default="")
     k.add_argument("--as", dest="as_session", required=True, metavar="SESSION")
