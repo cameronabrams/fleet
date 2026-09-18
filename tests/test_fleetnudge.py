@@ -216,6 +216,58 @@ class TagCount(unittest.TestCase):
             cfg.close()
 
 
+class OneTypistAtATime(Base):
+    """Two watchers nudged one session in the same second on 2026-09-17; their
+    keystrokes interleaved and neither line read back."""
+    def lock_path(self):
+        return os.path.join(self.cfg.state, "nudge-locks", "alpha.lock")
+
+    def test_a_second_nudge_waits_instead_of_interleaving(self):
+        import fcntl
+        os.makedirs(os.path.dirname(self.lock_path()), exist_ok=True)
+        held = open(self.lock_path(), "w")
+        fcntl.flock(held.fileno(), fcntl.LOCK_EX)
+        try:
+            code, out = self.go("second nudge", "--wait", "120", "--every", "60")
+        finally:
+            held.close()
+        self.assertEqual(code, 4, out)
+        self.assertEqual(self.keys(), [])                      # typed nothing
+        self.assertIn("another fleetnudge is typing", out)
+        self.assertEqual(len(self.pushes), 1)
+
+    def test_the_lock_is_released_for_the_next_nudge(self):
+        code, out = self.go("first")
+        self.assertEqual(code, 0, out)
+        self.calls.clear()
+        code, out = self.go("second")
+        self.assertEqual(code, 0, out)
+        self.assertTrue(self.keys())
+
+    def test_the_lock_is_not_held_while_waiting_for_a_busy_session(self):
+        import fcntl
+        self.screens = [BUSY, IDLE]
+        seen = {}
+        orig = self.tmux
+        def tmux(*a):
+            if a[0] == "capture-pane" and "held" not in seen:
+                probe = open(self.lock_path(), "w")
+                try:
+                    fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    seen["held"] = False           # a waiter could have taken it
+                except OSError:
+                    seen["held"] = True
+                probe.close()
+            return orig(*a)
+        self.tmux = tmux
+        code, out = self.go()
+        self.assertEqual(code, 0, out)
+        self.assertTrue(seen["held"])              # held WHILE reading the pane...
+        probe = open(self.lock_path(), "w")        # ...and free once the run ends
+        fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        probe.close()
+
+
 class Refuse(Base):
     def refused(self, text, *argv, job="123456", msg="round 4 finished"):
         code, out = self.go(msg, *argv, job=job)

@@ -234,6 +234,11 @@ with `mv` kept its own). To change a watcher, write a new file and `mv` it into 
 or use a new name. Then stop the old watcher by its pid, start the new one, and let it
 register itself.
 
+**Nudge once per job, with a summary line.** Two nudges for one job in the same
+second collided on 2026-09-17 and neither was delivered (the tool now serialises
+them, but the second still has to wait). Per-task detail belongs in the watcher's
+log, not in the line: the session can read the log once it is awake.
+
 The watcher's own output goes to its log; the nudge's outcome goes to `nudges.log`.
 Clear the registration once the session has read the
 result (`fleetregister --clear`), not from the watcher before it nudges: the nudge

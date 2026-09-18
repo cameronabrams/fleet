@@ -4,6 +4,9 @@
   fleetnudge SESSION JOB "TEXT"          plan: the checks, and the line it would type
   fleetnudge SESSION JOB "TEXT" --go     type it when SESSION is idle; retry while busy
 
+One nudge types into a session at a time: a second one waits for the first rather
+than interleaving keystrokes with it.
+
 The line typed is always
 
   [watcher: SESSION job JOB] TEXT
@@ -36,7 +39,7 @@ Exit codes: 0 delivered (or a plan with no blocks), 2 refused, 3 the typed line 
 not read back (cleared), 4 not delivered in time (busy throughout, or never seen
 in the transcript).
 """
-import argparse, glob, json, os, re, subprocess, sys, time, urllib.request
+import argparse, contextlib, fcntl, glob, json, os, re, subprocess, sys, time, urllib.request
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.agents import list_agents
@@ -52,6 +55,7 @@ os.environ["PATH"] = os.pathsep.join(
 CFG = fc.load()
 STATE = fc.state_dir(CFG)
 LOG = os.path.join(STATE, "nudges.log")
+LOCKS = os.path.join(STATE, "nudge-locks")
 MAX_TEXT = 200
 JOB_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:+\[\]-]{0,63}")
 CONFIRM_WAIT = 60.0                        # seconds for the typed line to reach the transcript
@@ -168,6 +172,27 @@ def resolve(session):
         return r, ("wait", why)
     return r, None
 
+@contextlib.contextmanager
+def pane_lock(session):
+    """Hold the right to type into `session`'s pane, or yield False.
+
+    Two watchers nudged one session in the same second on 2026-09-17: their
+    keystrokes interleaved, so NEITHER line read back and both fell through to the
+    push. One typist at a time per session. The lock is held only while typing, not
+    while waiting for a busy session, so a second nudge is delayed rather than lost."""
+    os.makedirs(LOCKS, exist_ok=True)
+    path = os.path.join(LOCKS, re.sub(r"[^A-Za-z0-9_.-]", "_", session) + ".lock")
+    fh = open(path, "w")
+    try:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            yield False
+            return
+        yield True
+    finally:
+        fh.close()
+
 def tag_count(uuid, marker):
     """How many times `marker` appears in the session's transcript."""
     n = 0
@@ -267,15 +292,20 @@ def main():
     attempt = 0
     while True:
         attempt += 1
-        r, problem = resolve(session)
-        if problem is None:
-            code, detail = deliver(r, session, job, text)
-            if code == 0:
-                log(session=session, job=job, text=text, outcome="delivered", attempt=attempt,
-                    pane=r["pane"], detail=detail)
-                print(f"  {detail}\n")
-                return
-            give_up(code, session, job, text, detail)
+        with pane_lock(session) as mine:
+            if not mine:
+                problem = ("wait", f"another fleetnudge is typing into {session}'s pane")
+                r = None
+            else:
+                r, problem = resolve(session)
+                if problem is None:
+                    code, detail = deliver(r, session, job, text)
+                    if code == 0:
+                        log(session=session, job=job, text=text, outcome="delivered",
+                            attempt=attempt, pane=r["pane"], detail=detail)
+                        print(f"  {detail}\n")
+                        return
+                    give_up(code, session, job, text, detail)
         kind, why = problem
         log(session=session, job=job, text=text, outcome="waiting" if kind == "wait" else "refused",
             attempt=attempt, reason=why)

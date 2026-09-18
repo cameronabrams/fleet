@@ -56,6 +56,15 @@ code: tmux reads one at the end of a ``send-keys`` argument as its own command s
 and drops it, which cost a production nudge its readback on 2026-09-17. Delivery is confirmed when the tag
 appears once more in the session's transcript.
 
+**One nudge types into a session at a time.** A second one waits for the first
+instead of interleaving keystrokes with it: two watchers nudged one session within
+the same second on 2026-09-17, and neither line read back. The lock
+(``<state>/nudge-locks/<session>.lock``) is held only while typing, never while
+waiting for a busy session, so a queued nudge is delayed rather than lost.
+
+Keep ``TEXT`` to one summary line. A line of per-task detail wraps in the pane and
+tells the session no more than a count does; it can read its own log for the rest.
+
 While the session is busy, holds a draft, or is not running, it retries every
 ``--every`` seconds (default 60) for up to ``--wait`` seconds (default 1800). It never
 queues a line behind a draft.
