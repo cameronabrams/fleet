@@ -210,10 +210,18 @@ a unit's PATH has none of them:
     S=SESSION J=JOB B=$HOME/bin
     "$B/fleetregister" "$S" "$J" $$ "what it watches" || exit 1
     TERMINAL='^(COMPLETED|FAILED|TIMEOUT|CANCELLED|OUT_OF_MEMORY|NODE_FAIL|BOOT_FAIL|DEADLINE|PREEMPTED)'
+    BAD='^(FAILED|TIMEOUT|CANCELLED|OUT_OF_MEMORY|NODE_FAIL|BOOT_FAIL|DEADLINE|PREEMPTED)'
+    latched=0                       # the first-failure line is sent at most once
     while :; do
       # a failed query is "cannot tell", never "done"
       out=$(ssh -o BatchMode=yes CLUSTER "sacct -j $J -X -n -P --format=State") || { sleep 120; continue; }
-      if [ -n "$out" ] && ! printf '%s\n' "$out" | grep -qvE "$TERMINAL"; then
+      [ -n "$out" ] || { sleep 300; continue; }
+      if [ "$latched" = 0 ] && printf '%s\n' "$out" | grep -qE "$BAD"; then
+        n=$(printf '%s\n' "$out" | grep -cE "$BAD")
+        "$B/fleetnudge" "$S" "$J" "job $J: first task failure ($n so far), job still running" --go
+        latched=1                   # later failures are logged, not nudged
+      fi
+      if ! printf '%s\n' "$out" | grep -qvE "$TERMINAL"; then
         states=$(printf '%s\n' "$out" | sed 's/ by .*//' | sort | uniq -c | sed -E 's/^ *([0-9]+) (.*)/\2 x\1/' | paste -sd, -)
         "$B/fleetnudge" "$S" "$J" "job $J ended: $states" --go
         exit 0
@@ -234,10 +242,17 @@ with `mv` kept its own). To change a watcher, write a new file and `mv` it into 
 or use a new name. Then stop the old watcher by its pid, start the new one, and let it
 register itself.
 
-**Nudge once per job, with a summary line.** Two nudges for one job in the same
-second collided on 2026-09-17 and neither was delivered (the tool now serialises
-them, but the second still has to wait). Per-task detail belongs in the watcher's
-log, not in the line: the session can read the log once it is awake.
+**No burst: one line per event class, latched, never one per task.** Nine per-task
+lines for one job collided on 2026-09-17 and none was delivered. The tool now
+serialises typing, but a burst still queues, wraps the pane and says no more than a
+count does; per-task detail belongs in the watcher's log, which the session reads once
+it is awake.
+
+Two lines is the right shape for a long job, and the recipe above sends them: one when
+every task is terminal, and one LATCHED on the FIRST failure, which is the shape most
+worth waking a session for. A production session with a 20-hour slowest task found
+this while adopting the recipe: end-of-job only would have hidden an early failure for
+most of a day. Latch each class so a repeated condition cannot become a burst.
 
 The watcher's own output goes to its log; the nudge's outcome goes to `nudges.log`.
 Clear the registration once the session has read the
