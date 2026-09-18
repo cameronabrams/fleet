@@ -68,6 +68,19 @@ def starttime(pid):
     except (OSError, ValueError, IndexError):
         return None
 
+def proc_cwd(pid):
+    """The working directory of `pid`, or None.
+
+    The authority on where a session runs. tmux's `pane_current_path` is not: it
+    follows whatever process the pane is running, so a `cd` in one of the
+    session's own shell calls moves it -- OBSERVED 2026-09-18, when a restart
+    command was printed with the wrong directory, which would have resumed
+    nothing."""
+    try:
+        return os.readlink("/proc/%s/cwd" % int(pid))
+    except (OSError, ValueError):
+        return None
+
 def children(pid):
     """Pids of the direct children of `pid`."""
     try:

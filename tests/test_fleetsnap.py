@@ -3,6 +3,48 @@ from unittest import mock
 from tests.support import FakeConfig, load_tool
 from fleet import transcripts
 
+class SnapshotDirectory(unittest.TestCase):
+    """The manifest's cwd is what fleetrestore rebuilds a pane in, so it must be the
+    SESSION's directory. tmux's pane_current_path follows whatever the pane runs."""
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.snap = load_tool("fleetsnap")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def manifest(self, proc_cwd="/home/u/work"):
+        row = ["fleet", "1", "win", "0", "%1", "alpha", "grp", "title",
+               "/home/u/somewhere-else", "100", "80x40"]
+        proc = {"pid": 200, "version": "2.1.276", "resume_uuid": None, "started": "",
+                "argv": ["claude", "--name", "alpha"]}
+        sn = self.snap
+        with mock.patch.object(sn, "pane_rows", return_value=[row]), \
+             mock.patch.object(sn, "claude_proc", return_value=proc), \
+             mock.patch.object(sn, "proc_cwd", side_effect=lambda pid: proc_cwd), \
+             mock.patch.object(sn, "resume_handle", return_value=(None, "UNVERIFIED: test")), \
+             mock.patch.object(sn, "durable_files", return_value=[]), \
+             mock.patch.object(sn, "agent_color", return_value=None), \
+             mock.patch.object(sn, "window_layouts", return_value={}), \
+             mock.patch.object(sn, "window_meta", return_value={}), \
+             mock.patch.object(sn, "prior_snapshot", return_value={}), \
+             mock.patch.object(sn, "linger_units", return_value=[]), \
+             mock.patch.object(sn, "keep_real_window_names", return_value=[]), \
+             mock.patch.object(sn, "rotate"), \
+             mock.patch.object(sn.sys, "argv", ["fleetsnap"]):
+            import contextlib, io, json
+            with contextlib.redirect_stdout(io.StringIO()):
+                sn.main()
+            with open(os.path.join(self.cfg.state, "manifest.json")) as f:
+                return json.load(f)
+
+    def test_cwd_comes_from_the_process(self):
+        self.assertEqual(self.manifest()["sessions"][0]["cwd"], "/home/u/work")
+
+    def test_pane_path_is_the_fallback(self):
+        self.assertEqual(self.manifest(proc_cwd=None)["sessions"][0]["cwd"], "/home/u/somewhere-else")
+
+
 class CorrectedLabel(unittest.TestCase):
     """The @repo label vs the pane title. OBSERVED 2026-09-13: a session at the
     trust prompt, before claude had set its title, had its good label replaced by

@@ -19,6 +19,7 @@ import json, os, re, subprocess, sys, glob
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.agents import by_session_prefix, list_agents
+from fleet.procs import proc_cwd
 from fleet.transcripts import cleared_successor, project_slug, uuid_from_descendants
 CFG = fc.load()
 
@@ -254,10 +255,12 @@ def sessions():
         parts = row.split("\t")
         if len(parts) < 4:
             continue
-        pane, ppid, title, cwd = parts[0], parts[1], parts[2].lstrip("\u2733 ").strip(), parts[3]
+        pane, ppid, title, pane_path = parts[0], parts[1], parts[2].lstrip("\u2733 ").strip(), parts[3]
         pid, cmd = claude_pid(ppid)
         if pid:
-            rows.append({"pane": pane, "title": title, "cwd": cwd, "pid": pid, "cmd": cmd})
+            # The session's own cwd, not the pane's: see fleet.procs.proc_cwd.
+            rows.append({"pane": pane, "title": title, "cwd": proc_cwd(pid) or pane_path,
+                         "pid": pid, "cmd": cmd})
 
     by_cwd = {}
     for r in rows:
@@ -464,7 +467,12 @@ def self_block(ss):
     print("  2. then paste:\n")
     # cd first: /exit leaves the pane's shell wherever it was, which need not be the
     # session's directory (coord moved from ~ to the state dir on 2026-09-13).
-    here = os.getcwd().replace(os.path.expanduser("~"), "~", 1)
+    # THAT SESSION's directory, read from its own process -- not os.getcwd(), which
+    # is wherever the shell running this tool happens to be, and which a `cd` in one
+    # of the session's own tool calls moves. It printed ~/.config/fleet for a session
+    # running in ~/.local/state/fleet on 2026-09-18; `--resume` would have found no
+    # transcript there.
+    here = (proc_cwd(me["pid"]) or me["cwd"]).replace(os.path.expanduser("~"), "~", 1)
     print("     cd %s && %sclaude --name %s --resume %s\n" % (here, ENV, me["name"], uuid))
     if uuid != me["resume_uuid"]:
         print("  (uuid taken from this session's own environment, which is")

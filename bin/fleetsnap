@@ -10,6 +10,7 @@ live process arguments; once tmux dies it is unrecoverable. Writes:
 import json, os, re, shutil, subprocess, glob, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet.procs import proc_cwd
 from fleet.transcripts import agent_color, newest_transcript, resume_handle
 CFG = fc.load()
 
@@ -246,11 +247,15 @@ def main():
     for r in pane_rows():
         if len(r) < 11:
             continue
-        sess, win, winname, pidx, pane, repo, fleet, title, cwd, ppid, size = r[:11]
+        sess, win, winname, pidx, pane, repo, fleet, title, pane_path, ppid, size = r[:11]
         fleet = fleet or sess or "default"
         proc = claude_proc(ppid)
         if not proc:
             continue
+        # The session's own cwd. pane_current_path follows whatever the pane runs,
+        # so a `cd` in one of the session's shell calls would be snapshotted as its
+        # directory and rebuilt there (fleet.procs.proc_cwd).
+        cwd = proc_cwd(proc["pid"]) or pane_path
         repo, label_note = corrected_label(repo, title, proc["argv"], cwd)
         snap["sessions"].append({
             "label": repo or f"(unlabeled {pane})",

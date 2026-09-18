@@ -108,5 +108,40 @@ class AttachedBackground(Upgrade):
         self.assertEqual(self.up.attached_id("claude attach b20bc72b"), "b20bc72b")
         self.assertIsNone(self.up.attached_id("claude --name x --resume b20bc72b-0000"))
 
+class SessionDirectory(Upgrade):
+    """The cd printed for a restart must be the SESSION's directory. os.getcwd() is
+    the shell running the tool, which a `cd` in one of the session's own tool calls
+    moves: on 2026-09-18 the hand-off said ~/.config/fleet for a session running in
+    ~/.local/state/fleet, where --resume would have found no transcript."""
+    def rows(self, pane_path="/home/u/somewhere-else", proc="/home/u/work"):
+        with mock.patch.object(self.up, "sh", return_value=f"%1\t100\ttitle\t{pane_path}\n"), \
+             mock.patch.object(self.up, "claude_pid", return_value=("200", f"claude --name a --resume {U1}")), \
+             mock.patch.object(self.up, "proc_cwd", side_effect=lambda pid: proc), \
+             mock.patch.object(self.up, "agents", return_value=[]), \
+             mock.patch.object(self.up, "foreign_claude", return_value=[]), \
+             mock.patch.object(self.up, "uuid_from_descendants", return_value=None), \
+             mock.patch.object(self.up, "proc_version", side_effect=lambda pid: "2.1.276"):
+            return self.up.sessions()
+
+    def test_row_cwd_comes_from_the_process_not_the_pane(self):
+        self.assertEqual(self.rows()[0]["cwd"], "/home/u/work")
+
+    def test_pane_path_is_the_fallback_when_proc_is_unreadable(self):
+        self.assertEqual(self.rows(proc=None)[0]["cwd"], "/home/u/somewhere-else")
+
+    def test_self_block_prints_the_sessions_directory(self):
+        import contextlib, io
+        ss = [{"name": "coord", "pane": "%1", "cwd": "/home/u/work", "pid": "200",
+               "resume_uuid": U1, "version": "2.1.276", "ledger": True, "name_source": "verified"}]
+        out = io.StringIO()
+        with mock.patch.object(self.up, "proc_cwd", side_effect=lambda pid: "/home/u/work"), \
+             mock.patch.object(self.up, "SELF_UUID", None), \
+             mock.patch.object(os, "getcwd", return_value="/home/u/elsewhere"), \
+             contextlib.redirect_stdout(out):
+            self.up.self_block(ss)
+        text = out.getvalue()
+        self.assertIn("cd /home/u/work && ", text)
+        self.assertNotIn("elsewhere", text)
+
 if __name__ == "__main__":
     unittest.main()
