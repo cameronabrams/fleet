@@ -58,8 +58,9 @@ Design rules that run through all of it:
   plan unless given ``--go``.
 - **Authority stays with the human.** No session, the coordinator included, holds it.
 
-New here? Read :doc:`concepts`, then :doc:`installation`, then the
-:doc:`fleet-bootstrap skill <skills/fleet-bootstrap>`.
+New here? Read :doc:`concepts`, then :doc:`installation`, then
+:doc:`first-fleet` — which takes you from an empty configuration to a fleet you can
+leave running, and on to mail with someone else's.
 
 Contents
 --------
@@ -69,6 +70,7 @@ Contents
 
    concepts
    installation
+   first-fleet
    configuration
    tools/index
    skills/index

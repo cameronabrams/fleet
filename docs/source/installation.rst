@@ -53,7 +53,7 @@ Make sure ``~/bin`` is on ``PATH``.
 Next steps
 ----------
 
-- Run :doc:`tools/fleetsnap` while your sessions are healthy, and check the result
-  (the :doc:`fleet-snapshot skill <skills/fleet-snapshot>` says how).
-- To found a fleet or add a session, follow the
+- :doc:`first-fleet` — roles, configuration, the first session, and the habits that
+  keep a fleet alive.
+- To found a fleet or add a session from inside a session, follow the
   :doc:`fleet-bootstrap skill <skills/fleet-bootstrap>`.
