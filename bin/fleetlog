@@ -9,6 +9,7 @@ Read-only. Nothing is sent, nothing is modified. Everything below is derived fro
   fleetlog timeline [-n 40]    chronological traffic
   fleetlog trace <keyword>     every message mentioning <keyword>, in order
   fleetlog sessions            transcript -> session identity, and how it was resolved
+  fleetlog initiative          what triggered each message sent, per session and per week
 """
 import json, os, re, sys, glob, argparse, hashlib
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
@@ -96,11 +97,64 @@ ENV_RE = re.compile(r'<cross-session-message\s+([^>]*)>')
 ATTR_RE = re.compile(r'(\w[\w-]*)="([^"]*)"')
 SELF_RE = identity.SELF_RE
 
+MOSTLY_META = re.compile(r"</?(system-reminder|task-notification|local-command-\w+|"
+                         r"command-(name|message|args))\b")
+
+def turn_trigger(rec, envelope_sender):
+    """What started this turn, from ONE user record, or None if it starts nothing.
+
+    Two records look like a human prompt and are not. Both produced a confident
+    wrong answer for the coordinator before this was a tool (2026-09-19):
+
+    1. A tool RESULT is stored as `type: user`. Treating one as a turn resets the
+       trigger on every tool call, which put 93% of sends down to a system event.
+    2. An INCOMING peer message is `type: user` with `isMeta: true`. Skipping meta
+       records scored peer-triggered sends at exactly 0 -- a plausible number with
+       no warning on it.
+    """
+    if rec.get("type") != "user":
+        return None
+    msg = rec.get("message")
+    content = msg.get("content") if isinstance(msg, dict) else None
+    if isinstance(content, list):
+        if any(isinstance(it, dict) and it.get("type") == "tool_result" for it in content):
+            return None                                   # trap 1
+        text = " ".join(it.get("text", "") for it in content if isinstance(it, dict))
+    else:
+        text = str(content or "")
+    if envelope_sender:
+        return ("peer", envelope_sender)                  # trap 2
+    bare = re.sub(r"<system-reminder>.*?</system-reminder>", " ", text, flags=re.S)
+    bare = re.sub(r"<task-notification>.*?</task-notification>", " ", bare, flags=re.S).strip()
+    if not bare or (rec.get("isMeta") and MOSTLY_META.search(text)):
+        return ("auto", "")
+    return ("human", bare)
+
+def label_send(trigger, to, aliases):
+    """How this send was triggered: instructed, volunteered, reply, onward, auto.
+
+    `instructed` is the one heuristic -- it fires when the recipient's name appears
+    in the human's prompt -- so callers print it as approximate. The other four are
+    mechanical."""
+    if not trigger:
+        return "auto"
+    kind, what = trigger
+    if kind == "peer":
+        return "reply" if canon(what) == canon(to) else "onward"
+    if kind == "human":
+        names = {n for n in aliases.get(canon(to), set()) | {canon(to), to} if n}
+        for n in names:
+            if re.search(r"(?<![\w-])" + re.escape(n) + r"(?![\w-])", what, re.I):
+                return "instructed"
+        return "volunteered"
+    return "auto"
+
 def parse_transcript(path):
     """Return (identity, how_resolved, [events])."""
     events, ident, how = [], None, None
     last_agent, last_self = None, None
     seen = set()
+    trigger = None
     for line in open(path, errors="replace"):
         try:
             rec = json.loads(line)
@@ -112,6 +166,7 @@ def parse_transcript(path):
             last_agent = rec["agentName"]
         strings = []
         walk_strings(rec, strings)
+        envelope_sender = None
 
         for s in strings:
             for m in SELF_RE.finditer(s):
@@ -129,6 +184,12 @@ def parse_transcript(path):
                 # after it, so no received copy ever matched the sent one and
                 # every message counted two or three times (reported 2026-09-13).
                 body = s[m.end():m.end() + 8000].split("</cross-session-message>", 1)[0].strip()
+                # BEFORE the duplicate check: one incoming message is written three
+                # times (an `attachment` record, a `queue-operation`, then the `user`
+                # record that actually starts the turn). Skipping the repeats for the
+                # graph is right; skipping them here left the turn looking
+                # human-triggered, which put replies at 1% of traffic instead of 39%.
+                envelope_sender = sender
                 key = hashlib.md5((sender + body[:400]).encode()).hexdigest()
                 if key in seen:
                     continue           # same message queued and delivered
@@ -136,6 +197,10 @@ def parse_transcript(path):
                 events.append({"ts": ts, "dir": "in", "peer": sender,
                                "subject": first_line(body), "body": body,
                                "src": rtype})
+
+        started = turn_trigger(rec, envelope_sender)
+        if started:
+            trigger = started
 
         msg = rec.get("message")
         if isinstance(msg, dict) and isinstance(msg.get("content"), list):
@@ -149,7 +214,8 @@ def parse_transcript(path):
                     body = str(inp.get("message") or inp.get("content") or "").strip()
                     events.append({"ts": ts, "dir": "out", "peer": to,
                                    "subject": inp.get("summary") or first_line(body),
-                                   "body": body, "src": "SendMessage"})
+                                   "body": body, "src": "SendMessage",
+                                   "trigger": trigger})
     ident, how = own_identity(path, last_agent, last_self)
     if ident is None:
         ident, how = fallback_identity(path, events)
@@ -248,6 +314,15 @@ def live_map():
         pass
     return _LIVE
 
+def alias_sets():
+    """Current session name -> every name it has answered to. `instructed` looks for
+    the recipient in the human's words, and the human may have used an older name."""
+    out = defaultdict(set)
+    for old, new in name_map().items():
+        out[canon(new)].add(old)
+        out[canon(new)].add(new)
+    return out
+
 def load_all():
     sessions, edges = {}, []
     for path in sorted(glob.glob(f"{PROJECTS}/*/*.jsonl")):
@@ -259,11 +334,15 @@ def load_all():
         if not events:
             continue
         sessions[path] = (ident, how, len(events))
+        aliases = alias_sets()
         for ev in events:
             src, dst = (ev["peer"], ident) if ev["dir"] == "in" else (ident, ev["peer"])
-            edges.append({"ts": ev["ts"], "from": src, "to": dst,
-                          "subject": ev["subject"], "body": ev["body"],
-                          "file": path, "dir": ev["dir"]})
+            edge = {"ts": ev["ts"], "from": src, "to": dst,
+                    "subject": ev["subject"], "body": ev["body"],
+                    "file": path, "dir": ev["dir"]}
+            if ev["dir"] == "out":
+                edge["label"] = label_send(ev.get("trigger"), ev["peer"], aliases)
+            edges.append(edge)
     for e in edges:
         for k in ("from", "to"):
             if e[k] and e[k].startswith("uds:"):
@@ -475,6 +554,84 @@ def cmd_sessions(sessions, edges, args):
               f"{os.path.basename(os.path.dirname(path))}")
     print()
 
+CEILING = 800     # the fleet's own message ceiling, from comms.md
+
+def cmd_initiative(sessions, edges, args):
+    """What triggered each message sent: the mix, per session, and per week."""
+    import statistics
+    sent = [e for e in edges if e.get("label")]
+    if args.since:
+        sent = [e for e in sent if e["ts"][:10] >= args.since]
+    if not sent:
+        print("\n  no sent messages found (a transcript records the send, so this needs "
+              "the sender's own transcripts)\n")
+        return
+    order = ["instructed", "volunteered", "reply", "onward", "auto"]
+    unprompted = {"volunteered", "onward"}
+    mix = Counter(e["label"] for e in sent)
+    per_session, weeks = defaultdict(Counter), defaultdict(list)
+    for e in sent:
+        per_session[e["from"] or "?"][e["label"]] += 1
+        per_session[e["from"] or "?"]["sent"] += 1
+        weeks[week_of(e["ts"])].append(e)
+
+    if args.json:
+        print(json.dumps({
+            "messages": len(sent),
+            "mix": {k: mix.get(k, 0) for k in order},
+            "sessions": {k: dict(v) for k, v in per_session.items()},
+            "weeks": {w: {"sent": len(es),
+                          "unprompted": sum(1 for e in es if e["label"] in unprompted),
+                          "median_chars": int(statistics.median(len(e["body"] or "") for e in es)),
+                          "over_ceiling": sum(1 for e in es if len(e["body"] or "") > CEILING)}
+                      for w, es in sorted(weeks.items())}}, indent=2))
+        return
+
+    share = lambda n: f"{100.0 * n / len(sent):.1f}%"
+    print(f"\n  {len(sent)} messages sent"
+          + (f" since {args.since}" if args.since else "") + ".\n")
+    print("  WHAT TRIGGERED THE TURN THE MESSAGE WAS SENT IN")
+    for k in order:
+        print(f"    {k:<12} {mix.get(k, 0):>6}  {share(mix.get(k, 0)):>7}   {MEANING[k]}")
+    up = sum(mix.get(k, 0) for k in unprompted)
+    print(f"\n    unprompted (volunteered + onward): {up} ({share(up)}) -- the session "
+          f"decided to speak")
+    print("    `instructed` is APPROXIMATE: it fires when the recipient's name appears in")
+    print("    the human's words. The other four are mechanical.\n")
+
+    print(f"  {'SESSION':<22} {'SENT':>5} " + " ".join(f"{k[:5].upper():>6}" for k in order)
+          + "   UNPROMPTED")
+    for name, c in sorted(per_session.items(), key=lambda kv: -kv[1]["sent"]):
+        u = sum(c[k] for k in unprompted)
+        print(f"  {name[:22]:<22} {c['sent']:>5} "
+              + " ".join(f"{c[k]:>6}" for k in order)
+              + f"   {100.0 * u / c['sent']:>5.0f}%")
+
+    print(f"\n  {'WEEK OF':<12} {'SENT':>5} {'UNPROMPTED':>11} {'MEDIAN':>7} {'OVER ' + str(CEILING):>9}")
+    for w, es in sorted(weeks.items()):
+        u = sum(1 for e in es if e["label"] in unprompted)
+        med = int(statistics.median(len(e["body"] or "") for e in es))
+        over = sum(1 for e in es if len(e["body"] or "") > CEILING)
+        print(f"  {w:<12} {len(es):>5} {100.0 * u / len(es):>10.0f}% {med:>7} "
+              f"{100.0 * over / len(es):>8.0f}%")
+    print()
+
+MEANING = {
+    "instructed":  "the human's words named the recipient",
+    "volunteered": "the human was talking about something else",
+    "reply":       "a peer wrote; it answered that peer",
+    "onward":      "a peer wrote; it told a DIFFERENT peer (routing it chose)",
+    "auto":        "a watcher, notification or system event started the turn",
+}
+
+def week_of(ts):
+    import datetime as _dt
+    try:
+        d = _dt.date.fromisoformat(ts[:10])
+    except ValueError:
+        return "????-??-??"
+    return (d - _dt.timedelta(days=d.weekday())).isoformat()
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -486,10 +643,13 @@ def main():
     t = sub.add_parser("timeline"); t.add_argument("-n", type=int, default=40)
     r = sub.add_parser("trace"); r.add_argument("keyword")
     sub.add_parser("sessions")
+    i = sub.add_parser("initiative")
+    i.add_argument("--since", metavar="YYYY-MM-DD")
+    i.add_argument("--json", action="store_true")
     v = sub.add_parser("verify"); v.add_argument("session"); v.add_argument("-n", type=int, default=3)
     args = ap.parse_args()
     sessions, edges = load_all()
-    {"timeline": cmd_timeline, "trace": cmd_trace, 
+    {"timeline": cmd_timeline, "trace": cmd_trace, "initiative": cmd_initiative,
      "sessions": cmd_sessions, "verify": cmd_verify}.get(args.cmd, cmd_graph)(sessions, edges, args)
 
 if __name__ == "__main__":

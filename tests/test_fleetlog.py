@@ -18,6 +18,84 @@ class Log(unittest.TestCase):
             p.stop()
         self.tmp.cleanup(); self.cfg.close()
 
+    def initiative_transcript(self, records):
+        path = os.path.join(self.tmp.name, "i.jsonl")
+        with open(path, "w") as f:
+            for r in records:
+                f.write(json.dumps(r) + "\n")
+        return self.log.parse_transcript(path)[2]
+
+    def user(self, text, ts="2026-09-19T10:00:00Z", **kw):
+        return dict({"type": "user", "timestamp": ts, "message": {"content": text}}, **kw)
+
+    def send(self, to, ts="2026-09-19T10:05:00Z", body="hi"):
+        return {"type": "assistant", "timestamp": ts,
+                "message": {"content": [{"type": "tool_use", "name": "SendMessage",
+                                         "input": {"to": to, "message": body}}]}}
+
+    def envelope(self, sender, body="have a look"):
+        return (f'<cross-session-message from="uds:/run/x/1.sock" from-name="{sender}">'
+                f'{body}</cross-session-message>')
+
+    def labels(self, records):
+        return [e.get("label") or self.log.label_send(e.get("trigger"), e["peer"], {})
+                for e in self.initiative_transcript(records) if e["dir"] == "out"]
+
+    def test_a_prompt_naming_the_recipient_is_instructed(self):
+        self.assertEqual(self.labels([self.user("ask beta to rebuild the module"),
+                                      self.send("beta")]), ["instructed"])
+
+    def test_a_prompt_about_something_else_is_volunteered(self):
+        self.assertEqual(self.labels([self.user("what is the state of the sweep?"),
+                                      self.send("beta")]), ["volunteered"])
+
+    def test_answering_the_peer_who_wrote_is_reply_and_another_peer_is_onward(self):
+        recs = [self.user(self.envelope("beta"), isMeta=True), self.send("beta")]
+        self.assertEqual(self.labels(recs), ["reply"])
+        recs = [self.user(self.envelope("beta"), isMeta=True), self.send("gamma")]
+        self.assertEqual(self.labels(recs), ["onward"])
+
+    def test_trap_a_tool_result_is_a_user_record_but_not_a_turn(self):
+        # counting one as a turn reset the trigger on every tool call: 93% "auto"
+        tool_result = {"type": "user", "timestamp": "2026-09-19T10:02:00Z",
+                       "message": {"content": [{"type": "tool_result", "content": "ok"}]}}
+        self.assertEqual(self.labels([self.user("ask beta about the module"),
+                                      tool_result, self.send("beta")]), ["instructed"])
+
+    def test_trap_an_incoming_message_is_meta_and_must_not_be_skipped(self):
+        # filtering isMeta records scored peer-triggered sends at exactly 0
+        self.assertEqual(self.labels([self.user(self.envelope("beta"), isMeta=True),
+                                      self.send("beta")]), ["reply"])
+
+    def test_trap_the_same_message_is_written_three_times(self):
+        # attachment + queue-operation + the user record that starts the turn; the
+        # graph keeps one copy, but the trigger must still see the user record
+        env = self.envelope("beta")
+        recs = [{"type": "attachment", "timestamp": "2026-09-19T10:00:00Z",
+                 "message": {"content": env}},
+                {"type": "queue-operation", "timestamp": "2026-09-19T10:00:01Z",
+                 "message": {"content": env}},
+                self.user(env, ts="2026-09-19T10:00:02Z", isMeta=True),
+                self.send("beta")]
+        events = self.initiative_transcript(recs)
+        self.assertEqual(len([e for e in events if e["dir"] == "in"]), 1)   # graph unchanged
+        self.assertEqual(self.labels(recs), ["reply"])
+
+    def test_a_notification_only_turn_is_auto(self):
+        note = self.user("<task-notification>job 1 ended</task-notification>", isMeta=True)
+        self.assertEqual(self.labels([note, self.send("beta")]), ["auto"])
+        self.assertEqual(self.labels([self.send("beta")]), ["auto"])      # nothing before it
+
+    def test_instructed_uses_the_names_a_session_has_answered_to(self):
+        send = self.log.label_send(("human", "ask mirror-depo to check it"), "mirror-repo",
+                                   {"mirror-repo": {"mirror-depo", "mirror-repo"}})
+        self.assertEqual(send, "instructed")
+
+    def test_week_of(self):
+        self.assertEqual(self.log.week_of("2026-09-19T10:00:00Z"), "2026-09-14")
+        self.assertEqual(self.log.week_of("2026-09-14T00:00:00Z"), "2026-09-14")
+        self.assertEqual(self.log.week_of("nonsense"), "????-??-??")
+
     def test_parse_in_and_out(self):
         path = os.path.join(self.tmp.name, "t.jsonl")
         envelope = ('<cross-session-message from="uds:/run/x/1.sock" from-name="beta">'
