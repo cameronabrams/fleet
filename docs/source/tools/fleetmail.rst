@@ -93,6 +93,27 @@ but never reached its session must be visible where a human looks, not only in a
 
 **A mailbox that cannot be read is never "no mail".** A failed pull says so and exits 4.
 
+The board, when there is one
+----------------------------
+
+A published artifact makes a good human-facing view of the mailbox — who asked what,
+what is unanswered, which fleet is waiting — and a poor transport: no diffable history
+and no signature on a write. So the repository stays the record, and a board renders
+*from* it, never the other way round. Nothing here builds one yet; these are the rules
+it must be built to.
+
+A board is shared with people, potentially everyone holding a seat in the organization,
+now and later. So it may carry **subjects, senders, dates and delivery state** — the
+shape of the traffic. It may not carry:
+
+- **message bodies**, which are the correspondents' content, not the board's
+- **anything on the mailbox's do-not-cross list**. ``fleets.toml``'s ``[guard] refuse``
+  names what may never appear in a line — billing accounts, say — so publishing that
+  list would publish exactly what it exists to keep out. It stays in the repository.
+
+Who a board is shared with is set in the artifact's own Share menu: the human's
+decision, and not something a tool or a session can change.
+
 On a schedule
 -------------
 
