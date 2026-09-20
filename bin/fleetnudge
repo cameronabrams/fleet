@@ -244,11 +244,14 @@ def push(title, body):
     except OSError as e:
         return f"push FAILED: {e}"
 
-def give_up(code, session, job, text, reason):
+def give_up(code, session, job, text, reason, mail_from=None):
+    # mail_from travels with the FAILURE too, not only with the success: a piece of
+    # mail that never arrived is the case a reader most needs to identify as mail,
+    # and fleetwatch reads these records to find it.
     pushed = push(f"fleetnudge: {session} not reached",
-                  f"{tag(session, job)} {text}\nNot delivered: {reason}")
+                  f"{tag(session, job, mail_from)} {text}\nNot delivered: {reason}")
     log(session=session, job=job, text=text, outcome="not delivered", code=code,
-        reason=reason, push=pushed)
+        reason=reason, push=pushed, mail_from=mail_from)
     print(f"\n  NOT DELIVERED: {reason}\n  {pushed}\n")
     sys.exit(code)
 
@@ -290,7 +293,7 @@ def main():
         for p in problems:
             print(f"  REFUSED: {p}")
         if a.go:
-            give_up(2, session, job, text, "; ".join(problems))
+            give_up(2, session, job, text, "; ".join(problems), mail_from)
         print()
         sys.exit(2)
 
@@ -324,14 +327,15 @@ def main():
                             mail_from=mail_from)
                         print(f"  {detail}\n")
                         return
-                    give_up(code, session, job, text, detail)
+                    give_up(code, session, job, text, detail, mail_from)
         kind, why = problem
         log(session=session, job=job, text=text, outcome="waiting" if kind == "wait" else "refused",
-            attempt=attempt, reason=why)
+            attempt=attempt, reason=why, mail_from=mail_from)
         if kind == "refuse":
-            give_up(2, session, job, text, why)
+            give_up(2, session, job, text, why, mail_from)
         if time.time() + a.every > t_end:
-            give_up(4, session, job, text, f"still not typeable after {a.wait}s: {why}")
+            give_up(4, session, job, text, f"still not typeable after {a.wait}s: {why}",
+                    mail_from)
         print(f"  attempt {attempt}: {why}; retrying in {a.every}s")
         time.sleep(a.every)
 

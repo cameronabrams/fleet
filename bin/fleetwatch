@@ -21,12 +21,18 @@ What the LEDGER is still for, and what this does not replace: the re-arm RECIPE
 (the actual poll loop) and the RATIONALE (why the campaign matters). Neither is
 recoverable by inspecting a process that no longer exists.
 
+It also reports the other half of that question. A watcher can run perfectly and
+its RESULT still never reach the session: fleetnudge falls back to a phone push
+when it cannot type into a pane, and [notify] mute_file silences that push by
+design. Then nobody was told and <state>/nudges.log is the only trace -- while the
+job here reads as WATCHED, which is the reassuring direction.
+
   fleetwatch            report
   fleetwatch <session>  only that session's work -- what a ledger should point AT
                         instead of hand-syncing job ids and task counts
   fleetwatch --json     machine-readable
 """
-import json, os, re, subprocess, sys, glob
+import datetime, json, os, re, subprocess, sys, glob
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.procs import alive
@@ -132,6 +138,12 @@ def final_states(jids):
 
 WATCHDIR = os.path.join(fc.state_dir(CFG), "watchers")
 
+# Delivery, not watching. Both are "is my work being seen?", so both belong here.
+NUDGELOG  = os.path.join(fc.state_dir(CFG), "nudges.log")
+MAILINDEX = os.path.join(fc.state_dir(CFG), "mail-delivered.json")
+NUDGE_DAYS = 7              # window for the delivery section; named in its output
+DANGLING_AFTER = 2 * 3600   # a retry loop still going is normal; this old, it was killed
+
 def registered():
     """AUTHORITATIVE: watchers that registered themselves, filtered by liveness.
 
@@ -203,6 +215,162 @@ def polled_jobs(cmdline):
         return set()
     return set(JOB_RE.findall(cmdline))
 
+def _when(rec):
+    """The record's own timestamp, offset and all. None if it has none worth trusting."""
+    try:
+        return datetime.datetime.strptime(rec["time"], "%Y-%m-%dT%H:%M:%S%z")
+    except (KeyError, TypeError, ValueError):
+        return None
+
+def _stamp(rec):
+    t = str(rec.get("time", ""))
+    # keep the recorded offset: these are wall-clock times from whatever zone the
+    # host was in, and a bare "16:08" is the wrong answer in the other one.
+    return f"{t[:10]} {t[11:16]} {t[19:]}" if len(t) >= 20 else t or "?"
+
+def _reached_phone(rec):
+    """Did the fallback push actually go out? fleetnudge writes what happened --
+    'push sent (HTTP 200)', 'push muted (<file> exists)', 'push FAILED: ...', or
+    'no [notify] in fleet.toml'. Only a 2xx means a human was told by some channel.
+    A record with NO push field is unknown, and unknown reads as NOT told: an
+    alarm that turns out to be nothing costs a look, the reverse costs the run."""
+    return bool(re.match(r"push sent \(HTTP 2\d\d\)", str(rec.get("push", ""))))
+
+def nudge_holes(only=None, days=NUDGE_DAYS):
+    """Lines that never reached a session, from <state>/nudges.log.
+
+    Nothing else in this tool sees these. A job whose watcher ran, fired, and
+    failed to hand over its result reads as WATCHED above -- the reassuring
+    direction (docs/checks-that-reassure.md B), and with the push muted there is
+    no second channel to notice from.
+
+    An ABSENT log is genuinely "no nudge was ever sent": fleetnudge creates it on
+    first use. An unreadable or unparseable one is not, and is reported as itself,
+    because "no rows" must never be something the check produced by failing.
+    """
+    res = {"silent": [], "pushed": [], "dangling": [], "older": 0, "bad_lines": 0,
+           "unreadable": None, "days": days, "mail_stuck": 0, "mail_error": None,
+           "log": NUDGELOG}
+    if os.path.exists(MAILINDEX):
+        # Mail that was quarantined, or written to a drop and never nudged, is a
+        # delivery hole this log cannot see -- it never became a nudge. Count it so
+        # an empty section below is not read as "everything got through"; the rows
+        # themselves belong to `fleetmail status`, which owns that index.
+        try:
+            with open(MAILINDEX) as f:
+                res["mail_stuck"] = sum(1 for v in json.load(f).values()
+                                        if v.get("outcome") == "quarantined"
+                                        or v.get("nudged") is False)
+        except (OSError, ValueError) as e:
+            res["mail_error"] = str(e)
+    if not os.path.exists(NUDGELOG):
+        return res
+    try:
+        with open(NUDGELOG) as f:
+            raw = f.read().splitlines()
+    except OSError as e:
+        res["unreadable"] = str(e); return res
+
+    recs = []
+    for line in raw:
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except ValueError:
+            res["bad_lines"] += 1; continue
+        if _when(r) is None:
+            res["bad_lines"] += 1; continue
+        recs.append(r)
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cut = now - datetime.timedelta(days=days)
+    # the last word on each session/job, for the dangling check below
+    last = {}
+    for r in recs:
+        last[(r.get("session"), str(r.get("job")))] = r
+
+    for r in recs:
+        if only and r.get("session") != only:
+            continue
+        t, out = _when(r), r.get("outcome")
+        if t < cut:
+            res["older"] += int(out == "not delivered")
+            continue
+        if out == "not delivered":
+            # A later nudge for the same session and job may have carried the news
+            # anyway (seen 2026-09-17, 13:22 lost and 14:44 delivered). Annotate;
+            # do NOT suppress -- a different message about the same job is not this
+            # message, and suppressing would make the check fail toward fine.
+            later = sorted(_when(x) for x in recs
+                           if x.get("session") == r.get("session")
+                           and str(x.get("job")) == str(r.get("job"))
+                           and x.get("outcome") == "delivered" and _when(x) > t)
+            row = dict(r, _later=_stamp({"time": later[0].strftime("%Y-%m-%dT%H:%M:%S%z")})
+                       if later else None)
+            (res["pushed"] if _reached_phone(r) else res["silent"]).append(row)
+        elif (out == "waiting"
+              and last.get((r.get("session"), str(r.get("job")))) is r
+              and (now - t).total_seconds() > DANGLING_AFTER):
+            # fleetnudge logs every retry, then always logs an outcome -- delivered
+            # or not delivered -- before it exits. A 'waiting' that is the last word
+            # means it never got to either: killed mid-retry, so it neither delivered
+            # nor pushed, and no other record of the attempt exists.
+            res["dangling"].append(r)
+    return res
+
+def print_hole(r):
+    who = r.get("session") or "?"
+    if r.get("mail_from"):
+        who += f" (mail from {r['mail_from']})"
+    print("   %s  %s / %s" % (_stamp(r), who, r.get("job", "?")))
+    reason = str(r.get("reason") or "no reason recorded")
+    print("      %s" % (reason[:140] + " ..." if len(reason) > 140 else reason))
+    print("      push: %s" % r.get("push", "not recorded -- assume nobody was told"))
+    if r.get("_later"):
+        print("      a later nudge to this session/job landed %s -- confirm it carried this"
+              % r["_later"])
+
+def print_delivery(h):
+    """The delivery half of the report. Prints nothing when there is nothing to
+    say AND the log could be read; says so when it could not."""
+    if h["unreadable"]:
+        print("\n!! CANNOT READ %s (%s)." % (h["log"], h["unreadable"]))
+        print("   Nothing below about delivery is a clean result; it is no result.")
+    if h["bad_lines"]:
+        print("\n!! %d unparseable line(s) in %s -- a hole could be in any of them."
+              % (h["bad_lines"], h["log"]))
+    if h["silent"]:
+        print("\n!! NUDGE NEVER ARRIVED AND NO PUSH WENT OUT (last %d days) -- the session"
+              % h["days"])
+        print("   was not told, the phone was not told, and this log is the only trace.")
+        for r in h["silent"]:
+            print_hole(r)
+    if h["pushed"]:
+        print("\n   not delivered, but the phone push did go out (last %d days) -- a human"
+              % h["days"])
+        print("   was told; the session still never got the line:")
+        for r in h["pushed"]:
+            print_hole(r)
+    if h["dangling"]:
+        print("\n!! FLEETNUDGE STOPPED MID-RETRY -- it logged 'waiting' and then nothing.")
+        print("   It exits through an outcome, so it was killed before it could deliver,")
+        print("   give up, or push. Nothing else recorded the attempt.")
+        for r in h["dangling"]:
+            print("   %s  %s / %s   last said: %s" % (_stamp(r), r.get("session", "?"),
+                  r.get("job", "?"), r.get("reason", "?")))
+    if h["older"]:
+        print("\n   (%d undelivered nudge(s) older than %d days, not shown)"
+              % (h["older"], h["days"]))
+    if h["mail_error"]:
+        print("\n!! cannot read %s (%s) -- undelivered mail is not counted below."
+              % (MAILINDEX, h["mail_error"]))
+    if h["mail_stuck"]:
+        print("\n   %d piece(s) of mail need a human -- quarantined, or written to a drop"
+              % h["mail_stuck"])
+        print("   and never nudged. Those never became nudges, so they are not above:")
+        print("   run `fleetmail status`.")
+
 def main():
     only = next((a for a in sys.argv[1:] if not a.startswith("-")), None)
     jobs, cluster_ok = live_jobs()
@@ -238,6 +406,7 @@ def main():
         for r in dead_reg:
             r["_why"] = "cluster query failed -- cannot tell dead from finished"
     inferred = watchers()          # ADVISORY ONLY -- see fleetregister
+    holes = nudge_holes(only)      # local; independent of the cluster query
     w = reg
     if only:
         # a session asking "what is MY live state?" -- the answer a ledger should
@@ -260,7 +429,8 @@ def main():
 
     if "--json" in sys.argv:
         print(json.dumps({"cluster_ok": cluster_ok, "jobs": rows, "stale_watchers": stale,
-                          "dead_watchers": dead_reg, "finished_watchers": finished},
+                          "dead_watchers": dead_reg, "finished_watchers": finished,
+                          "delivery": holes},
                          indent=1, default=str)); return
 
     if not cluster_ok:
@@ -330,8 +500,13 @@ def main():
             print("   %s  %d task(s)  %s" % (r["job"], r["tasks"],
                   ",".join(sorted(r["reasons"]))))
 
-    if cluster_ok and not (un or stale or ua or unreg or dead_reg):
-        print("\nAll live work is watched, every watcher has live work, all owners known.")
+    print_delivery(holes)
+
+    undelivered = (holes["silent"] or holes["pushed"] or holes["dangling"]
+                   or holes["unreadable"] or holes["bad_lines"] or holes["mail_stuck"])
+    if cluster_ok and not (un or stale or ua or unreg or dead_reg or undelivered):
+        print("\nAll live work is watched, every watcher has live work, all owners known,")
+        print("and every nudge of the last %d days landed." % holes["days"])
 
 if __name__ == "__main__":
     main()

@@ -386,5 +386,30 @@ class Push(Base):
             self.assertIn("push FAILED", self.real_push("t", "b"))
 
 
+class GiveUp(Base):
+    """What the log says when a line did NOT arrive.
+
+    fleetwatch reads these records to find delivery holes, so a failure has to
+    carry as much identity as a success: `mail_from` on the delivered record only
+    would leave every undelivered piece of mail indistinguishable from an ordinary
+    watcher nudge -- and undelivered is the case a reader most needs to identify.
+    """
+    def test_mail_from_travels_with_the_failure(self):
+        self.lands = False                       # typed, but never seen in the transcript
+        code, out = self.go("mail arrived; read drops/x.md",
+                            "--mail-from", "other-fleet/coord")
+        self.assertEqual(code, 4, out)
+        bad = [r for r in self.log() if r["outcome"] == "not delivered"]
+        self.assertEqual(len(bad), 1)
+        self.assertEqual(bad[0]["mail_from"], "other-fleet/coord")
+
+    def test_an_ordinary_nudge_records_no_sender(self):
+        self.lands = False
+        code, out = self.go()
+        self.assertEqual(code, 4, out)
+        bad = [r for r in self.log() if r["outcome"] == "not delivered"]
+        self.assertIsNone(bad[0]["mail_from"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,4 @@
-import json, os, subprocess, sys, unittest
+import contextlib, datetime, io, json, os, subprocess, sys, unittest
 from unittest import mock
 from tests.support import FakeConfig, load_tool
 
@@ -120,6 +120,133 @@ class Watchers(Base):
         self.assertEqual(self.w.polled_jobs(loop), {"23472564"})
         self.assertEqual(self.w.polled_jobs(once), set())
         self.assertEqual(self.w.polled_jobs("sleep 60"), set())
+
+class Delivery(Base):
+    """The delivery half: nudges that never reached a session.
+
+    Every test here is written so that it fails when the guard is removed. The
+    ones that matter most are the two about ABSENCE -- an unreadable log and an
+    unparseable line -- because those are the paths on which "no rows" would
+    otherwise be produced by the check breaking rather than by nothing being wrong.
+    """
+    def write(self, *recs):
+        path = os.path.join(self.cfg.state, "nudges.log")
+        with open(path, "w") as f:
+            for r in recs:
+                f.write((r if isinstance(r, str) else json.dumps(r)) + "\n")
+        return path
+
+    def rec(self, ago_h=1, **kw):
+        t = (datetime.datetime.now(datetime.timezone.utc).astimezone()
+             - datetime.timedelta(hours=ago_h))
+        r = dict(time=t.strftime("%Y-%m-%dT%H:%M:%S%z"), session="alpha",
+                 job="111111", text="job done")
+        r.update(kw)
+        return r
+
+    def test_absent_log_is_quiet(self):
+        # no nudge was ever sent: fleetnudge creates the log on first use
+        h = self.w.nudge_holes()
+        self.assertEqual((h["silent"], h["pushed"], h["unreadable"]), ([], [], None))
+
+    def test_muted_push_is_the_alarm_and_a_sent_push_is_not(self):
+        self.write(self.rec(outcome="not delivered", reason="pane busy",
+                            push="push muted (/home/x/ntfy-off exists)"),
+                   self.rec(job="222222", outcome="not delivered", reason="pane busy",
+                            push="push sent (HTTP 200)"))
+        h = self.w.nudge_holes()
+        self.assertEqual([r["job"] for r in h["silent"]], ["111111"])
+        self.assertEqual([r["job"] for r in h["pushed"]], ["222222"])
+
+    def test_delivered_and_waiting_are_not_holes(self):
+        self.write(self.rec(outcome="delivered", pane="%1"),
+                   self.rec(outcome="waiting", reason="mid-turn"),
+                   self.rec(outcome="delivered", pane="%1"))
+        h = self.w.nudge_holes()
+        self.assertEqual((h["silent"], h["pushed"], h["dangling"]), ([], [], []))
+
+    def test_unrecorded_push_reads_as_nobody_told(self):
+        # a record with no push field at all: unknown must fail toward the alarm
+        self.write(self.rec(outcome="not delivered", reason="pane busy"))
+        self.assertEqual(len(self.w.nudge_holes()["silent"]), 1)
+        self.assertFalse(self.w._reached_phone({"push": "push FAILED: timed out"}))
+        self.assertFalse(self.w._reached_phone({"push": "push sent (HTTP 503)"}))
+        self.assertTrue(self.w._reached_phone({"push": "push sent (HTTP 200)"}))
+
+    def test_a_later_delivery_annotates_but_does_not_suppress(self):
+        # 2026-09-17: 13:22 lost, 14:44 re-sent and delivered. The lost line still
+        # carried its own message, so it stays listed -- with the later one named.
+        self.write(self.rec(ago_h=3, outcome="not delivered", reason="corrupt input line",
+                            push="push muted (x exists)"),
+                   self.rec(ago_h=2, outcome="delivered", pane="%1"))
+        h = self.w.nudge_holes()
+        self.assertEqual(len(h["silent"]), 1)
+        self.assertTrue(h["silent"][0]["_later"])
+        # and a hole with nothing after it is not annotated
+        self.write(self.rec(ago_h=3, outcome="not delivered", reason="x",
+                            push="push muted (x exists)"))
+        self.assertIsNone(self.w.nudge_holes()["silent"][0]["_later"])
+
+    def test_dangling_waiting_only_when_old_enough(self):
+        # a retry loop still going logs 'waiting' and is perfectly healthy
+        self.write(self.rec(ago_h=0, outcome="waiting", reason="alpha is mid-turn"))
+        self.assertEqual(self.w.nudge_holes()["dangling"], [])
+        # one this old was killed before it could deliver, give up, or push
+        self.write(self.rec(ago_h=5, outcome="waiting", reason="alpha is mid-turn"))
+        self.assertEqual(len(self.w.nudge_holes()["dangling"]), 1)
+        # unless an outcome followed it
+        self.write(self.rec(ago_h=5, outcome="waiting", reason="alpha is mid-turn"),
+                   self.rec(ago_h=4, outcome="delivered", pane="%1"))
+        self.assertEqual(self.w.nudge_holes()["dangling"], [])
+
+    def test_unreadable_log_is_reported_not_treated_as_clean(self):
+        path = self.write(self.rec(outcome="not delivered", reason="x", push="push muted (y)"))
+        os.chmod(path, 0o000)
+        try:
+            h = self.w.nudge_holes()
+        finally:
+            os.chmod(path, 0o644)
+        if os.geteuid() == 0:
+            self.skipTest("running as root: chmod cannot make a file unreadable")
+        self.assertIsNotNone(h["unreadable"])
+        self.assertEqual(h["silent"], [])          # and the section says so out loud
+
+    def test_unparseable_lines_are_counted_not_skipped(self):
+        self.write("{not json", json.dumps({"session": "alpha", "outcome": "not delivered"}),
+                   self.rec(outcome="delivered", pane="%1"))
+        h = self.w.nudge_holes()
+        self.assertEqual(h["bad_lines"], 2)        # the junk, and the one with no time
+
+    def test_window_hides_nothing_silently(self):
+        self.write(self.rec(ago_h=24 * 30, outcome="not delivered", reason="old",
+                            push="push muted (x)"))
+        h = self.w.nudge_holes()
+        self.assertEqual((h["silent"], h["older"]), ([], 1))
+
+    def test_session_filter(self):
+        self.write(self.rec(outcome="not delivered", reason="x", push="push muted (y)"),
+                   self.rec(session="beta", outcome="not delivered", reason="x",
+                            push="push muted (y)"))
+        self.assertEqual([r["session"] for r in self.w.nudge_holes("alpha")["silent"]], ["alpha"])
+        self.assertEqual(len(self.w.nudge_holes()["silent"]), 2)
+
+    def test_quarantined_mail_is_counted_so_an_empty_section_is_not_all_clear(self):
+        # mail that never became a nudge cannot appear in nudges.log at all
+        with open(os.path.join(self.cfg.state, "mail-delivered.json"), "w") as f:
+            json.dump({"mail/a.md": {"outcome": "quarantined", "reason": "asks for a push"},
+                       "mail/b.md": {"outcome": "delivered", "nudged": False},
+                       "mail/c.md": {"outcome": "delivered", "nudged": True}}, f)
+        self.assertEqual(self.w.nudge_holes()["mail_stuck"], 2)
+
+    def test_mail_from_is_shown_on_a_hole(self):
+        self.write(self.rec(outcome="not delivered", reason="x", push="push muted (y)",
+                            mail_from="other-fleet/coord"))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.w.print_delivery(self.w.nudge_holes())
+        self.assertIn("mail from other-fleet/coord", out.getvalue())
+        self.assertIn("NUDGE NEVER ARRIVED", out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

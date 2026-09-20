@@ -77,7 +77,11 @@ queues a line behind a draft.
 When the line is not delivered, for any reason including a refusal, it sends the
 ``[notify]`` push (see :doc:`../configuration`) unless the mute file exists, and exits
 non-zero. Every attempt and outcome is appended to ``<state>/nudges.log`` as one JSON
-line.
+line, carrying ``session``, ``job``, ``text``, ``outcome``, the ``reason`` and the push
+result — and ``mail_from`` on a failure as well as on a success, since an undelivered
+piece of mail is the case most in need of identifying. :doc:`fleetwatch` reads that
+log to report lines that never reached a session, which is the only trace left when
+the push is muted.
 
 Under a systemd unit
 --------------------

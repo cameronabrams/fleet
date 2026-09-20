@@ -48,3 +48,40 @@ Report sections
    nothing to watch
 
 ``fleetwatch <session>`` limits the report to work that session owns or watches.
+
+Did the result reach the session?
+---------------------------------
+
+Watching is half the question. A watcher can run perfectly and its *result* still
+never arrive: :doc:`fleetnudge` types the line into the session's pane, and when it
+cannot, it falls back to the ``[notify]`` phone push — which ``mute_file``, when the
+file exists, silences by design. Nobody is then told by any channel, and
+``<state>/nudges.log`` is the only trace, while the job above reads as **watched**.
+That is the reassuring direction, so the log is read here.
+
+``NUDGE NEVER ARRIVED AND NO PUSH WENT OUT``
+   the session was not told and neither was the phone. A record whose push result
+   is anything but a 2xx counts here, and so does one with no push result at all:
+   unknown is read as *not told*.
+``not delivered, but the phone push did go out``
+   a human was told out of band; the session still never got the line.
+``FLEETNUDGE STOPPED MID-RETRY``
+   the log ends on ``waiting`` for that session and job. ``fleetnudge`` always exits
+   through an outcome, so it was killed before it could deliver, give up or push,
+   and nothing else recorded the attempt. Only counted once the entry is older than
+   two hours — a retry loop still running looks exactly the same.
+
+Undelivered mail is covered by the same rows: :doc:`fleetmail` delivers through
+``fleetnudge``, and the sender travels with the failure as well as the success.
+Mail that never *became* a nudge — quarantined, or written to a drop and never
+handed over — cannot appear in that log, so it is **counted** here with a pointer to
+``fleetmail status``, which owns those rows. An empty section must not be readable
+as "everything got through".
+
+A hole is listed even when a later nudge to the same session and job did land: that
+later line is named beside it, to be checked, because a different message about the
+same job is not this message. The window is the last seven days; anything older is
+counted, never dropped in silence. A **missing** log means no nudge was ever sent —
+``fleetnudge`` creates it on first use — but an unreadable one, or a line that will
+not parse, is reported as itself. "No rows" must never be something the check
+produced by failing.
