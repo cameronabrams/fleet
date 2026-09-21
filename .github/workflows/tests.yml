@@ -1,0 +1,75 @@
+# The test suite, on every push to main and every pull request.
+#
+# Nothing is installed with pip: the tools are stdlib-only by design (they are the
+# recovery path after a disk loss), and so are their tests. If a step here ever
+# needs a package, that is the finding, not a fix.
+#
+# The matrix is the `python 3.11+` claim on the README, checked rather than
+# asserted. 3.11 is the floor because the tools read TOML with `tomllib`.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false        # one version failing must not hide the others
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install tmux
+        # Some tests drive a real tmux server on a throwaway socket (TMUX_TMPDIR).
+        # Installed explicitly rather than relied on from the runner image, so the
+        # suite does not change shape when that image does.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tmux
+
+      - name: Versions under test
+        run: |
+          python -VV
+          tmux -V
+
+      - name: Refuse to pass on an empty suite
+        # A green badge over no tests is the failure this repository catalogues in
+        # docs/checks-that-reassure.md: a check whose wrong answer is the
+        # reassuring one. Measured 2026-09-20, same empty suite each time:
+        # `unittest discover` exits 0 on 3.11 and 5 on 3.12 and 3.13 -- so on the
+        # floor version of the matrix, and only there, an empty suite passes.
+        # The floor also catches what no exit code does: a suite that still runs
+        # but has SHRUNK. It is a lower bound, not a recorded count, so it can
+        # only go stale in the safe direction.
+        run: |
+          python - <<'PY'
+          import sys, unittest
+          n = unittest.defaultTestLoader.discover("tests", top_level_dir=".").countTestCases()
+          print(f"discovered {n} tests")
+          if n < 300:
+              sys.exit(f"only {n} tests discovered: refusing to report a pass")
+          PY
+
+      - name: Run the tests
+        env:
+          # A bytecode cache is revalidated by source mtime (whole seconds) and
+          # size, which is the same guard the local runs disable. See tests/support.py.
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m unittest discover -s tests -t .
