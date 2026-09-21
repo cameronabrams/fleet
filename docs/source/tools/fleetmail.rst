@@ -51,6 +51,48 @@ namespacing exists **in the mailbox only**. Delivery resolves a session by its b
 name, machine-wide, so two fleets sharing a workstation must not share a session name:
 a loopback test on 2026-09-18 delivered its test mail into the live ``coord``.
 
+Starting one
+------------
+
+Nothing in ``fleetmail`` creates a mailbox; it is four things in a git repository, and
+the owner makes them by hand once.
+
+.. code-block:: bash
+
+   $ mkdir mailbox && cd mailbox && git init -b main
+   $ mkdir -p mail/north
+   $ touch mail/north/.gitkeep        # git does not track an empty directory
+
+Then ``fleets.toml`` at the root:
+
+.. code-block:: toml
+
+   [fleets.north]
+   owner = "a role, not a personal name"
+   since = "2026-09-21"
+
+   [guard]
+   refuse = ["grant-a", "grant-b"]
+
+Push it to a **private** repository and declare it as ``[mail]`` in each participating
+fleet's configuration. There is no bootstrap step beyond that: ``fetch`` creates
+``INBOX.md``, and a message creates the store it lives in.
+
+Make the repository private even when the fleets in it are yours alone. Its contents are
+the correspondence plus ``[guard] refuse``, which names the very things that may not
+cross — a list that is useless once published.
+
+**Adding a correspondent is two things that happen together**: a ``[fleets.<name>]``
+block, and write access to the repository. Either alone fails in a way that reads as the
+tool being broken — access without a block means every message they send is refused as an
+unlisted fleet, and a block without access means they cannot send at all. Tell them the
+name you used, because it has to match the ``fleet`` value in their own ``[mail]`` section
+exactly; a mismatch is refused, not renamed.
+
+A fleet name is a person's whole set of sessions, not one session. Keep the fleet
+directory even after someone stops corresponding: the messages are the record, and
+removing their block stops new mail without erasing what was said.
+
 Trust
 -----
 
