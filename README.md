@@ -1,6 +1,10 @@
 # fleet
 
 [![Documentation Status](https://readthedocs.org/projects/fleet-of-agents/badge/?version=latest)](https://fleet-of-agents.readthedocs.io/en/latest/)
+[![License: MIT](https://img.shields.io/github/license/cameronabrams/fleet)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://fleet-of-agents.readthedocs.io/en/latest/installation.html#requirements)
+[![No dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](https://fleet-of-agents.readthedocs.io/en/latest/installation.html#requirements)
+[![Platform: Linux](https://img.shields.io/badge/platform-linux-lightgrey)](https://fleet-of-agents.readthedocs.io/en/latest/installation.html#requirements)
 
 Tools and skills for running a fleet of long-lived Claude Code sessions, each
 owning a repository or a compute campaign, and coordinating between them.
