@@ -38,8 +38,13 @@ Refused (exit 2)
 ----------------
 
 - a name with no ``[colors]`` entry, or one that is ``[parked]`` or ``[retired]``
-- a session whose brief says ``Kind: coordinator``
-- a ``JOB`` that no watcher registered for ``SESSION`` (:doc:`fleetregister`)
+- a session whose brief says ``Kind: coordinator`` — **unless** the line is relayed
+  mail (``--mail-from``). The rule is about watchers, whose results go to the human
+  and whose campaigns a coordinator does not own; a coordinator owns no repository and
+  routes, which makes it the obvious counterpart for another person's fleet.
+- a ``JOB`` that no watcher registered for ``SESSION`` (:doc:`fleetregister`), again
+  except for relayed mail, which has no watcher — :doc:`fleetmail` checks its own
+  allowlist before calling this, and the tag says the line came from another fleet
 - a background session (``claude attach``), or more than one session with the name
 - the session running the tool, judged by process ancestry. A ``setsid``'d watcher
   inherits its session's ``CLAUDE_CODE_SESSION_ID`` but is not inside it, so that

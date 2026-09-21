@@ -299,6 +299,22 @@ class Refuse(Base):
         self.brief("alpha", "Kind: coordinator\n")
         self.refused("the coordinator is not nudged")
 
+    def test_a_coordinator_may_still_receive_MAIL(self):
+        """The coordinator rule is about WATCHERS, and mail is not a watcher.
+
+        A coordinator is the obvious counterpart for another person's fleet -- it
+        owns no repository and routes -- and `to: <fleet>/coord` is the example
+        address in fleetmail's own documentation. Refusing it wrote the drop and
+        never delivered the line, which reads as mail being broken rather than as
+        a rule being applied.
+        """
+        self.brief("alpha", "Kind: coordinator\n")
+        code, out = self.go("mail arrived; read drops/x.md",
+                            "--mail-from", "other-fleet/coord")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("the coordinator is not nudged", out)
+        self.assertEqual(self.log()[-1]["outcome"], "delivered")
+
     def test_unregistered_job(self):
         self.refused("no watcher registration for alpha job 999999", job="999999")
 

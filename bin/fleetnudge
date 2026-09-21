@@ -130,7 +130,13 @@ def static_problems(session, job, text, mail_from=None):
     rec = fc.stopped(CFG).get(session)
     if rec:
         out.append(f"{session} is [{rec['state']}] in fleet.toml")
-    if brief_kind(session) == "coordinator":
+    if not mail_from and brief_kind(session) == "coordinator":
+        # WATCHERS do not nudge the coordinator: their results go to the human, and
+        # the coordinator owns no campaign to be told about. Mail is not a watcher.
+        # A coordinator is the obvious counterpart for another person's fleet -- it
+        # owns no repository and routes -- and `to: <fleet>/coord` is the example
+        # address in fleetmail's own documentation. Refusing it wrote the drop and
+        # never delivered the line: mail that reads as broken rather than as refused.
         out.append("the coordinator is not nudged; its watchers report to the human directly")
     if not mail_from and not registered(session, job):
         # Relayed mail has no watcher: fleetmail checks its own allowlist before it
