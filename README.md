@@ -1,5 +1,6 @@
 # fleet
 
+[![Tests](https://github.com/cameronabrams/fleet/actions/workflows/tests.yml/badge.svg)](https://github.com/cameronabrams/fleet/actions/workflows/tests.yml)
 [![Documentation Status](https://readthedocs.org/projects/fleet-of-agents/badge/?version=latest)](https://fleet-of-agents.readthedocs.io/en/latest/)
 [![License: MIT](https://img.shields.io/github/license/cameronabrams/fleet)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://fleet-of-agents.readthedocs.io/en/latest/installation.html#requirements)

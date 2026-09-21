@@ -1,6 +1,10 @@
 fleet
 =====
 
+.. |tests| image:: https://github.com/cameronabrams/fleet/actions/workflows/tests.yml/badge.svg
+   :target: https://github.com/cameronabrams/fleet/actions/workflows/tests.yml
+   :alt: Test suite on Python 3.11, 3.12 and 3.13
+
 .. |docs| image:: https://readthedocs.org/projects/fleet-of-agents/badge/?version=latest
    :target: https://fleet-of-agents.readthedocs.io/en/latest/
    :alt: Documentation status
@@ -23,7 +27,7 @@ fleet
 
 .. rst-class:: badges
 
-|docs| |license| |python| |deps| |platform|
+|tests| |docs| |license| |python| |deps| |platform|
 
 .. image:: _static/img/fleet.png
    :alt: A robot orchestra: a conductor on a podium, its players at their stands
