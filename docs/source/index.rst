@@ -1,6 +1,30 @@
 fleet
 =====
 
+.. |docs| image:: https://readthedocs.org/projects/fleet-of-agents/badge/?version=latest
+   :target: https://fleet-of-agents.readthedocs.io/en/latest/
+   :alt: Documentation status
+
+.. |license| image:: https://img.shields.io/github/license/cameronabrams/fleet
+   :target: https://github.com/cameronabrams/fleet/blob/main/LICENSE
+   :alt: MIT licensed
+
+.. |python| image:: https://img.shields.io/badge/python-3.11%2B-blue
+   :target: installation.html#requirements
+   :alt: Requires Python 3.11 or newer, for the stdlib tomllib
+
+.. |deps| image:: https://img.shields.io/badge/dependencies-none-brightgreen
+   :target: installation.html#requirements
+   :alt: No Python packages beyond the standard library
+
+.. |platform| image:: https://img.shields.io/badge/platform-linux-lightgrey
+   :target: installation.html#requirements
+   :alt: Linux only: the tools read /proc
+
+.. rst-class:: badges
+
+|docs| |license| |python| |deps| |platform|
+
 .. image:: _static/img/fleet.png
    :alt: A robot orchestra: a conductor on a podium, its players at their stands
    :class: only-light banner
@@ -10,12 +34,6 @@ fleet
    :alt: A robot orchestra: a conductor on a podium, its players at their stands
    :class: only-dark banner
    :width: 100%
-
-.. |docs| image:: https://readthedocs.org/projects/fleet-of-agents/badge/?version=latest
-   :target: https://fleet-of-agents.readthedocs.io/en/latest/
-   :alt: Documentation status
-
-|docs|
 
 **fleet** is a set of tools and skills for running a *fleet* of long-lived
 `Claude Code <https://claude.com/claude-code>`_ sessions: each session owns one
