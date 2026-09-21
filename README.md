@@ -81,10 +81,15 @@ by Read the Docs from `.readthedocs.yaml`). To build locally: `pip install -r do
 Stdlib only, like the tools. No test touches the real configuration, state
 directory or tmux server.
 
-## Before making this public
+## Nothing personal in here
 
-Configuration and site skills live outside the repo, and the working tree names no
-person, host or project session (scrubbed 2026-09-13; incidents keep their dates,
-with roles in place of names). **The git history still does**: earlier commits
-carry the names the scrub removed. Publish from a fresh history, or rewrite it,
-rather than flipping the existing repository to public.
+Configuration and site skills live outside the repository (`~/.config/fleet`), and
+the working tree names no person, host or project session: the incidents recorded in
+comments, skills and `docs/checks-that-reassure.md` keep their dates, with roles in
+place of names. That is what makes this shareable, and it is a rule for every change
+rather than a scrub that happened once.
+
+The history starts at the first commit of 2026-09-13 for the same reason. Earlier
+commits still carried the names the scrub removed, so this was published from a
+fresh history rather than by making the existing repository public; the commits
+before that date are kept privately and are not part of this repository.
