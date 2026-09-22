@@ -26,11 +26,6 @@ p.badges img {
     border: none;
 }
 
-/* The sidebar logo is line art with a lot of detail; give it room. */
-.sidebar-logo {
-    max-width: 70%;
-}
-
 .github-icon svg,
 .linkedin-icon svg {
     transition: fill 0.3s;
