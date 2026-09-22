@@ -149,8 +149,10 @@ def build(a):
     for r in rows:
         own = (r["agent_names"][-1] if r["agent_names"]
                else (r["names"][-1][1] if r["names"] else None))
+        # own_seq: a rename this transcript did not record is another transcript's,
+        # and a lane is exactly the place that must not state a guess as a fact.
         who, how, inferred = identity.attribute(own, r["project"], role_names, renames, owners,
-                                                place_named=False)
+                                                place_named=False, own_seq=seq(r))
         lane, note = who, None
         if who not in role_names:
             shared = by_dir.get(r["project"], [])

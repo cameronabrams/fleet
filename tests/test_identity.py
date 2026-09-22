@@ -37,6 +37,44 @@ class Attribute(unittest.TestCase):
         self.assertEqual(ident.attribute("remote title", "-runs", ROLES, {}, {"-runs": "study"},
                                          place_named=False)[0], "remote title")
 
+    def test_a_rename_needs_THIS_transcripts_own_record(self):
+        """Reported by carla-talk 2026-09-22 from a chart it was putting on a slide.
+
+        Auto-generated display names (`<project>-<short id>`) are NOT unique across
+        transcripts. The real htpolynet-repo ran as
+        ['htpolynet-30', 'htpolynet-8c', 'htpolynet-repo'], so the map correctly
+        learns htpolynet-8c -> htpolynet-repo. A one-off Cameron started by hand in
+        the same directory recorded only ['htpolynet-8c'] -- and inherited that
+        lineage by bare name, drawn inside the role's lane and labelled
+        "renamed: 'htpolynet-8c' became 'htpolynet-repo'". It was never renamed and
+        was never that role. A confident label over an inference, and the record
+        that carried it said `inferred: true` with an empty rename list in the same
+        breath.
+
+        A rename is one transcript's history. Applying it to another is a guess.
+        """
+        roles, renames = {"htpolynet-repo"}, {"htpolynet-8c": "htpolynet-repo"}
+        owners = {"-git-htpolynet": "htpolynet-repo"}
+
+        # the transcript that really did pass through the name: corroborated
+        who, how, _ = ident.attribute("htpolynet-8c", "-git-htpolynet", roles, renames, owners,
+                                      own_seq=["htpolynet-30", "htpolynet-8c", "htpolynet-repo"])
+        self.assertEqual(who, "htpolynet-repo")
+        self.assertIn("renamed", how)
+
+        # a different transcript that merely ended up with the same auto name
+        who, how, _ = ident.attribute("htpolynet-8c", "-git-htpolynet", roles, renames, owners,
+                                      own_seq=["htpolynet-8c"], place_named=False)
+        self.assertNotIn("renamed", how)          # fails even if own_seq is ignored
+        self.assertEqual(who, "htpolynet-8c")     # so fleetgantt draws it unattached
+
+    def test_no_own_seq_keeps_the_cross_transcript_lineage(self):
+        """fleetlog needs it: the message graph wants old messages under the role
+        that sent them, and has no lane to mislabel."""
+        who, how, _ = ident.attribute("x-7e", "-home", ROLES, {"x-7e": "notebook"}, {})
+        self.assertEqual(who, "notebook")
+        self.assertIn("renamed", how)
+
     def test_nothing_known(self):
         self.assertEqual(ident.attribute(None, "-x", ROLES, {}, {})[0], None)
 

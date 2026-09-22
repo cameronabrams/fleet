@@ -45,7 +45,8 @@ def rename_map(sequences, current, dir_owner):
                 out.setdefault(n, target)
     return out
 
-def attribute(own_name, project, current, renames, dir_owner, place_named=True):
+def attribute(own_name, project, current, renames, dir_owner, place_named=True,
+              own_seq=None):
     """(identity, how, inferred) for a transcript whose own last name is `own_name`
     (None if it recorded none). `inferred` is True unless the transcript named
     itself as that role.
@@ -54,10 +55,21 @@ def attribute(own_name, project, current, renames, dir_owner, place_named=True):
     role nor a known rename (a remote-session title, a one-off) out of its
     directory owner's lane: it has said who it is, and it is not that role. The
     message graph still needs a node for it, so fleetlog places it; the chart
-    shows it apart."""
+    shows it apart.
+
+    `own_seq` is THIS transcript's own name record, and gates the rename branch.
+    `renames` is keyed by bare name across every transcript, and auto-generated
+    display names (`<project>-<short id>`) are not unique: on 2026-09-22 a session
+    started by hand for one task, which recorded only the auto name it happened to
+    be given, inherited a real role's lineage and was drawn inside that role's lane
+    as "renamed: X became Y". It was never renamed and was never that role.
+    A rename is ONE transcript's history; applying it to another is a guess, and
+    this one was stated as a fact. Pass `own_seq` wherever the answer is shown as
+    an identity. Omitted, the cross-transcript lineage still applies -- fleetlog
+    wants it for the message graph, where there is no lane to mislabel."""
     if own_name and (current is None or own_name in current):
         return own_name, "own name record", False
-    if own_name and own_name in renames:
+    if own_name and own_name in renames and (own_seq is None or renames[own_name] in own_seq):
         return renames[own_name], f"renamed: {own_name!r} became {renames[own_name]!r}", True
     owner = dir_owner.get(project) if (place_named or not own_name) else None
     if owner:
