@@ -55,6 +55,26 @@ Three mechanisms produce it.
   ABSENCE of RUNNING rows announced "ALL TERMINAL: completed=0" over a live
   32-task array when ssh returned a banner (2026-09-08). Require the accounting
   to CLOSE (`done + bad >= NTASK`), never absence-of-negative.
+- **A NAME is not an identity, once names are auto-generated.** `fleetgantt` drew
+  a session started by hand for one task inside a role's lane, labelled
+  *"renamed: 'htpolynet-8c' became 'htpolynet-repo'"*. It was never renamed and
+  was never that role: the rename table is keyed by bare name across every
+  transcript, and `<project>-<short id>` display names are not unique, so one
+  transcript's real history was applied to another that merely ended up with the
+  same auto name. The record printing that label carried `inferred: true` and
+  `renames: []` in the same breath — **it contradicted itself and printed the
+  confident half.** Found 2026-09-22 by the session putting the chart on a slide,
+  not by the session that wrote the chart.
+
+  Two things generalise. First, the direction: a chart with everything neatly
+  attributed looks *more* correct than one with an unattached lane, so the wrong
+  answer is the tidy one. Second, and worth more — **the bad inference disabled
+  the guard that existed to catch it.** `fleetgantt` already passed
+  `place_named=False` precisely to keep one-offs out of a role's lane, and the
+  rename branch returned before that check was reached. Fixing the reported
+  symptom (directory attribution, which had been honest and labelled all along)
+  would have left the defect in place. When a guard did not fire, ask what ran
+  before it, not only whether it is correct.
 
 ## C. The check had only one possible outcome
 
