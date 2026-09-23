@@ -248,5 +248,78 @@ class Delivery(Base):
         self.assertIn("NUDGE NEVER ARRIVED", out.getvalue())
 
 
+class Clients(Base):
+    """Who is attached to the tmux server -- the question Cameron asked on
+    2026-09-23: someone who logs in as him and runs `tmux a -d` has every pane.
+
+    This REPORTS; it does not guard. Whoever can attach can equally read the
+    Claude credentials, the gh token and the ssh key from the same account
+    without tmux, so authenticating this one door would defend nothing.
+    """
+    LISTED = ("/dev/pts/0\tcfa\t1790163444\t1790178714\n"
+              "/dev/pts/9\tcfa\t1790170000\t1790170001\n")
+    WHO = ("cfa      pts/0        2026-09-23 07:37 (10.246.157.49)\n"
+           "cfa      seat0        2026-09-18 10:16\n"
+           "cfa      tty3         2026-09-18 10:16\n")
+
+    def test_origin_comes_from_who_and_the_tty_names_are_reconciled(self):
+        # tmux says /dev/pts/0; who says pts/0
+        cs = self.w.parse_clients(self.LISTED, self.WHO)
+        self.assertEqual([c["tty"] for c in cs], ["/dev/pts/0", "/dev/pts/9"])
+        self.assertEqual(cs[0]["origin"], "10.246.157.49")
+        self.assertEqual(cs[0]["created"], 1790163444)
+        # a client `who` says nothing about is unknown, never assumed local
+        self.assertEqual(cs[1]["origin"], "unknown")
+
+    def test_a_local_console_login_is_not_a_remote_host(self):
+        cs = self.w.parse_clients("/dev/seat0\tcfa\t1\t2\n", self.WHO)
+        self.assertEqual(cs[0]["origin"], "local console")
+
+    def test_blank_and_short_lines_are_skipped(self):
+        self.assertEqual(self.w.parse_clients("\n\nbroken\n", self.WHO), [])
+
+    def test_a_failed_query_is_an_error_not_an_empty_list(self):
+        """The whole point: no rows must never be produced by the check failing.
+        An unattached server and a broken tmux look identical from here."""
+        class R:
+            returncode, stdout, stderr = 1, "", "no server running on /tmp/x"
+        with mock.patch.object(self.w.subprocess, "run", return_value=R()):
+            cs, err = self.w.clients()
+        self.assertEqual(cs, [])
+        self.assertIsNotNone(err)
+        self.assertIn("no server", err)
+
+        with mock.patch.object(self.w.subprocess, "run", side_effect=OSError("tmux gone")):
+            cs, err = self.w.clients()
+        self.assertEqual((cs, "tmux gone"), ([], "tmux gone"))
+
+    def out(self, *a):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.w.print_clients(*a)
+        return buf.getvalue()
+
+    def test_an_error_never_prints_as_nobody_attached(self):
+        text = self.out([], "boom")
+        self.assertIn("NOT", text)
+        self.assertNotIn("no tmux client attached", text)
+
+    def test_one_client_is_quiet_and_two_are_not(self):
+        one = self.out(self.w.parse_clients("/dev/pts/0\tcfa\t1790163444\t1790178714\n",
+                                            self.WHO), None)
+        self.assertNotIn("!!", one)
+        self.assertIn("10.246.157.49", one)
+
+        two = self.out(self.w.parse_clients(self.LISTED, self.WHO), None)
+        self.assertIn("!! MORE THAN ONE CLIENT", two)
+        self.assertIn("rotate", two)          # says what to do, not just that it happened
+
+    def test_times_are_labelled_with_a_zone(self):
+        """An unlabelled time in the wrong zone reads as right."""
+        self.assertRegex(self.w._stamp_epoch(1790163444),
+                         r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+$")
+        self.assertEqual(self.w._stamp_epoch(None), "?")
+
+
 if __name__ == "__main__":
     unittest.main()

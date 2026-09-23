@@ -33,6 +33,7 @@ job here reads as WATCHED, which is the reassuring direction.
   fleetwatch --json     machine-readable
 """
 import datetime, json, os, re, subprocess, sys, glob
+from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.procs import alive
@@ -215,6 +216,57 @@ def polled_jobs(cmdline):
         return set()
     return set(JOB_RE.findall(cmdline))
 
+def parse_clients(listed, who_out):
+    """[{tty, user, created, idle, origin}] from `tmux list-clients` and `who`.
+
+    Pure, so it can be tested without a tmux server or a login session.
+
+    `who` prints the login source in parentheses for a remote terminal and
+    nothing for a local console, and names the tty as `pts/0` where tmux says
+    `/dev/pts/0`."""
+    origin = {}
+    for line in who_out.splitlines():
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        host = re.search(r"\(([^)]*)\)\s*$", line)
+        origin["/dev/" + parts[1]] = host.group(1) if host else "local console"
+    out = []
+    for line in listed.splitlines():
+        f = line.split("\t")
+        if len(f) < 4 or not f[0]:
+            continue
+        out.append({"tty": f[0], "user": f[1],
+                    "created": int(f[2]) if f[2].isdigit() else None,
+                    "activity": int(f[3]) if f[3].isdigit() else None,
+                    "origin": origin.get(f[0], "unknown")})
+    return out
+
+def clients():
+    """Who is attached to the tmux server right now, and from where.
+
+    Attaching hands a person every pane in the fleet: sessions already past the
+    folder-trust prompt, weeks of context, and peers that treat a line from one
+    of them as a teammate's request. Worth SEEING.
+
+    Not worth authenticating here. Whoever can attach can equally read
+    `~/.claude/.credentials.json`, the gh token and the ssh key -- they sit in
+    the same account and need no tmux -- so a second lock on this one door
+    defends nothing that is not already open. This reports; it does not guard.
+
+    Returns (clients, error). An error is NOT "nobody is attached": a failed
+    `tmux list-clients` and an unattached server both produce no rows, and only
+    one of them means what an empty list looks like."""
+    try:
+        r = subprocess.run(["tmux", "list-clients", "-F",
+                            "#{client_tty}\t#{client_user}\t#{client_created}\t#{client_activity}"],
+                           capture_output=True, text=True, timeout=20)
+    except Exception as e:
+        return [], str(e)
+    if r.returncode != 0:
+        return [], (r.stderr.strip() or "tmux exited %d" % r.returncode)
+    return parse_clients(r.stdout, sh("who")), None
+
 def _when(rec):
     """The record's own timestamp, offset and all. None if it has none worth trusting."""
     try:
@@ -331,6 +383,46 @@ def print_hole(r):
         print("      a later nudge to this session/job landed %s -- confirm it carried this"
               % r["_later"])
 
+def _stamp_epoch(t):
+    """A wall-clock time in the human's zone, labelled. An unlabelled time in the
+    wrong zone reads as right, which is why fc.display_zone makes the caller
+    label it."""
+    if not t:
+        return "?"
+    tz, _ = fc.display_zone(CFG)
+    try:
+        return datetime.datetime.fromtimestamp(t, ZoneInfo(tz)).strftime("%Y-%m-%d %H:%M %Z")
+    except Exception:
+        return datetime.datetime.fromtimestamp(t).strftime("%Y-%m-%d %H:%M ?")
+
+def _ago(t):
+    if not t:
+        return "?"
+    n = max(0, int(datetime.datetime.now().timestamp() - t))
+    return "%dm" % (n // 60) if n < 5400 else "%dh" % (n // 3600)
+
+def print_clients(attached, err):
+    """Who can see and type into every pane in this fleet, right now."""
+    if err:
+        print("\n!! COULD NOT LIST TMUX CLIENTS (%s)." % err)
+        print("   This is NOT \"nobody is attached\": a failed query and an unattached")
+        print("   server look identical from here, and only one of them is reassuring.")
+        return
+    if not attached:
+        print("\n   no tmux client attached (the fleet runs; nobody is watching a pane).")
+        return
+    label = "!! MORE THAN ONE CLIENT IS ATTACHED" if len(attached) > 1 else "   attached"
+    print("\n%s to the tmux server (%d):" % (label, len(attached)))
+    for c in sorted(attached, key=lambda c: c["created"] or 0):
+        print("   %-12s %-10s since %s   idle %-5s from %s" % (
+            c["tty"], c["user"], _stamp_epoch(c["created"]),
+            _ago(c["activity"]), c["origin"]))
+    if len(attached) > 1:
+        print("   Each of these sees and can type into every pane. If one is not you:")
+        print("   the fleet is not the boundary, the account is -- whoever holds it also")
+        print("   reads the Claude credentials, the gh token and the ssh key, none of")
+        print("   which need tmux. Detach the stranger, then rotate those three.")
+
 def print_delivery(h):
     """The delivery half of the report. Prints nothing when there is nothing to
     say AND the log could be read; says so when it could not."""
@@ -407,6 +499,7 @@ def main():
             r["_why"] = "cluster query failed -- cannot tell dead from finished"
     inferred = watchers()          # ADVISORY ONLY -- see fleetregister
     holes = nudge_holes(only)      # local; independent of the cluster query
+    attached, attach_err = clients()
     w = reg
     if only:
         # a session asking "what is MY live state?" -- the answer a ledger should
@@ -430,7 +523,8 @@ def main():
     if "--json" in sys.argv:
         print(json.dumps({"cluster_ok": cluster_ok, "jobs": rows, "stale_watchers": stale,
                           "dead_watchers": dead_reg, "finished_watchers": finished,
-                          "delivery": holes},
+                          "delivery": holes,
+                          "clients": {"attached": attached, "error": attach_err}},
                          indent=1, default=str)); return
 
     if not cluster_ok:
@@ -501,6 +595,7 @@ def main():
                   ",".join(sorted(r["reasons"]))))
 
     print_delivery(holes)
+    print_clients(attached, attach_err)
 
     undelivered = (holes["silent"] or holes["pushed"] or holes["dangling"]
                    or holes["unreadable"] or holes["bad_lines"] or holes["mail_stuck"])

@@ -49,6 +49,34 @@ Report sections
 
 ``fleetwatch <session>`` limits the report to work that session owns or watches.
 
+Who can see the fleet
+---------------------
+
+Attaching to the tmux server hands a person every pane: sessions already past the
+folder-trust prompt, weeks of context, and peers that treat a line from one of them
+as a teammate's request. So the report ends by naming every attached client, where
+it came from (from ``who``), and how long it has been idle.
+
+``MORE THAN ONE CLIENT IS ATTACHED``
+   normal is one. A second is not proof of anything — a second terminal of your own
+   looks identical — but it is the one thing worth seeing without being asked.
+``COULD NOT LIST TMUX CLIENTS``
+   a failed query and an unattached server both produce no rows, and only one of
+   them means what an empty list looks like.
+
+**This reports; it does not guard, and a lock here would be close to theatre.**
+Whoever can attach can equally read the Claude credentials, the ``gh`` token and the
+ssh key — they sit in the same account and need no tmux — so authenticating this one
+door defends nothing that is not already open. The boundary is the account, not the
+fleet. What a second client genuinely changes is that the panes are *already*
+trusted and *already* full of context, so the useful control is noticing, and then
+tmux's own ``lock-after-time`` with a ``lock-command`` that actually exists on the
+machine. Check that one by hand: a lock whose command is missing fails toward
+unlocked.
+
+Times are shown in the zone from ``[human]`` (:doc:`../configuration`) and labelled,
+because an unlabelled time in the wrong zone reads as right.
+
 Did the result reach the session?
 ---------------------------------
 
