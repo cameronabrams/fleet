@@ -13,6 +13,8 @@ Releases are cut with `scripts/release.sh <version>`.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-23
+
 First tagged release. The tools had been in daily use by a fleet of thirteen
 sessions since 2026-08-27; this is the point at which the repository became
 something a stranger could pin.
