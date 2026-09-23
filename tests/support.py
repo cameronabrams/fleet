@@ -47,7 +47,8 @@ class FakeConfig:
             f.write(textwrap.dedent(toml if toml is not None else BASE_TOML)
                     .format(state=self.state))
         for b in briefs:
-            open(os.path.join(self.config, "briefs", f"{b}.md"), "w").write("# brief\n")
+            with open(os.path.join(self.config, "briefs", f"{b}.md"), "w") as f:
+                f.write("# brief\n")
         self._old = os.environ.get("FLEET_CONFIG")
         os.environ["FLEET_CONFIG"] = self.config
 

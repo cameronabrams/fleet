@@ -253,5 +253,149 @@ class Addresses(unittest.TestCase):
         self.assertEqual(self.m.slug("!!!"), "message")
 
 
+LOOPBACK_TOML = """
+[paths]
+state = "{state}"
+
+[colors]
+zz-test-recv = "purple"
+
+[mail]
+fleet = "FLEET"
+repo  = "REPO"
+"""
+
+
+class Loopback(unittest.TestCase):
+    """One real round trip through a real git mailbox: two fleets, two state
+    directories, one bare repository, `git` actually running.
+
+    Every other test here stubs `pull` and `push`, so the transport is never
+    exercised and the clone is a plain directory. This is the half that only a
+    repository can show: that a message committed by one configuration is found,
+    validated and delivered by another.
+
+    Only `nudge` is stubbed, because delivery types into a live pane. The session
+    names are deliberately unlike any real one: a test `ack` once reached a live
+    session because a fixture reused the name `coord`.
+    """
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory(prefix="fleet-loopback-")
+        self.bare = os.path.join(self.tmp.name, "mailbox.git")
+        subprocess.run(["git", "init", "--quiet", "--bare", "-b", "main", self.bare], check=True)
+        self.saved = os.environ.get("FLEET_CONFIG")
+        self.cfgs = []
+
+    def tearDown(self):
+        for c in self.cfgs:
+            c.close()
+        if self.saved is None:
+            os.environ.pop("FLEET_CONFIG", None)
+        else:
+            os.environ["FLEET_CONFIG"] = self.saved
+        self.tmp.cleanup()
+
+    def fleet(self, name):
+        """A configuration of its own, with fleetmail loaded against it."""
+        toml = LOOPBACK_TOML.replace("FLEET", name).replace("REPO", self.bare)
+        cfg = FakeConfig(toml=toml, briefs=("zz-test-recv",))
+        self.cfgs.append(cfg)
+        return cfg, load_tool("fleetmail")
+
+    def run_tool(self, mod, *argv, nudges=None):
+        out = io.StringIO()
+        with contextlib.ExitStack() as st:
+            st.enter_context(mock.patch.object(
+                mod, "nudge",
+                side_effect=lambda s, i, line, frm, go, wait=0:
+                    ((nudges if nudges is not None else []).append((s, line, frm)) or (True, "typed"))))
+            st.enter_context(mock.patch.object(sys, "argv", ["fleetmail", *argv]))
+            st.enter_context(contextlib.redirect_stdout(out))
+            try:
+                mod.main(); code = 0
+            except SystemExit as e:
+                code = e.code if isinstance(e.code, int) else 1
+        return code, out.getvalue()
+
+    def seed_fleets_toml(self, mod):
+        """Both fleets declared in the mailbox, pushed from one side."""
+        os.makedirs(mod.MAIL["clone"], exist_ok=True)
+        mod.pull()
+        with open(os.path.join(mod.MAIL["clone"], "fleets.toml"), "w") as f:
+            f.write('[fleets.zz-north]\n\n[fleets.zz-south]\n')
+        ok, why = mod.push("seed fleets.toml", ["fleets.toml"])
+        self.assertTrue(ok, why)
+
+    def test_a_message_committed_by_one_fleet_is_delivered_to_the_other(self):
+        _, south = self.fleet("zz-south")
+        self.seed_fleets_toml(south)
+
+        code, out = self.run_tool(south, "send", "zz-north/zz-test-recv",
+                                  "--as", "zz-test-send", "--kind", "report",
+                                  "the sweep finished overnight", "--go")
+        self.assertEqual(code, 0, out)
+
+        # a second configuration, a second state dir, the same bare repository
+        _, north = self.fleet("zz-north")
+        nudged = []
+        code, out = self.run_tool(north, "fetch", "--go", nudges=nudged)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(nudged), 1, out)
+        session, line, frm = nudged[0]
+        self.assertEqual(session, "zz-test-recv")
+        self.assertEqual(frm, "zz-south/zz-test-send")
+        self.assertIn("read drops/", line)
+
+        # the drop is a FILE, with the header that says it is data from elsewhere
+        drops = os.path.join(north.STATE, "drops")
+        written = [f for f in os.listdir(drops) if f.startswith("mail-")]
+        self.assertEqual(len(written), 1, written)
+        with open(os.path.join(drops, written[0])) as f:
+            body = f.read()
+        self.assertIn("ANOTHER FLEET", body)
+        self.assertIn("the sweep finished overnight", body)
+
+    def test_fetching_twice_delivers_once(self):
+        _, south = self.fleet("zz-south")
+        self.seed_fleets_toml(south)
+        self.run_tool(south, "send", "zz-north/zz-test-recv", "--as", "zz-test-send",
+                      "--kind", "report", "one delivery only", "--go")
+        _, north = self.fleet("zz-north")
+        first, second = [], []
+        self.run_tool(north, "fetch", "--go", nudges=first)
+        self.run_tool(north, "fetch", "--go", nudges=second)
+        self.assertEqual(len(first), 1)
+        self.assertEqual(second, [], "keying on the path is what makes fetch idempotent")
+
+    def test_the_guard_holds_across_a_real_repository(self):
+        """fleets.toml is read from the CLONE, so a term added by the mailbox
+        owner reaches a sender who never edited anything locally."""
+        _, south = self.fleet("zz-south")
+        os.makedirs(south.MAIL["clone"], exist_ok=True)
+        south.pull()
+        with open(os.path.join(south.MAIL["clone"], "fleets.toml"), "w") as f:
+            f.write('[fleets.zz-north]\n\n[fleets.zz-south]\n\n[guard]\nrefuse = ["zz-grant-9"]\n')
+        south.push("seed", ["fleets.toml"])
+
+        code, out = self.run_tool(south, "send", "zz-north/zz-test-recv",
+                                  "--as", "zz-test-send", "--kind", "report",
+                                  "the run billed zz-grant-9 overnight", "--go")
+        self.assertEqual(code, 2, out)
+        self.assertIn("zz-grant-9", out)
+
+    def test_an_unlisted_fleet_cannot_send_even_with_repository_access(self):
+        _, south = self.fleet("zz-south")
+        os.makedirs(south.MAIL["clone"], exist_ok=True)
+        south.pull()
+        with open(os.path.join(south.MAIL["clone"], "fleets.toml"), "w") as f:
+            f.write('[fleets.zz-north]\n')          # zz-south is NOT listed
+        south.push("seed", ["fleets.toml"])
+        code, out = self.run_tool(south, "send", "zz-north/zz-test-recv",
+                                  "--as", "zz-test-send", "--kind", "report", "hello", "--go")
+        self.assertEqual(code, 2, out)
+        self.assertIn("not in the mailbox", out)
+
+
 if __name__ == "__main__":
     unittest.main()

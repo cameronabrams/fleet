@@ -71,14 +71,6 @@ carries only what no repository owns.
   the hard half and they are written. Waiting on a second fleet to make it worth
   rendering.
 
-- **End-to-end coverage lives in a scratchpad and dies at reboot.**
-  `tests/test_fleetmail.py` covers the same paths without a repository, which is
-  the right place for most of it, but a genuine send-fetch-deliver round trip
-  needs a bare repository, two configuration directories and a `fleets.toml`
-  naming both. The shape matters more than the files, and one part of it is a
-  hazard worth encoding: the fixture's session names must not collide with live
-  ones, because a test `ack` once reached a real session.
-
 ## Visibility
 
 - **`fleetwatch` could check that tmux's lock is real.** It reports who is

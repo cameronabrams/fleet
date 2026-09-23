@@ -13,6 +13,13 @@ Releases are cut with `scripts/release.sh <version>`.
 
 ## [Unreleased]
 
+### Added
+
+- A loopback test for `fleetmail`: two fleets, two state directories, one real
+  bare repository, and `git` actually running. Every other test in that file
+  stubs `pull` and `push`, so the transport had no coverage at all — breaking the
+  push fails all four of these and none of the seventeen others.
+
 ## [0.1.0] - 2026-09-23
 
 First tagged release. The tools had been in daily use by a fleet of thirteen
