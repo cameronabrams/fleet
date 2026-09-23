@@ -81,6 +81,11 @@ Full documentation: https://fleet-of-agents.readthedocs.io (sources in `docs/`, 
 by Read the Docs from `.readthedocs.yaml`). To build locally: `pip install -r docs/requirements.txt`, then
 `cd docs && make html`.
 
+## Roadmap
+
+[ROADMAP.md](ROADMAP.md) — ideas worth doing that have not been done, with what
+would decide each one. A living list, not a commitment.
+
 ## Tests
 
     python3 -m unittest discover -s tests -t .
