@@ -15,6 +15,12 @@ project = 'fleet'
 copyright = '2026, Cameron F. Abrams'
 author = 'cfa22@drexel.edu'
 
+# Imported, never copied: fleet/__init__.py is where the version is written, and
+# scripts/release.sh rewrites that one line. A literal here would be a second copy
+# to keep in step, which is the thing that rots.
+import fleet
+version = release = fleet.__version__
+
 # -- General configuration
 
 extensions = [

@@ -60,6 +60,39 @@ an empty suite passes. The floor also catches what no exit code catches — a su
 still runs but has *shrunk*. It is a lower bound rather than a recorded count, so it can
 only go stale in the safe direction.
 
+Releasing
+---------
+
+.. code-block:: bash
+
+   $ ./scripts/release.sh 0.2.0
+
+There is no package to build and no build step: ``./install`` symlinks the working
+tree, so a release names a **commit**, not an artifact. That is still worth having
+once other people can clone it — ``git pull`` is the update path, and without a tag
+nobody can say which fleet they are running, or pin one.
+
+The script refuses to proceed on a dirty tree, a branch other than ``main``, a
+``main`` that differs from ``origin/main``, a tag that already exists, an empty
+``[Unreleased]`` section, or a failing suite. Then it rotates the changelog, writes
+``__version__``, commits, tags and pushes.
+
+**Pushing the tag is what publishes**, which is why it is the one step that needs a
+person rather than a session.
+
+The version is written in exactly one place, ``fleet/__init__.py``.
+``docs/source/conf.py`` imports it and ``tests/test_version.py`` checks it against
+the newest entry in ``CHANGELOG.md``: a version bumped in one place and not the
+other imports fine, passes everything, and leaves the docs and the tag quietly
+disagreeing — so the two are tied together by a test rather than by care.
+
+The pushed tag triggers ``.github/workflows/release.yaml``, which re-runs the suite
+on all three Pythons, refuses a tag that disagrees with ``fleet.__version__``, and
+creates the GitHub Release with that version's changelog section as its notes. The
+extractor exits non-zero on a missing or empty section instead of printing nothing:
+an empty release body reads as "this release changed nothing", not as "the script
+broke".
+
 Building these docs
 -------------------
 

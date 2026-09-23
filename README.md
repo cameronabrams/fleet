@@ -32,6 +32,13 @@ hand is the specific thing that rots. See `docs/checks-that-reassure.md`.
 Symlinks, not copies, so an edit here is live at once. Nothing real is ever
 overwritten silently; displaced files are moved aside, not deleted.
 
+There is no package to install and no build step, so a release here names a
+commit rather than an artifact: `git pull` is the update path, and the tag is how
+you say which fleet you are running. Versions and what changed in each are in
+[CHANGELOG.md](CHANGELOG.md); `git checkout v0.1.0` pins one. `0.x` means a
+tool's arguments, exit codes and `--json` shape may still change between minor
+versions.
+
 Configuration is read with the stdlib `tomllib` (Python 3.11+) and nothing else,
 because these tools are the recovery path after a disk loss — a recovery tool
 that needs a package installed before it can read its own config fails exactly
