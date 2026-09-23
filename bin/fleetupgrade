@@ -209,6 +209,82 @@ def proc_state(pid):
     except Exception:
         return "?"
 
+def _stat(pid):
+    """(state, ppid, pgrp, sid) from /proc/<pid>/stat, or None. Split on ") "
+    because a process name can contain spaces and parentheses."""
+    try:
+        with open("/proc/%s/stat" % pid) as f:
+            rest = f.read().split(") ", 1)[1].split()
+        return rest[0], rest[1], rest[2], rest[3]
+    except Exception:
+        return None
+
+def _ancestors():
+    """This tool's own process chain. A check that inspects processes is itself a
+    process, and this one runs inside a shell that is a session leader."""
+    out, pid = set(), str(os.getpid())
+    for _ in range(12):
+        out.add(pid)
+        st = _stat(pid)
+        if not st or st[1] == "0":
+            break
+        pid = st[1]
+    return out
+
+def immortal(cmdline):
+    """True when a child that is its own session leader will not end on its own.
+
+    Requires positive evidence of a POLL LOOP: a monitor sleeps between polls, a
+    transient command does not. That bar is not fussiness. EVERY Claude Code Bash
+    command runs in its own process session, so the bare `Ss` signature is the
+    normal state of any session that happens to be running a command -- measured
+    2026-09-23, when a one-minute-old `timeout 900 ssh picotte ...` and this
+    tool's own shell both read as session leaders. Flagging on `Ss` alone would
+    cry wolf on every busy session, which is the same failure fleetwatch had to
+    fix when it reported anyone who merely LOOKED at a job as its watcher."""
+    return bool(re.search(r"\bsleep\s+\d", cmdline))
+
+def leaders(pid):
+    """Descendants of `pid` that are in their OWN process session AND poll.
+
+    "Exit and stop tasks" signals the session's own process group. A child that
+    called setsid is not in it, so nothing reaches it and `/exit` never
+    completes. Reported by coord 2026-09-23: sessions would not exit, and the
+    fleet split across two binary versions because of it.
+
+    `pid == sid` is the test, not the literal STAT string "Ss": the `s` flag means
+    session leader, and the state letter beside it is whatever the process is
+    doing (S, R, D, T), so matching "Ss" misses a leader that happens to be
+    running."""
+    mine = _ancestors()
+    kids = {}
+    for d in glob.glob("/proc/[0-9]*"):
+        c = d.rsplit("/", 1)[-1]
+        st = _stat(c)
+        if st:
+            kids.setdefault(st[1], []).append(c)
+    out, stack = [], list(kids.get(str(pid), []))
+    seen = set()
+    while stack:
+        k = stack.pop()
+        if k in seen:
+            continue
+        seen.add(k)
+        st = _stat(k)
+        if not st:
+            continue
+        stack += kids.get(k, [])
+        if k in mine or k != st[3]:
+            continue
+        try:
+            with open("/proc/%s/cmdline" % k, "rb") as f:
+                cmd = f.read().replace(b"\0", b" ").decode(errors="replace")
+        except OSError:
+            continue
+        if immortal(cmd):
+            out.append({"pid": k, "cmd": " ".join(cmd.split())[:160]})
+    return out
+
 def claude_pid(pane_pid):
     """Pick the LIVE session in this pane, not merely the first child.
 
@@ -344,6 +420,7 @@ def sessions():
                 "pane": r["pane"], "pid": r["pid"], "cwd": cwd, "cmd": r["cmd"],
                 "version": version, "resume_uuid": uuid, "background": background,
                 "ledger": led if os.path.exists(led) else None,
+                "leaders": leaders(r["pid"]) if r["pid"] else [],
                 "color": color_from_transcript(cwd, uuid),
             })
     return out
@@ -397,6 +474,18 @@ def main():
         print("   Resolve it: read the uuid from the session's own argv --")
         print("     tr '\\0' ' ' < /proc/<pid>/cmdline")
         print("   or close the other session and re-run.")
+
+    stuck = [x for x in ss if x.get("leaders")]
+    if stuck:
+        print("\n!! THIS ROLL WILL FAIL, NOT WAIT -- a polling child is in its OWN process")
+        print("   session, so \"Exit and stop tasks\" does not reach it and /exit never")
+        print("   completes. Not a busy session: a stuck one. Kill it BY PID first, then exit.")
+        for x in stuck:
+            print("   %s %s:" % (x["pane"], x["name"]))
+            for c in x["leaders"]:
+                print("      kill %s      # %s" % (c["pid"], c["cmd"][:110]))
+        print("   Never by pattern: a pattern matches the killer's own command line, and")
+        print("   these loops are usually a pgrep self-match already (checks-that-reassure).")
 
     bg = [x for x in ss if x.get("background")]
     if bg:

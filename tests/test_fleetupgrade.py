@@ -143,5 +143,87 @@ class SessionDirectory(Upgrade):
         self.assertIn("cd /home/u/work && ", text)
         self.assertNotIn("elsewhere", text)
 
+class SessionLeaders(unittest.TestCase):
+    """Reported by coord 2026-09-23: "Exit and stop tasks" does not stop a child
+    that is its own session leader, so /exit never completes and the roll fails.
+    Two sessions sat on 2.1.278 while nine rolled to 2.1.280."""
+
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.u = load_tool("fleetupgrade")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def test_a_poll_loop_is_immortal_but_a_running_command_is_not(self):
+        # Every Claude Code Bash command is a session leader, so the Ss signature
+        # alone says only "this session is running something". Measured 2026-09-23:
+        # both of these read as Ss, and only the first one blocks an exit.
+        loop = ("/bin/bash -c eval 'until ! pgrep -f \"sqm -O\" >/dev/null; "
+                "do sleep 30; done'")
+        running = ("/bin/bash -c eval 'timeout 900 ssh picotte "
+                   "apptainer pull --force htpolynet-cuda.sif'")
+        self.assertTrue(self.u.immortal(loop))
+        self.assertFalse(self.u.immortal(running))
+        self.assertFalse(self.u.immortal("/bin/bash -c eval 'make -j8'"))
+        self.assertTrue(self.u.immortal("bash -c while true; do sleep 5; done"))
+
+    def test_the_tools_own_shell_is_never_reported(self):
+        """This tool runs inside a Bash shell that IS a session leader and DOES
+        poll if the command it is running says sleep. Without the ancestor
+        exclusion, fleetupgrade reports the session it is run from."""
+        mine = self.u._ancestors()
+        self.assertIn(str(os.getpid()), mine)
+        self.assertGreater(len(mine), 1)            # at least one real parent
+        # every ancestor must be excluded, not just the immediate shell
+        for pid in mine:
+            self.assertTrue(os.path.exists("/proc/%s" % pid) or pid == "0")
+
+    def test_the_tools_own_leader_shell_is_excluded_from_its_parents_subtree(self):
+        """The shape that matters: claude -> bash -c (leader) -> this tool. Walking
+        claude's descendants reaches that shell, and without the ancestor guard
+        fleetupgrade reports the very session it was run from. `immortal` is forced
+        true here so the guard under test is the only thing that can exclude it."""
+        leader = parent = None
+        pid = str(os.getpid())
+        for _ in range(12):                      # climb to the first session leader
+            st = self.u._stat(pid)
+            if not st or st[1] == "0":
+                break
+            if pid == st[3]:
+                leader, parent = pid, st[1]
+                break
+            pid = st[1]
+        if not leader:
+            self.skipTest("no session-leader ancestor in this runner")
+        with mock.patch.object(self.u, "immortal", lambda c: True):
+            found = {c["pid"] for c in self.u.leaders(parent)}
+        self.assertNotIn(leader, found)
+
+    def test_stat_parses_a_name_containing_spaces_and_parens(self):
+        st = self.u._stat(os.getpid())
+        self.assertIsNotNone(st)
+        state, ppid, pgrp, sid = st
+        self.assertTrue(state.isalpha())
+        self.assertEqual(ppid, str(os.getppid()))
+        self.assertTrue(sid.isdigit())
+
+    def test_a_session_leader_child_is_found_and_an_ordinary_one_is_not(self):
+        import subprocess, time
+        plain = subprocess.Popen(["bash", "-c", "sleep 8"])
+        leader = subprocess.Popen(["setsid", "bash", "-c", "sleep 8"])
+        try:
+            time.sleep(0.5)
+            found = {c["pid"] for c in self.u.leaders(os.getpid())}
+            # the setsid'd one is its own session; the plain one is in ours
+            self.assertEqual(self.u._stat(leader.pid)[3], str(leader.pid))
+            self.assertNotEqual(self.u._stat(plain.pid)[3], str(plain.pid))
+            self.assertIn(str(leader.pid), found)
+            self.assertNotIn(str(plain.pid), found)
+        finally:
+            for p in (plain, leader):          # by recorded pid, never by pattern
+                p.kill(); p.wait()
+
+
 if __name__ == "__main__":
     unittest.main()

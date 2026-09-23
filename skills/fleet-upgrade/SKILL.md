@@ -136,6 +136,40 @@ log already holds the result.
 
 Correct form to wait on: `until ! kill -0 <pid> 2>/dev/null; do sleep 30; done`.
 
+### Option 1 does not stop a child in its own process session
+
+**Check this BEFORE choosing option 1.** "Exit and stop tasks" signals the
+session's own process group. A child that called `setsid` is in a session of its
+own, so nothing reaches it, the prompt never clears, and `/exit` never completes —
+the session sits there looking hung. Reported by `coord` 2026-09-23 on 2.1.278:
+two sessions would not exit and stayed on the old binary while nine others rolled,
+so the fleet ran split across two versions. Every case was an
+`until …; do sleep N; done` whose condition had gone permanently false, and one of
+them was the `pgrep` self-match above — the immortal loop and the thing that makes
+it unkillable arrive together.
+
+Look at the session's children first:
+
+    ps -o pid=,stat=,sid= --ppid <claude pid>
+
+A child whose **sid equals its own pid** is a session leader. `STAT` shows it as
+the `s` flag — `Ss`, `Rs`, `Ds`. Test `sid == pid`, not the literal string `Ss`:
+the letter beside the flag is whatever the process happens to be doing, so
+matching `Ss` misses a leader that is running rather than sleeping.
+
+**Then kill it by pid, and only then exit.** Never by pattern — a pattern matches
+the killer's own command line, and these loops are usually a `pgrep` self-match
+already.
+
+**The signature alone does not mean stuck.** Every Claude Code Bash command runs
+in its own process session, so a session doing ordinary work shows a session
+leader too: measured 2026-09-23, a one-minute-old `timeout 900 ssh picotte …` and
+the checking tool's own shell both read as `Ss`. What makes one immortal is the
+**poll loop**, not the session. Read the command before killing anything, or you
+will stop live work that was about to finish on its own. `fleetupgrade` applies
+that same bar and flags only children that poll, under **THIS ROLL WILL FAIL, NOT
+WAIT**, with the `kill` line for each.
+
 After option 1, confirm the work actually stopped; after option 2, confirm it
 survived and note its new parent:
 
