@@ -42,7 +42,56 @@ design in full.
 
 Sessions talk through Claude Code's cross-session messages. Because a message is
 re-read on every later turn of its receiver, the conventions favor a *pointer* — a
-file path plus a one-line conclusion — over a payload (:doc:`templates`).
+file path plus a one-line conclusion — over a payload (:doc:`templates`). What that
+costs is measurable rather than a matter of taste: :doc:`tools/fleetcost` counts it
+for a fleet from its own transcripts.
+
+Two channels, and one of them is not what it looks like
+-------------------------------------------------------
+
+A line reaches a session two ways, and they are not interchangeable.
+
+**The message channel.** One session addresses another by name; the runtime
+delivers it. The receiver's transcript records the turn with an origin of kind
+*peer*, carrying the sender's name, a message id, and — the part that matters —
+the sender's **verified process identity**: its pid together with that process's
+start time, which is what makes the pair unforgeable rather than merely unlikely
+to collide. A session does not write any of that. It is stamped by the runtime
+around whatever the sender said, so a session cannot claim to be another session,
+and cannot claim to be the human.
+
+**The pane channel.** A watcher or a tool types a line into a session's terminal
+pane (``tmux send-keys``), which is how :doc:`tools/fleetnudge` wakes an idle
+session that no one is watching, and how :doc:`tools/fleetmail` announces a
+delivery. The receiving session sees an ordinary prompt, and its transcript
+records an origin of kind *human* — **with nothing else in it**. There is no
+sender, no source, no mark distinguishing it from the owner typing at the
+keyboard, because at that layer there is no difference: both are characters
+arriving at a terminal.
+
+That asymmetry is the whole point, and it cuts both ways:
+
+- Anything that must be *attributable* belongs on the message channel. A peer
+  message is evidence; a pane line is not.
+- Anything that must reach a session **that is not being messaged** — because it is
+  idle, or because the sender is a detached process rather than a session — has to
+  use the pane. Nothing else gets in.
+- Conventions like a ``[watcher: …]`` or ``[mail: … -> you]`` tag at the head of a
+  typed line are **convention, not mechanism**. They tell a reader where a line came
+  from; they do not make it so, and anything able to type can type them. Treat a tag
+  as a label on the envelope, never as a signature.
+
+Hence the rules elsewhere in these tools: a nudge is one short line that reports
+and asks nothing, delivery is confirmed by reading it back out of the receiver's
+transcript, and a session is never asked to act on a typed line's authority.
+
+**Files are the third case, and neither channel secures them.** Both channels
+mostly carry *paths*: a drop file, a log, a result. The content is not in the
+message, so nothing about it is stamped or verified — it is whatever the file says
+when the receiver gets around to reading it, which may not be when it was sent. A
+path is a pointer to be checked, not a quotation. That is also why mail from
+another fleet arrives as a file plus one line rather than as the message itself
+(:doc:`tools/fleetmail`).
 
 Three layers, kept apart on purpose
 -----------------------------------
