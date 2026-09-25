@@ -49,6 +49,14 @@ Report sections
 
 ``fleetwatch <session>`` limits the report to work that session owns or watches.
 
+**An unrecognized argument is refused, not answered** (exit 2), and the message lists
+the session names that exist. ``fleetwatch list`` — an invented subcommand — was
+previously taken as a session filter: it matched nothing, and the tool printed
+"no live cluster work", which reads as a quiet cluster rather than a typo. The same
+applied to ``--json``, where the caller saw a clean empty result. Unknown options and
+a second session name are refused for the same reason. A filter that matches nothing
+is the tool's own signature failure: a false all-clear that nobody investigates.
+
 Who can see the fleet
 ---------------------
 

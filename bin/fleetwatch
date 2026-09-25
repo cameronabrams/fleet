@@ -463,8 +463,63 @@ def print_delivery(h):
         print("   and never nudged. Those never became nudges, so they are not above:")
         print("   run `fleetmail status`.")
 
+def known_sessions():
+    """Names this tool will accept as a filter. Derived, never a hand-kept list.
+
+    `[colors]` is the fleet's membership roster -- fleetnudge refuses a name with
+    no entry for the same reason -- plus anything named as an owner in `[owners]`
+    and anything holding a watcher registration, since a session can watch work
+    without owning a directory."""
+    out = set(fc.colors(CFG)) | {who for _, who in OWNERS}
+    for f in glob.glob(WATCHDIR + "/*.json"):
+        try:
+            with open(f) as fh:
+                out.add(str(json.load(fh).get("session") or ""))
+        except Exception:
+            continue
+    return {n for n in out if n and n != "UNATTRIBUTED"}
+
+def parse_args(argv, known):
+    """(session or None, want_json), or exit 2. Pure, so it can be tested.
+
+    AN UNKNOWN ARGUMENT IS REFUSED, NOT ANSWERED. `fleetwatch list` -- an invented
+    subcommand -- used to be taken as a session filter: it matched nothing, the
+    job table came back empty, and the tool printed "no live cluster work", which
+    reads as a quiet cluster rather than as a typo. Reported 2026-09-25 after that
+    line was quoted as this tool's verdict while a live 8-task array was running.
+
+    This is the failure this tool exists to catch, committed by the tool itself
+    for the second time. A false all-clear is worse than an error, because nobody
+    investigates a reassurance."""
+    session, want_json = None, False
+    for a in argv:
+        if a == "--json":
+            want_json = True
+        elif a in ("-h", "--help"):
+            print(__doc__)
+            raise SystemExit(0)
+        elif a.startswith("-"):
+            print("fleetwatch: unknown option %r. Run with --help." % a, file=sys.stderr)
+            raise SystemExit(2)
+        elif session is not None:
+            print("fleetwatch: unexpected second argument %r -- one session at a time."
+                  % a, file=sys.stderr)
+            raise SystemExit(2)
+        elif a not in known:
+            print("fleetwatch: %r is not a session this fleet knows, so there is nothing\n"
+                  "  to filter by and no answer to give. Refused rather than answered:\n"
+                  "  as a filter it would match nothing and print \"no live cluster work\",\n"
+                  "  which reads as a quiet cluster rather than a typo.\n"
+                  "  Known: %s\n"
+                  "  For the whole fleet, run fleetwatch with no arguments."
+                  % (a, ", ".join(sorted(known)) or "(none)"), file=sys.stderr)
+            raise SystemExit(2)
+        else:
+            session = a
+    return session, want_json
+
 def main():
-    only = next((a for a in sys.argv[1:] if not a.startswith("-")), None)
+    only, want_json = parse_args(sys.argv[1:], known_sessions())
     jobs, cluster_ok = live_jobs()
     reg, dead_reg = registered()
     # A registered watcher whose pid is gone is either DEAD (its job is still live:
@@ -520,7 +575,7 @@ def main():
     stale = ([{"session": s, "job": j} for s, ids in w.items() for j in ids if j not in jobs]
              if cluster_ok else [])
 
-    if "--json" in sys.argv:
+    if want_json:
         print(json.dumps({"cluster_ok": cluster_ok, "jobs": rows, "stale_watchers": stale,
                           "dead_watchers": dead_reg, "finished_watchers": finished,
                           "delivery": holes,
@@ -532,7 +587,10 @@ def main():
               " work\";\n   nothing below about live work or watcher coverage can be trusted."
               % CLUSTER["ssh_host"])
     elif not rows:
-        print("no live cluster work for %s." % CLUSTER["user"])
+        # Naming the filter matters: "no live cluster work for <cluster user>"
+        # under a session filter reads as a statement about the whole cluster.
+        print("no live cluster work owned or watched by %s." % only if only
+              else "no live cluster work for %s." % CLUSTER["user"])
     else:
         print("%-11s %6s  %-28s %-18s %s" % ("JOB", "TASKS", "STATES", "OWNER (derived)", "WATCHED BY"))
         for r in rows:

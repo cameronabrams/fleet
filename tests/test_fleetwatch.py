@@ -321,5 +321,73 @@ class Clients(Base):
         self.assertEqual(self.w._stamp_epoch(None), "?")
 
 
+class Arguments(Base):
+    """`fleetwatch list` -- an invented subcommand -- was taken as a session
+    filter, matched nothing, and printed "no live cluster work" with exit 0 while
+    a live 8-task array was running. Reported 2026-09-25 after that line was
+    quoted as this tool's verdict.
+
+    The failure this tool exists to catch, committed by the tool itself for the
+    second time. A false all-clear is worse than an error: nobody investigates a
+    reassurance.
+    """
+    def parse(self, *argv, known=("alpha", "beta", "alpha-runs")):
+        return self.w.parse_args(list(argv), set(known))
+
+    def refused(self, *argv):
+        with self.assertRaises(SystemExit) as e:
+            self.parse(*argv)
+        self.assertEqual(e.exception.code, 2)
+        return e.exception
+
+    def test_an_invented_subcommand_is_refused_not_answered(self):
+        self.refused("list")
+        self.refused("status")
+        self.refused("--json", "list")      # refused even on the machine-readable path
+
+    def test_a_known_session_still_filters(self):
+        self.assertEqual(self.parse("alpha"), ("alpha", False))
+        self.assertEqual(self.parse("alpha", "--json"), ("alpha", True))
+        self.assertEqual(self.parse("--json", "alpha"), ("alpha", True))
+
+    def test_no_arguments_is_the_whole_fleet(self):
+        self.assertEqual(self.parse(), (None, False))
+        self.assertEqual(self.parse("--json"), (None, True))
+
+    def test_an_unknown_option_is_refused(self):
+        self.refused("--jsonn")             # a typo used to be ignored silently
+        self.refused("-x")
+
+    def test_a_second_session_is_refused_rather_than_ignored(self):
+        self.refused("alpha", "beta")
+
+    def test_help_exits_zero(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as e:
+                self.parse("--help")
+        self.assertEqual(e.exception.code, 0)
+
+    def test_the_refusal_says_what_is_known(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit):
+                self.parse("list")
+        text = err.getvalue()
+        self.assertIn("alpha", text)        # so a typo is recoverable from the message
+        self.assertIn("no arguments", text)
+
+    def test_known_sessions_comes_from_colors_owners_and_registrations(self):
+        d = os.path.join(self.cfg.state, "watchers")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "w.json"), "w") as f:
+            json.dump({"session": "watcher-only", "job": "111111", "pid": 1}, f)
+        known = self.w.known_sessions()
+        self.assertIn("alpha", known)            # [colors]
+        self.assertIn("beta", known)             # [colors]
+        self.assertIn("alpha-runs", known)       # [owners]
+        self.assertIn("watcher-only", known)     # a registration, with no other trace
+        self.assertNotIn("UNATTRIBUTED", known)  # never a filterable name
+
+
 if __name__ == "__main__":
     unittest.main()

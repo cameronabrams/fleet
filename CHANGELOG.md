@@ -15,6 +15,14 @@ Releases are cut with `scripts/release.sh <version>`.
 
 ### Added
 
+- `fleetwatch` refuses an argument it does not recognize instead of answering it.
+  An invented subcommand was taken as a session filter, matched nothing, and
+  printed "no live cluster work" with exit 0 while a live array was running — on
+  the `--json` path too, where `fleetretire` reads it to decide whether a session
+  owns cluster work. Unknown options and a second session name are refused as
+  well, and an empty filtered report now names the session rather than the
+  cluster account.
+
 - A loopback test for `fleetmail`: two fleets, two state directories, one real
   bare repository, and `git` actually running. Every other test in that file
   stubs `pull` and `push`, so the transport had no coverage at all — breaking the
