@@ -93,6 +93,15 @@ path is a pointer to be checked, not a quotation. That is also why mail from
 another fleet arrives as a file plus one line rather than as the message itself
 (:doc:`tools/fleetmail`).
 
+**What counts as the fleet** is the pair of tmux pane options ``@repo`` and
+``@fleet`` that :doc:`tools/fleetspawn` stamps on every pane it creates.
+``tmux list-panes -a`` crosses tmux *sessions* and returns every pane on the
+server, so a tool that does not check the labels will happily include a window
+that has nothing to do with the fleet — and then act on it. Tools report the panes
+they exclude rather than dropping them silently: a fleet pane that lost its labels
+must not disappear from a roll without a word. Relabel one with
+``tmux set -p -t <pane> @fleet <name>``.
+
 Three layers, kept apart on purpose
 -----------------------------------
 

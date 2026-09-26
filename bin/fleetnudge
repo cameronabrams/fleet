@@ -47,7 +47,7 @@ import argparse, contextlib, fcntl, glob, json, os, re, subprocess, sys, time, u
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.agents import list_agents
-from fleet.panes import CAPTURE, screen_state, state_problem, type_line
+from fleet.panes import in_fleet, CAPTURE, screen_state, state_problem, type_line
 from fleet.procs import ancestors, claude_procs, ppid
 from fleet.transcripts import PROJECTS, session_name
 
@@ -72,12 +72,20 @@ def tmux(*a):
     return r.returncode, r.stdout.rstrip("\n"), r.stderr.strip()
 
 def panes():
-    """pane_pid -> pane_id, for every tmux pane."""
-    rc, out, _ = tmux("list-panes", "-a", "-F", "#{pane_id}\t#{pane_pid}")
+    """pane_pid -> pane_id, for THIS FLEET's panes only.
+
+    This tool types into a pane. `tmux list-panes -a` crosses tmux sessions, so
+    without the label check a session whose --name happened to match a fleet
+    member's -- the name collision fleet-bootstrap warns about -- could take a
+    line meant for somebody else. Membership is the label fleetspawn stamps; see
+    fleet.panes.in_fleet. A pane with no mapping simply is not typeable, which is
+    the refusal this tool already handles."""
+    rc, out, _ = tmux("list-panes", "-a", "-F",
+                      "#{pane_id}\t#{pane_pid}\t#{@repo}\t#{@fleet}")
     found = {}
     for row in out.splitlines() if rc == 0 else []:
         p = row.split("\t")
-        if len(p) == 2 and p[1].isdigit():
+        if len(p) == 4 and p[1].isdigit() and in_fleet(p[2], p[3]):
             found[int(p[1])] = p[0]
     return found
 

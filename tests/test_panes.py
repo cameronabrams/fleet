@@ -117,5 +117,22 @@ class TypeLine(unittest.TestCase):
         self.assertIn(("send-keys", "-t", "%1", "C-u"), calls)
 
 
+class InFleet(unittest.TestCase):
+    """`tmux list-panes -a` crosses tmux SESSIONS. On 2026-09-26 that put one of
+    the human's own windows into fleetupgrade's count and produced a restart plan
+    for it with CCP_AGENT=1 prepended -- the flag that makes a session an
+    addressable agent. The plan asserted an environment it never observed."""
+
+    def test_either_label_is_enough_and_neither_is_not(self):
+        self.assertTrue(panes.in_fleet("coord", "coord"))
+        self.assertTrue(panes.in_fleet("coord", ""))        # relabelled by hand
+        self.assertTrue(panes.in_fleet("", "records"))
+        self.assertFalse(panes.in_fleet("", ""))
+        self.assertFalse(panes.in_fleet(None, None))        # tmux gives "" not None
+
+    def test_whitespace_is_not_a_label(self):
+        self.assertFalse(panes.in_fleet("  ", "\t"))
+
+
 if __name__ == "__main__":
     unittest.main()

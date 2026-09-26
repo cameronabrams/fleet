@@ -37,6 +37,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.procs import alive
+from fleet.panes import in_fleet
 from fleet.transcripts import session_name
 
 CFG     = fc.load()
@@ -172,7 +173,12 @@ def registered():
 def watchers():
     """session name -> set of job ids its live child processes reference."""
     out = {}
-    panes = sh("tmux", "list-panes", "-a", "-F", "#{pane_pid}").split()
+    # `list-panes -a` crosses tmux sessions; only this fleet's panes count, or a
+    # stranger's poll loop is advertised as an unregistered watcher of our work.
+    panes = [r.split("\t")[0] for r in
+             sh("tmux", "list-panes", "-a", "-F",
+                "#{pane_pid}\t#{@repo}\t#{@fleet}").splitlines()
+             if len(r.split("\t")) == 3 and in_fleet(*r.split("\t")[1:])]
     for sp in panes:
         for c in sh("pgrep", "-P", sp).split():
             try:

@@ -42,6 +42,7 @@ import argparse, glob, json, os, re, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.agents import by_session_prefix, list_agents
+from fleet.panes import in_fleet
 from fleet.procs import alive, ancestors, children, claude_procs, ppid, starttime
 from fleet.panes import CAPTURE, input_line, screen_state, state_problem, type_line
 from fleet.transcripts import agent_color, compactions, context_stats, session_name
@@ -65,15 +66,24 @@ def git(cwd, *a):
     return r.returncode, r.stdout.strip()
 
 def panes():
-    """pane_pid -> pane_id, for every tmux pane."""
-    fmt = "\t".join(["#{pane_id}", "#{pane_pid}"])
+    """(pane_pid -> pane_id for THIS FLEET, [panes that are not ours]).
+
+    `tmux list-panes -a` crosses tmux sessions, so it returns the human's own
+    windows too. This tool compacts sessions, so acting on one of those would be
+    acting on somebody's unrelated work. Membership is the `@repo`/`@fleet` label
+    fleetspawn stamps; see fleet.panes.in_fleet."""
+    fmt = "\t".join(["#{pane_id}", "#{pane_pid}", "#{@repo}", "#{@fleet}", "#{session_name}"])
     rc, out, _ = tmux("list-panes", "-a", "-F", fmt)
-    found = {}
+    found, outside = {}, []
     for row in out.splitlines() if rc == 0 else []:
         p = row.split("\t")
-        if len(p) == 2 and p[1].isdigit():
+        if len(p) != 5 or not p[1].isdigit():
+            continue
+        if in_fleet(p[2], p[3]):
             found[int(p[1])] = p[0]
-    return found
+        else:
+            outside.append({"pane": p[0], "pane_pid": int(p[1]), "tmux_session": p[4]})
+    return found, outside
 
 def screen(pane):
     return tmux(*CAPTURE, "-t", pane)[1]
@@ -115,8 +125,13 @@ def sessions():
     is resolved from its transcript."""
     agents = list_agents()
     by_pid = {a.get("pid"): a for a in agents or [] if a.get("pid")}
-    pane_pids = panes()
+    pane_pids, unlabelled = panes()
+    not_ours = {o["pane_pid"] for o in unlabelled}
     procs = claude_procs()
+    # Only an unlabelled pane that actually RUNS a session is worth reporting;
+    # otherwise every ordinary shell pane on the server shows up as "not ours".
+    running = {pid for pid, _, _ in procs} | {ppid(pid) for pid, _, _ in procs}
+    outside = [o for o in unlabelled if o["pane_pid"] in running]
     attached = {}
     for pid, cwd, argv in procs:
         if argv[1:2] == ["attach"] and len(argv) > 2:
@@ -128,6 +143,8 @@ def sessions():
     for pid, cwd, argv in procs:
         if argv[1:2] == ["attach"]:
             continue                  # a client showing a background session, not a session
+        if pid in not_ours or ppid(pid) in not_ours:
+            continue                  # another tmux session's pane: not this fleet's to compact
         a = by_pid.get(pid)
         if a:
             name, uuid, how = a.get("name"), a.get("sessionId"), "verified: claude agents"
@@ -138,7 +155,7 @@ def sessions():
                      "status": (a or {}).get("status"), "background": background,
                      "pane": attached.get(uuid) if background
                              else (pane_pids.get(pid) or pane_pids.get(ppid(pid)))})
-    return rows, agents
+    return rows, agents, outside
 
 def enrich(r, now=None):
     """Add everything the recommendation needs to a row from sessions()."""
@@ -335,10 +352,17 @@ def main():
     ap.add_argument("--wait", type=int, default=600, help="seconds to wait for the compaction")
     a = ap.parse_args()
 
-    rows, agents = sessions()
+    rows, agents, outside = sessions()
     name = a.compact or a.color
     if not name:
         report([enrich(r) for r in rows], agents, a.json)
+        if outside and not a.json:
+            # Reported, never acted on. A fleet pane that lost its labels would
+            # otherwise vanish from this list with no warning.
+            print("\n   not this fleet's, so not listed above and never compacted")
+            print("   (no @repo/@fleet label; `tmux list-panes -a` crosses tmux sessions):")
+            for o in outside:
+                print("   %-5s in tmux session %r" % (o["pane"], o["tmux_session"]))
         return
 
     mode = "compact" if a.compact else "color"

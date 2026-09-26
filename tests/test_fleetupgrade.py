@@ -85,7 +85,7 @@ class AttachedBackground(Upgrade):
     def resolve(self, agent_list):
         from tests.test_agents import SAMPLE
         up = self.up
-        with mock.patch.object(up, "sh", return_value="%1\t100\ttitle\t/home/u/work\n"), \
+        with mock.patch.object(up, "sh", return_value="%1\t100\ttitle\t/home/u/work\tcoord\tcoord\t0\n"), \
              mock.patch.object(up, "claude_pid", return_value=("200", "claude attach b20bc72b")), \
              mock.patch.object(up, "agents", return_value=agent_list), \
              mock.patch.object(up, "foreign_claude", return_value=[("543137", "x"), ("543125", "y")]), \
@@ -114,7 +114,7 @@ class SessionDirectory(Upgrade):
     moves: on 2026-09-18 the hand-off said ~/.config/fleet for a session running in
     ~/.local/state/fleet, where --resume would have found no transcript."""
     def rows(self, pane_path="/home/u/somewhere-else", proc="/home/u/work"):
-        with mock.patch.object(self.up, "sh", return_value=f"%1\t100\ttitle\t{pane_path}\n"), \
+        with mock.patch.object(self.up, "sh", return_value=f"%1\t100\ttitle\t{pane_path}\tcoord\tcoord\t0\n"), \
              mock.patch.object(self.up, "claude_pid", return_value=("200", f"claude --name a --resume {U1}")), \
              mock.patch.object(self.up, "proc_cwd", side_effect=lambda pid: proc), \
              mock.patch.object(self.up, "agents", return_value=[]), \
@@ -223,6 +223,49 @@ class SessionLeaders(unittest.TestCase):
         finally:
             for p in (plain, leader):          # by recorded pid, never by pattern
                 p.kill(); p.wait()
+
+
+class OtherTmuxSessions(unittest.TestCase):
+    """A pane in another tmux session is not this fleet's, and must be reported
+    rather than silently dropped: a fleet pane that lost its labels would
+    otherwise vanish from a roll with no warning, which is the worse direction.
+    """
+    PANES = ("%1\t100\tcoord\t/home/u/work\tcoord\tcoord\t0\n"
+             "%26\t200\tsidebar\t/home/u\t\t\tsidebar\n")
+
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.up = load_tool("fleetupgrade")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def rows(self):
+        with mock.patch.object(self.up, "sh", return_value=self.PANES), \
+             mock.patch.object(self.up, "claude_pid",
+                               side_effect=lambda ppid: (str(int(ppid) + 1),
+                                                         f"claude --name a --resume {U1}")), \
+             mock.patch.object(self.up, "proc_cwd", side_effect=lambda pid: "/home/u/work"), \
+             mock.patch.object(self.up, "agents", return_value=[]), \
+             mock.patch.object(self.up, "foreign_claude", return_value=[]), \
+             mock.patch.object(self.up, "uuid_from_descendants", return_value=None), \
+             mock.patch.object(self.up, "proc_version", side_effect=lambda pid: "2.1.276"):
+            return self.up.sessions()
+
+    def test_the_unlabelled_pane_is_not_a_session_of_ours(self):
+        rows = self.rows()
+        self.assertEqual([r["pane"] for r in rows], ["%1"])
+
+    def test_but_it_is_recorded_so_it_can_be_reported(self):
+        self.rows()
+        self.assertEqual([o["pane"] for o in self.up.OUTSIDE], ["%26"])
+        self.assertEqual(self.up.OUTSIDE[0]["tmux_session"], "sidebar")
+
+    def test_a_relabelled_pane_is_still_ours(self):
+        """Only @fleet set, no @repo: a pane someone labelled by hand still counts."""
+        self.PANES = "%26\t200\tx\t/home/u\t\trecords\tother\n"
+        self.assertEqual([r["pane"] for r in self.rows()], ["%26"])
+        self.assertEqual(self.up.OUTSIDE, [])
 
 
 if __name__ == "__main__":

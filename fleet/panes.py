@@ -23,6 +23,27 @@ TYPE_WAIT = 10.0                           # seconds for typed text to reach the
 CAPTURE = ("capture-pane", "-p", "-e")     # -e keeps the attributes that mark a suggestion
 _ESC = re.compile(r"\x1b\[([0-9;:]*)([A-Za-z])|\x1b[^\[]")
 
+def in_fleet(repo_label, fleet_label):
+    """Whether a pane belongs to this fleet, from the labels `fleetspawn` stamps.
+
+    `tmux list-panes -a` crosses tmux SESSIONS, so it returns every pane on the
+    server -- the human's own windows included. On 2026-09-26 that put a personal
+    session into `fleetupgrade`'s count ("3 of 12 sessions stale") and produced a
+    restart plan for it with `CCP_AGENT=1` prepended from `[spawn].env`: the flag
+    that makes a session an addressable agent. Following that plan would not have
+    restored what was running, it would have changed what it was. The plan
+    asserted an environment it never observed.
+
+    `fleetspawn` sets BOTH `@repo` and `@fleet` on every pane it creates, and
+    `fleetsnap` already reads `@fleet` as membership. Either is enough here:
+    requiring both would drop a pane someone relabelled by hand.
+
+    Callers must REPORT what they exclude. A fleet pane that lost its labels
+    would otherwise vanish from a roll with no warning, which trades a stranger's
+    pane being included for one of ours being silently skipped -- the worse
+    direction of the two."""
+    return bool((repo_label or "").strip() or (fleet_label or "").strip())
+
 def strip_escapes(text):
     """`text` without terminal escape sequences."""
     return _ESC.sub("", text)

@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..
 from fleet import config as fc
 from fleet.agents import by_session_prefix, list_agents
 from fleet.procs import proc_cwd
+from fleet.panes import in_fleet
 from fleet.transcripts import cleared_successor, project_slug, uuid_from_descendants
 CFG = fc.load()
 
@@ -324,15 +325,25 @@ def attached_id(cmd):
     m = re.match(r"^\s*claude\s+attach\s+([0-9a-f]{6,})\b", cmd or "")
     return m.group(1) if m else None
 
+OUTSIDE = []          # panes running claude that carry no fleet label
+
 def sessions():
-    fmt = "\t".join(["#{pane_id}", "#{pane_pid}", "#{pane_title}", "#{pane_current_path}"])
+    fmt = "\t".join(["#{pane_id}", "#{pane_pid}", "#{pane_title}", "#{pane_current_path}",
+                     "#{@repo}", "#{@fleet}", "#{session_name}"])
     rows = []
+    del OUTSIDE[:]
     for row in sh("tmux", "list-panes", "-a", "-F", fmt).strip().splitlines():
         parts = row.split("\t")
-        if len(parts) < 4:
+        if len(parts) < 7:
             continue
         pane, ppid, title, pane_path = parts[0], parts[1], parts[2].lstrip("\u2733 ").strip(), parts[3]
         pid, cmd = claude_pid(ppid)
+        if pid and not in_fleet(parts[4], parts[5]):
+            # `list-panes -a` crosses tmux sessions. Not ours, and never restarted
+            # from a plan -- but reported, because a fleet pane that lost its
+            # labels must not disappear in silence.
+            OUTSIDE.append({"pane": pane, "tmux_session": parts[6], "title": title})
+            continue
         if pid:
             # The session's own cwd, not the pane's: see fleet.procs.proc_cwd.
             rows.append({"pane": pane, "title": title, "cwd": proc_cwd(pid) or pane_path,
@@ -442,6 +453,14 @@ def main():
             "yes" if s["ledger"] else "MISSING",
             s["color"] or ("?" if s.get("background") or not s["resume_uuid"] else "LOST"),
             (s["resume_uuid"] or "?")[:8]))
+    if OUTSIDE:
+        print("\n   not this fleet's, so not counted above and never in a plan below")
+        print("   (no @repo/@fleet label; `tmux list-panes -a` crosses tmux sessions):")
+        for o in OUTSIDE:
+            print("   %-5s in tmux session %r   %s" % (o["pane"], o["tmux_session"], o["title"]))
+        print("   If one of these SHOULD be in the fleet, it is missing its label:")
+        print("     tmux set -p -t <pane> @fleet <name>; tmux set -p -t <pane> @repo <name>")
+
     declared = fc.colors(CFG)
     # No resume uuid means no transcript was read, so no colour record could be
     # found: that is "unknown", not "lost". fleetsnap resolves more handles.

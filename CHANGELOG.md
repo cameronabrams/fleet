@@ -13,6 +13,19 @@ Releases are cut with `scripts/release.sh <version>`.
 
 ## [Unreleased]
 
+### Fixed
+
+- The tools no longer treat every `claude` on the machine as part of the fleet.
+  `tmux list-panes -a` crosses tmux *sessions*, so it returns the human's own
+  windows too. `fleetupgrade` counted one in its stale total and printed a restart
+  plan for it with the managed-agent environment prepended — which would not have
+  restored what was running but changed what it was. `fleetcontext`, which
+  compacts sessions, had the same reach. Membership is now the `@repo`/`@fleet`
+  label `fleetspawn` stamps and `fleetsnap` already read, applied in
+  `fleetupgrade`, `fleetcontext`, `fleetnudge` (which types into panes) and
+  `fleetwatch`. Excluded panes are **reported**, not dropped in silence: a fleet
+  pane that lost its labels must not vanish from a roll without a word.
+
 ### Added
 
 - `fleetwatch` refuses an argument it does not recognize instead of answering it.
