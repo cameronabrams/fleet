@@ -39,6 +39,52 @@ carries only what no repository owns.
   rather than a file, since a recorded copy of that is exactly the kind of state
   this repository refuses to keep.
 
+## Installation
+
+- **`install` ships the conventions as prose and none of the mechanism that makes
+  them stick.** It symlinks tools into `~/bin` and skills into `~/.claude/skills`
+  and never touches Claude Code's settings file, so a new owner gets
+  `examples/conventions.example.md` — pointer-not-payload, the 800-character
+  ceiling, the amplification figure — as text, and no hook.
+
+  The general finding behind it, from this fleet's own measurement: a rule that is
+  free to follow holds, and a rule with a local cost erodes without feedback *at
+  the moment of acting*. The message-size ceiling sat in the conventions file for
+  the whole period in which the fleet's mean message size roughly tripled. A line
+  in a conventions file is a request competing for attention; a hook is not.
+  Shipping the rule as text alone reproduces that drift in every new fleet, by
+  construction.
+
+  Two gaps, and they are not equal.
+
+  *The notification hook is the stronger case, and it has an incident behind it.*
+  `fleetnudge` falls back to a phone push when it cannot reach a pane, and
+  `configuration.rst` says an *existing* notification hook "can then stay the one
+  place the topic is written" — it assumes one is already there. A new owner
+  following the documentation has none, so that fallback is dead on arrival. The
+  sharper form is already documented in `fleetwatch`: with a mute file
+  present, an undelivered nudge pushes nothing and the log line is its only trace.
+  On 2026-09-17 three nudges failed to reach one session and the push was the
+  channel that worked — verifiable in this fleet's nudge log, and the case that
+  the delivery section of `fleetwatch` was built from.
+
+  *Message-size feedback is the weaker case.* A `PreToolUse` hook on the peer-send
+  tool that logs each send with its length and returns the size as context. It
+  should not block: a hard cap makes senders split one thought across two
+  messages, and the per-message wrapper is then charged twice, so splitting costs
+  more than sending long.
+
+  Proposed shape: a `hooks/` directory in this repository, and an `install` that
+  **offers** to merge them, opt-in, merging and never replacing, with the same
+  displaced-file discipline it already uses for symlinks. Opt-in is not timidity —
+  that settings file is shared by everything the owner runs with Claude Code, not
+  only the fleet.
+
+  What would decide the second one: its only evidence so far comes from the single
+  session that built it and knows it is being measured. That is the selection bias,
+  and it needs sessions that did not build it before it ships as anything but
+  optional. Ship the first; offer the second.
+
 ## Measurement
 
 - **Count message-convention compliance on the essential inline part, not the
