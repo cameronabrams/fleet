@@ -13,6 +13,8 @@ Releases are cut with `scripts/release.sh <version>`.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-26
+
 ### Fixed
 
 - The tools no longer treat every `claude` on the machine as part of the fleet.
