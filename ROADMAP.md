@@ -39,6 +39,32 @@ carries only what no repository owns.
   rather than a file, since a recorded copy of that is exactly the kind of state
   this repository refuses to keep.
 
+- **`fleetsnap` adopts an unlabelled pane instead of excluding it.** Reported by
+  the coordinator 2026-09-26 and verified: it is the one tool that does not use
+  `fleet.panes.in_fleet`. It reads `@repo`, but only as a source for a session's
+  NAME, and when that is absent it falls back to `claude agents`, then the
+  transcript, then the pane title. So a pane on the same tmux server that was
+  never part of the fleet is not dropped — it is named by fallback and reported as
+  a member with no brief and no `[colors]` entry, on every run. `fleetupgrade`
+  ignores the same pane correctly.
+
+  **"Not ours" and "ours and broken" look identical to it, and it assumes the
+  second.** The fix is the shape `fleetupgrade` already uses: apply `in_fleet`,
+  exclude outsiders from the report, and collect them in an OUTSIDE list that is
+  printed — because a fleet pane that lost its labels must not disappear in
+  silence either.
+
+  Care is warranted beyond the other four: `fleetsnap` writes the manifest
+  `fleetrestore` rebuilds the fleet from, so excluding a pane wrongly removes a
+  session from recovery. The naming fallback exists for a real reason (2026-09-18:
+  a pane launched as a bare `claude` and named later has no label) and must keep
+  working for panes that ARE ours.
+
+  Also to correct when this lands: the v0.1.1 changelog entry says the membership
+  label is one "`fleetsnap` already read", which overstates it. It read the label;
+  it did not treat it as membership. Note the correction in the release that
+  carries the fix rather than editing a published entry.
+
 ## Installation
 
 - **`install` ships the conventions as prose and none of the mechanism that makes
