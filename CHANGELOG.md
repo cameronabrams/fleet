@@ -36,6 +36,21 @@ Releases are cut with `scripts/release.sh <version>`.
   well, and an empty filtered report now names the session rather than the
   cluster account.
 
+- `fleetwatch` reports who is attached to the tmux server: every client, where it
+  came from, and how long it has been idle, with an alarm on the second one.
+  Attaching hands a person every pane in the fleet — sessions already past the
+  folder-trust prompt, with peers that treat a line from one of them as a
+  teammate's request. It reports rather than guards, and the documentation says
+  why: whoever can attach can read the same credentials without tmux, so the
+  boundary is the account, not the fleet.
+
+- `concepts` documents the two channels a line reaches a session by, side by
+  side: a peer message, whose origin carries the sender's verified process
+  identity, and a line typed into a pane, which is recorded as human and is
+  indistinguishable from the owner's own typing. The `[watcher:]` and `[mail:]`
+  tags are convention, not mechanism — a label on the envelope, never a
+  signature — and files carried by either channel are secured by neither.
+
 - A loopback test for `fleetmail`: two fleets, two state directories, one real
   bare repository, and `git` actually running. Every other test in that file
   stubs `pull` and `push`, so the transport had no coverage at all — breaking the
