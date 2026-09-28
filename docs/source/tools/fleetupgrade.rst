@@ -17,7 +17,8 @@ Columns
 ``SESSION``
    the session's own last ``agent-name`` record, else the pane title
 ``VERSION`` / ``STALE``
-   the binary the process runs, against the installed ``~/.local/bin/claude``
+   the binary the process runs, against the ``claude`` on PATH (npm or native
+   install; a binary replaced in place since launch reads ``?``)
 ``LEDGER``
    whether ``<state>/rearm/<name>.md`` exists — existence only, not truth
 ``COLOR``

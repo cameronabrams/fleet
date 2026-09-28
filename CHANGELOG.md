@@ -13,6 +13,17 @@ Releases are cut with `scripts/release.sh <version>`.
 
 ## [Unreleased]
 
+### Fixed
+
+- `fleetsnap` and `fleetupgrade` read the claude version on an npm install
+  (`npm install -g @anthropic-ai/claude-code`), not only the native installer's
+  `versions/<v>` layout. Before, an npm-installed machine recorded the installed
+  claude as `claude`, every session's version as `claude.exe`, and
+  `fleetupgrade` found no version for any session -- so the "every version
+  matches" check could not fail. A binary replaced in place since launch now
+  reads its version from the session's own transcript, with a `version_note`,
+  rather than from the package.json that by then describes the new binary.
+
 ## [0.1.1] - 2026-09-26
 
 ### Fixed

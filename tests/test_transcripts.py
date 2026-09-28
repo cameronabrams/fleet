@@ -178,3 +178,19 @@ class Transcripts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LastVersion(Transcripts):
+    """Every record a session writes carries the version of the process that wrote
+    it. That is the per-process truth when the binary cannot say (replaced in place
+    since launch), and it is read from the tail: transcripts run to tens of MB."""
+    def test_last_record_wins(self):
+        self.write("u1", [rec(type="user", version="2.1.270"),
+                          rec(type="assistant", version="2.1.284", message={"content": []})])
+        self.assertEqual(tr.last_version("u1"), "2.1.284")
+
+    def test_no_version_no_transcript(self):
+        self.write("u2", [rec(type="user")])
+        self.assertIsNone(tr.last_version("u2"))
+        self.assertIsNone(tr.last_version("nope"))
+        self.assertIsNone(tr.last_version(None))

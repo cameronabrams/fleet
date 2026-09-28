@@ -19,7 +19,7 @@ import json, os, re, subprocess, sys, glob
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.agents import by_session_prefix, list_agents
-from fleet.procs import proc_cwd
+from fleet.procs import installed_version, proc_cwd, proc_version
 from fleet.panes import in_fleet
 from fleet.transcripts import cleared_successor, project_slug, uuid_from_descendants
 CFG = fc.load()
@@ -27,7 +27,6 @@ CFG = fc.load()
 PROJECTS = os.path.expanduser("~/.claude/projects")
 SCRATCH  = "/tmp/claude-%d" % os.getuid()
 REARM    = os.path.join(fc.state_dir(CFG), "rearm")
-CLAUDE   = os.path.expanduser("~/.local/bin/claude")
 # The session running this tool exports its own uuid to child processes.
 # That is how we know which row is "you" without hardcoding a name.
 SELF_UUID = os.environ.get("CLAUDE_CODE_SESSION_ID")
@@ -41,20 +40,7 @@ def sh(*a):
     except OSError:
         return ""
 
-def installed_version():
-    tgt = os.path.realpath(CLAUDE)
-    m = re.search(r"versions/([0-9][0-9A-Za-z.\-]*)", tgt)
-    return m.group(1) if m else None
-
 slug = project_slug
-
-def proc_version(pid):
-    try:
-        exe = os.readlink("/proc/%s/exe" % pid)
-    except OSError:
-        return None
-    m = re.search(r"versions/([0-9][0-9A-Za-z.\-]*)", exe)
-    return m.group(1) if m else None
 
 def uuid_from_scratchpad(cwd):
     """Newest scratchpad dir for this project. A session's scratchpad is named

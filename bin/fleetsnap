@@ -11,8 +11,8 @@ import json, os, re, shutil, subprocess, glob, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.agents import list_agents
-from fleet.procs import proc_cwd
-from fleet.transcripts import agent_color, newest_transcript, resume_handle, session_name
+from fleet.procs import installed_version, proc_cwd, proc_version
+from fleet.transcripts import agent_color, last_version, newest_transcript, resume_handle, session_name
 CFG = fc.load()
 
 STATE = fc.state_dir(CFG)
@@ -113,10 +113,10 @@ def claude_proc(pane_pid):
         except OSError:
             continue
         if any("claude" in c for c in cmd if c):
-            exe = os.path.realpath(f"/proc/{pid}/exe") if os.path.exists(f"/proc/{pid}/exe") else ""
             uuid = next((c for c in cmd if re.fullmatch(r"[0-9a-f-]{36}", c or "")), None)
             started = sh("ps", "-o", "lstart=", "-p", pid).strip()
-            return {"pid": int(pid), "version": os.path.basename(exe),
+            # None, not the exe's basename, when the binary cannot say (fleet.procs).
+            return {"pid": int(pid), "version": proc_version(pid),
                     "resume_uuid": uuid, "started": started,
                     "argv": [c for c in cmd if c]}
     return None
@@ -256,8 +256,7 @@ def main():
     winnotes = []
     snap = {"captured": time.strftime("%Y-%m-%d %H:%M:%S %Z"),
             "host": os.uname().nodename,
-            "installed_claude": os.path.basename(os.path.realpath(
-                os.path.expanduser("~/.local/bin/claude"))),
+            "installed_claude": installed_version() or "unknown",
             "sessions": [], "user_units": linger_units(),
             "window_layouts": layouts, "window_name_notes": winnotes,
             "tmux_conf": {"path": os.path.expanduser("~/.tmux.conf"),
@@ -300,6 +299,14 @@ def main():
             "durable_files": durable_files(cwd, repo),
         })
         s = snap["sessions"][-1]
+        if not s["version"]:
+            # The binary was replaced in place since launch, or its layout names no
+            # version. The process itself writes its version into every record.
+            v = last_version(s["resume_uuid"])
+            s["version"] = v or "unknown"
+            s["version_note"] = ("from its transcript: the binary it runs cannot say "
+                                 "(replaced in place since launch, or an unversioned path)"
+                                 if v else "neither its binary nor its transcript says")
         live, known = live_color(proc["argv"], s["resume_uuid"])
         s["color"] = {"declared": fc.colors(CFG).get(s["label"]), "live": live, "known": known}
         if s["label"]:

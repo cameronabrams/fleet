@@ -315,3 +315,24 @@ def session_name(pid, cwd, argv):
         # keep `how` first: callers test it for "verified"
         return current, uuid, f"{how}; renamed since launch (--name {launched})"
     return launched or current, uuid, how
+
+_VERSION_RE = re.compile(r'"version"\s*:\s*"([^"]+)"')
+
+def last_version(uuid, tail=65536):
+    """The claude version of the last record in transcript `uuid`, or None.
+
+    Every record a session writes carries the version of the process that wrote
+    it, so this is the per-process truth when the binary cannot say (replaced in
+    place since launch). Read from the tail only: transcripts run to tens of MB."""
+    last = None
+    for f in glob.glob(f"{PROJECTS}/*/{uuid}.jsonl") if uuid else []:
+        try:
+            with open(f, "rb") as fh:
+                fh.seek(0, 2)
+                fh.seek(max(0, fh.tell() - tail))
+                found = _VERSION_RE.findall(fh.read().decode(errors="replace"))
+        except OSError:
+            continue
+        if found:
+            last = found[-1]
+    return last
