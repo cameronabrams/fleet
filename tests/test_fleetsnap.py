@@ -14,10 +14,10 @@ class SnapshotDirectory(unittest.TestCase):
         self.cfg.close()
 
     def manifest(self, proc_cwd="/home/u/work", repo="alpha", title="title",
-                 agents=None, transcript_name=None):
+                 agents=None, transcript_name=None, version="2.1.276"):
         row = ["fleet", "1", "win", "0", "%1", repo, "grp", title,
                "/home/u/somewhere-else", "100", "80x40"]
-        proc = {"pid": 200, "version": "2.1.276", "resume_uuid": None, "started": "",
+        proc = {"pid": 200, "version": version, "resume_uuid": None, "started": "",
                 "argv": ["claude", "--name", "alpha"]}
         sn = self.snap
         with mock.patch.object(sn, "pane_rows", return_value=[row]), \
@@ -248,3 +248,30 @@ class LiveColor(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VersionField(SnapshotDirectory):
+    """`version` is what the "every version matches" check reads. A basename is not
+    a version, and an in-place upgrade leaves the process's own binary deleted."""
+    def manifest_with(self, proc_version, transcript_version="2.1.279"):
+        sn = self.snap
+        with mock.patch.object(sn, "installed_version", return_value="2.1.284"), \
+             mock.patch.object(sn, "last_version", return_value=transcript_version):
+            return self.manifest(version=proc_version)
+
+    def test_installed_is_a_version_not_a_basename(self):
+        self.assertEqual(self.manifest_with("2.1.284")["installed_claude"], "2.1.284")
+
+    def test_process_version_from_its_binary(self):
+        s = self.manifest_with("2.1.284")["sessions"][0]
+        self.assertEqual(s["version"], "2.1.284")
+        self.assertNotIn("version_note", s)
+
+    def test_falls_back_to_the_transcript_and_says_so(self):
+        s = self.manifest_with(None)["sessions"][0]
+        self.assertEqual(s["version"], "2.1.279")
+        self.assertIn("transcript", s["version_note"])
+
+    def test_unknown_when_nothing_says(self):
+        s = self.manifest_with(None, transcript_version=None)["sessions"][0]
+        self.assertEqual(s["version"], "unknown")
