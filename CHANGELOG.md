@@ -15,6 +15,15 @@ Releases are cut with `scripts/release.sh <version>`.
 
 ### Fixed
 
+- `fleetsnap`, `fleetupgrade` and `fleetretire` follow a PARKED session to its
+  successor transcript. Claude Code can park an idle interactive session onto a
+  daemon job; the new transcript is a copy of the old plus everything after, so
+  `--resume` in argv, the scratchpad path and the "/clear" successor check all
+  kept naming the predecessor, and a restore would have dropped everything since
+  the park. The successor is read from claude's own per-process registry
+  (`~/.claude/sessions/<pid>.json`, `parkedJobId` -> the entry carrying that
+  `jobId`); a parked session whose successor cannot be found reads UNVERIFIED.
+
 - `fleetsnap` and `fleetupgrade` read the claude version on an npm install
   (`npm install -g @anthropic-ai/claude-code`), not only the native installer's
   `versions/<v>` layout. Before, an npm-installed machine recorded the installed

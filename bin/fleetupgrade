@@ -21,7 +21,7 @@ from fleet import config as fc
 from fleet.agents import by_session_prefix, list_agents
 from fleet.procs import installed_version, proc_cwd, proc_version
 from fleet.panes import in_fleet
-from fleet.transcripts import cleared_successor, project_slug, uuid_from_descendants
+from fleet.transcripts import cleared_successor, parked_successor, project_slug, uuid_from_descendants
 CFG = fc.load()
 
 PROJECTS = os.path.expanduser("~/.claude/projects")
@@ -409,6 +409,15 @@ def sessions():
                         break
                 if not uuid:
                     src = "UNRESOLVED (shared cwd, no agent-name match)"
+            # A parked session writes to a successor transcript, and every method
+            # above still names the predecessor (fleet.transcripts.parked_successor).
+            if r["pid"] and not background:
+                succ, why = parked_successor(r["pid"], cwd)
+                if succ and succ != uuid:
+                    src = "verified: parked, %s superseded" % (uuid[:8] if uuid else "none")
+                    uuid = succ
+                elif why and not succ:
+                    src = "UNVERIFIED: " + why
             disagree = bool(name) and name != r["title"]
             led = os.path.join(REARM, (name or r["title"]) + ".md")
             out.append({

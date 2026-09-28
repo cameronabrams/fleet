@@ -194,3 +194,77 @@ class LastVersion(Transcripts):
         self.assertIsNone(tr.last_version("u2"))
         self.assertIsNone(tr.last_version("nope"))
         self.assertIsNone(tr.last_version(None))
+
+
+class ParkedSuccessor(Transcripts):
+    """Claude Code can PARK an idle interactive session onto a daemon job: the
+    process's registry entry (~/.claude/sessions/<pid>.json) gains `parkedJobId`,
+    a sibling entry carries that `jobId` with the NEW sessionId, and the new
+    transcript holds every record of the old one plus everything after. argv, the
+    scratchpad path and "first record after launch" all still name the OLD file,
+    because a fork copies old timestamps. OBSERVED 2026-09-28: `/color` landed in
+    the successor while the manifest read `verified` for the predecessor."""
+    def setUp(self):
+        super().setUp()
+        self.reg = tempfile.TemporaryDirectory()
+        self.rp = mock.patch.object(tr, "SESSIONS", self.reg.name)
+        self.rp.start()
+
+    def tearDown(self):
+        self.rp.stop(); self.reg.cleanup(); super().tearDown()
+
+    def entry(self, pid, **kw):
+        with open(os.path.join(self.reg.name, f"{pid}.json"), "w") as f:
+            json.dump({"pid": pid, "cwd": "/home/u/work", **kw}, f)
+
+    def proc(self):
+        return {"pid": 27309, "resume_uuid": "old", "argv": ["claude", "--resume", "old"]}
+
+    def test_parked_session_resumes_the_successor(self):
+        self.write("old", [rec(type="user", agentName="alpha")], time.time() - 600)
+        self.write("new", [rec(type="user", agentName="alpha"), rec(type="agent-color", agentColor="blue")])
+        self.entry(27309, sessionId="old", kind="interactive", parkedJobId="new")
+        self.entry(19885, sessionId="new", kind="bg", jobId="new")
+        uuid, how = tr.resume_handle(self.proc(), "/home/u/work", "alpha")
+        self.assertEqual(uuid, "new")
+        self.assertTrue(how.startswith("verified: parked"), how)
+        self.assertIn("old", how)
+
+    def test_parked_but_successor_transcript_missing_is_unverified(self):
+        self.write("old", [rec(type="user", agentName="alpha")])
+        self.entry(27309, sessionId="old", kind="interactive", parkedJobId="gone")
+        self.entry(19885, sessionId="gone", kind="bg", jobId="gone")
+        uuid, how = tr.resume_handle(self.proc(), "/home/u/work", "alpha")
+        self.assertEqual(uuid, "old")
+        self.assertTrue(how.startswith("UNVERIFIED"), how)
+
+    def test_parked_job_with_no_registry_sibling_is_unverified(self):
+        self.write("old", [rec(type="user", agentName="alpha")])
+        self.entry(27309, sessionId="old", kind="interactive", parkedJobId="nobody")
+        uuid, how = tr.resume_handle(self.proc(), "/home/u/work", "alpha")
+        self.assertEqual(uuid, "old")
+        self.assertTrue(how.startswith("UNVERIFIED"), how)
+
+    def test_sibling_in_another_directory_is_not_the_successor(self):
+        self.write("old", [rec(type="user", agentName="alpha")])
+        self.write("new", [rec(type="user", agentName="alpha")])
+        self.entry(27309, sessionId="old", kind="interactive", parkedJobId="new")
+        with open(os.path.join(self.reg.name, "19885.json"), "w") as f:
+            json.dump({"pid": 19885, "cwd": "/home/u/elsewhere", "sessionId": "new", "jobId": "new"}, f)
+        uuid, how = tr.resume_handle(self.proc(), "/home/u/work", "alpha")
+        self.assertEqual(uuid, "old")
+        self.assertTrue(how.startswith("UNVERIFIED"), how)
+
+    def test_unparked_session_is_unchanged(self):
+        self.write("old", [rec(type="user", agentName="alpha")])
+        self.entry(27309, sessionId="old", kind="interactive")
+        with mock.patch.object(tr, "cleared_successor", return_value=(None, 0)):
+            uuid, how = tr.resume_handle(self.proc(), "/home/u/work", "alpha")
+        self.assertEqual((uuid, how), ("old", "verified: --resume in process argv, no /clear since launch"))
+
+    def test_no_registry_entry_is_unchanged(self):
+        self.write("old", [rec(type="user", agentName="alpha")])
+        with mock.patch.object(tr, "cleared_successor", return_value=(None, 0)):
+            uuid, how = tr.resume_handle(self.proc(), "/home/u/work", "alpha")
+        self.assertEqual(uuid, "old")
+        self.assertTrue(how.startswith("verified"), how)

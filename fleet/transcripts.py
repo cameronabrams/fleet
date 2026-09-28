@@ -6,6 +6,7 @@ a handle that is right in one tool and wrong in the other is worse than either.
 import datetime, glob, json, os, re, subprocess, time
 
 PROJECTS = os.path.expanduser("~/.claude/projects")
+SESSIONS = os.path.expanduser("~/.claude/sessions")   # claude's own per-pid registry
 _NAME_RE = re.compile(r'"agentName"\s*:\s*"([^"]+)"')
 
 def project_slug(cwd):
@@ -264,8 +265,61 @@ def newest_transcript(cwd, label=None):
                 "corroborated: newest in cwd and carries peer traffic (no self-report)")
     return os.path.basename(f)[:-6], "UNVERIFIED: no self-report in any transcript"
 
+def _registry(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+def parked_successor(pid, cwd=None):
+    """(uuid, why) of the transcript this process's session was PARKED onto.
+
+    Claude Code (seen 2.1.284) can park an idle interactive session onto a daemon
+    job: the process's own registry entry, `~/.claude/sessions/<pid>.json`, gains
+    `parkedJobId`, and a sibling entry carrying that `jobId` holds the NEW
+    sessionId. The new transcript is a copy of the old plus everything after --
+    so argv, the scratchpad path and "first record after launch" all still name
+    the OLD file, and a restore from it would drop everything since the park.
+    OBSERVED 2026-09-28: `/color` landed in the successor; the manifest read
+    `verified` for the predecessor.
+
+    Returns (uuid, why) when the successor is on disk; (None, None) when the
+    session is not parked; (None, why) when it is parked but the successor
+    cannot be found -- the caller must then report the handle UNVERIFIED rather
+    than keep calling the old one verified. The registry is written by the
+    process itself, so this is a derivation from the live system."""
+    me = _registry(os.path.join(SESSIONS, f"{pid}.json"))
+    if not me or not me.get("parkedJobId"):
+        return None, None
+    job = me["parkedJobId"]
+    for f in glob.glob(os.path.join(SESSIONS, "*.json")):
+        r = _registry(f)
+        if not r or r.get("jobId") != job or not r.get("sessionId"):
+            continue
+        if cwd and r.get("cwd") and me.get("cwd") and r["cwd"] != me["cwd"]:
+            return None, (f"parked to job {job[:8]}, but the registry entry for that job "
+                          f"({os.path.basename(f)}) is in {r['cwd']}, not {me['cwd']}")
+        u = r["sessionId"]
+        if glob.glob(f"{PROJECTS}/*/{u}.jsonl"):
+            return u, (f"parked to job {job[:8]} (registry {pid}.json -> "
+                       f"{os.path.basename(f)}), successor transcript on disk")
+        return None, f"parked to job {job[:8]}, but its transcript {u[:8]} is not on disk"
+    return None, f"parked to job {job[:8]}, but no registry entry carries that job"
+
 def resume_handle(proc, cwd, label):
     """(uuid, how) for the transcript `claude --resume` should reopen."""
+    uuid, how = _resume_handle_unparked(proc, cwd, label)
+    succ, why = parked_successor(proc["pid"], cwd)
+    if succ:
+        if succ == uuid:
+            return uuid, how
+        return succ, f"verified: {why}; {uuid[:8] if uuid else 'no'} handle superseded ({how})"
+    if why:
+        return uuid, f"UNVERIFIED: {why}; would otherwise read {how!r}"
+    return uuid, how
+
+def _resume_handle_unparked(proc, cwd, label):
     if proc["resume_uuid"]:
         succ, n = cleared_successor(proc["resume_uuid"], label, proc["pid"])
         if succ:
