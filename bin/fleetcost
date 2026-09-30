@@ -23,7 +23,9 @@ the compaction boundaries in the same transcripts show.
   fleetcost --worst    most expensive individual messages
 """
 import json, glob, os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from collections import defaultdict
+from fleet import version_flag
 
 # No character cap any more. One stale constant produced two wrong numbers: it
 # truncated the bill AND cut survival short. The bill comes from usage; survival
@@ -110,6 +112,7 @@ def scan():
     return files, msgs, bill, turns
 
 def main():
+    version_flag()
     files, msgs, bill, turns = scan()
     if not msgs:
         print("no cross-session messages found"); return

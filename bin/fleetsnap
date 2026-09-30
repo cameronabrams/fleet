@@ -10,6 +10,7 @@ live process arguments; once tmux dies it is unrecoverable. Writes:
 import json, os, re, shutil, subprocess, glob, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import version_flag
 from fleet.agents import list_agents
 from fleet.panes import in_fleet
 from fleet.procs import proc_cwd
@@ -295,6 +296,7 @@ def linger_units():
     return out
 
 def main():
+    version_flag()
     # Takes no arguments. It used to ignore them, so `fleetsnap --help` wrote a
     # real snapshot (2026-09-13). A tool that writes state must not do so on a
     # request for its usage.

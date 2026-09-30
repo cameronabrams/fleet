@@ -14,6 +14,7 @@ and whether to rerun them is a judgement call, not a recovery step.
 import json, os, subprocess, sys, argparse, time, shlex
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import version_flag
 CFG = fc.load()
 
 STATE = fc.state_dir(CFG)
@@ -131,6 +132,7 @@ def verify(sessions):
     return out
 
 def main():
+    version_flag()
     ap = argparse.ArgumentParser()
     ap.add_argument("fleet", nargs="?", help="fleet to restore (omit to list them)")
     ap.add_argument("--all", action="store_true", help="restore every fleet, exact geometry")

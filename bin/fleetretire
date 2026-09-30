@@ -28,6 +28,7 @@ unexpected screen, 4 timed out waiting for the process to exit.
 import argparse, glob, json, os, re, shlex, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import version_flag
 from fleet.procs import alive, ancestors, children, claude_procs, named, ppid, starttime
 from fleet.agents import background_named, list_agents
 from fleet.transcripts import resume_handle, session_name
@@ -321,6 +322,7 @@ def stop(f, wait, name):
     return 4, f"pid {pid} still running after {wait}s; look at pane {pane}"
 
 def main():
+    version_flag()
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("name")
     g = ap.add_mutually_exclusive_group(required=True)

@@ -42,6 +42,7 @@ be reached, 5 delivered as files but at least one session could not be nudged.
 import argparse, glob, hashlib, json, os, re, shutil, subprocess, sys, time, tomllib
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import version_flag
 
 CFG = fc.load()
 MAIL = fc.mail(CFG)
@@ -470,6 +471,7 @@ def do_ack(a):
     do_send(a)
 
 def main():
+    version_flag()
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("send")

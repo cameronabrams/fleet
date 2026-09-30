@@ -10,12 +10,6 @@ carries only what no repository owns.
 
 ## Versioning
 
-- **No tool reports its version.** There are tags now, so "which fleet is this?"
-  has an answer, and nothing prints it. The awkward part is not the flag but the
-  fourteen ad-hoc argument parsers: several tools treat the first non-flag
-  argument as a session name, so a bare `--version` has to be handled before
-  that, uniformly, without changing any tool's existing exit codes.
-
 - **`install` neither records nor reports what it linked.** It symlinks the
   working tree, so the installed version is whatever the checkout is now — which
   is right, and means a machine cannot answer "what did I install, and has it

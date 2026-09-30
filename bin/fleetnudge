@@ -46,6 +46,7 @@ in the transcript).
 import argparse, contextlib, fcntl, glob, json, os, re, subprocess, sys, time, urllib.request
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import version_flag
 from fleet.agents import list_agents
 from fleet.panes import (in_fleet, CAPTURE, reconcile, screen_state,
                          state_problem, type_line)
@@ -289,6 +290,7 @@ def deliver(r, session, job, text, mail_from=None):
                f"{session}'s transcript within {CONFIRM_WAIT:.0f}s")
 
 def main():
+    version_flag()
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("session")
     ap.add_argument("job")

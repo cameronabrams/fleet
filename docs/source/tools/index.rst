@@ -7,6 +7,10 @@ Every tool is a single stdlib-only script in ``bin/``, linked into ``~/bin`` by
 ``install``. Each page shows the tool's own header text first — it is read from the
 script at build time, so it cannot drift from the code.
 
+Every tool answers ``--version`` (and ``-V``) with the one version this
+repository ships at — ``fleetwatch (fleet 0.2.0)``. There is no per-tool
+version: they are released together.
+
 .. list-table::
    :header-rows: 1
    :widths: 22 58 20

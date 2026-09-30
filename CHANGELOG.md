@@ -30,6 +30,18 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Added
+
+- Every tool answers `--version` (and `-V`), reporting the one version written in
+  `fleet/__init__.py`: `fleetwatch (fleet 0.2.0)`. There had been no way to ask a
+  running fleet which version it was, which stopped being merely untidy once there
+  were tags to point at. The flag was never the awkward part — five tools parse
+  `sys.argv` by hand, nine use argparse, two are shell, and `fleetwatch` refuses an
+  argument it does not recognise — so it is answered in one shared place before any
+  tool parses anything, costing each tool a line and changing no exit code. The
+  test is exhaustive over `bin/` rather than a sample, so a tool added later cannot
+  quietly ship without it.
+
 ### Fixed
 
 - `fleetlog` no longer states a rename it cannot know about. `fleetlog sessions` is

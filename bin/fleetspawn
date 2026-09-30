@@ -28,6 +28,7 @@ should not. If the prompt appears, this stops and says which pane to look at.
 import argparse, os, shlex, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import version_flag
 from fleet.procs import claude_procs, named
 from fleet.transcripts import session_name
 CFG = fc.load()
@@ -153,6 +154,7 @@ def check(a):
     return rc
 
 def main():
+    version_flag()
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("name")
     ap.add_argument("dir")

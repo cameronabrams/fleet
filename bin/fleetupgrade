@@ -18,6 +18,7 @@ a re-arm ledger written BEFORE the restart. This flags who lacks one.
 import json, os, re, subprocess, sys, glob
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import version_flag
 from fleet.agents import by_session_prefix, list_agents
 from fleet.procs import proc_cwd
 from fleet.panes import in_fleet
@@ -437,6 +438,7 @@ def sessions():
     return out
 
 def main():
+    version_flag()
     inst = installed_version()
     ss = sessions()
     # coord last, then stale-first, then name

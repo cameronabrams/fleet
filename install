@@ -12,6 +12,16 @@
 # Never silently replaces a REAL file. Anything displaced is moved to
 # ~/.local/state/fleet/displaced-<stamp>/ so it can be restored.
 set -u
+
+# One version for everything in this repository, read from the one place it is
+# written. Answered before argument handling: the tools that follow take a
+# positional, and one of them refuses an argument it does not recognise.
+case "${1:-}" in
+  --version|-V)
+    HERE_V=$(dirname "$(readlink -f "$0")")
+    echo "$(basename "$0") (fleet $(PYTHONPATH="$HERE_V/.." python3 -c 'import fleet; print(fleet.__version__)'))"
+    exit 0 ;;
+esac
 GO=0; [ "${1:-}" = "--go" ] && GO=1
 APP=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 CFG=${FLEET_CONFIG:-$HOME/.config/fleet}

@@ -41,6 +41,7 @@ unexpected screen, 4 timed out waiting for the result.
 import argparse, glob, json, os, re, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import version_flag
 from fleet.agents import by_session_prefix, list_agents
 from fleet.procs import alive, ancestors, children, claude_procs, ppid, starttime
 from fleet.panes import (CAPTURE, in_fleet, input_line, reconcile, screen_state,
@@ -351,6 +352,7 @@ def do_color(r):
                f"{COLOR_WAIT:.0f}s; look at pane {r['pane']}")
 
 def main():
+    version_flag()
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--compact", metavar="NAME")

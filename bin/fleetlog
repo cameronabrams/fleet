@@ -14,6 +14,7 @@ Read-only. Nothing is sent, nothing is modified. Everything below is derived fro
 import json, os, re, sys, glob, argparse, hashlib
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import version_flag
 from fleet import identity
 from fleet.transcripts import project_slug
 CFG = fc.load()
@@ -658,6 +659,7 @@ def week_of(ts):
     return (d - _dt.timedelta(days=d.weekday())).isoformat()
 
 def main():
+    version_flag()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     # --all on the top-level parser too, so both `fleetlog --all` and

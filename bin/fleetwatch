@@ -36,6 +36,7 @@ import datetime, json, os, re, subprocess, sys, glob
 from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import version_flag
 from fleet.procs import alive
 from fleet.panes import in_fleet
 from fleet.transcripts import session_name
@@ -525,6 +526,7 @@ def parse_args(argv, known):
     return session, want_json
 
 def main():
+    version_flag()
     only, want_json = parse_args(sys.argv[1:], known_sessions())
     jobs, cluster_ok = live_jobs()
     reg, dead_reg = registered()

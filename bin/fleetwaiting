@@ -19,6 +19,7 @@ import json, os, re, glob, subprocess, sys, time
 from datetime import datetime, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import version_flag
 from fleet.transcripts import project_slug
 
 PROJECTS = os.path.expanduser("~/.claude/projects")
@@ -146,6 +147,7 @@ def age(ts):
         return "?"
 
 def main():
+    version_flag()
     sess = live_sessions()
     # Not the session running this: it is the one asking, not one that is waiting.
     me = os.environ.get("CLAUDE_CODE_SESSION_ID")
