@@ -1,5 +1,5 @@
 import json, os, shutil, subprocess, tempfile, unittest
-from tests.support import APP, BASE_TOML, FakeConfig
+from tests.support import APP, BASE_TOML, FakeConfig, load_tool
 
 TOOL = os.path.join(APP, "bin", "fleetrestore")
 
@@ -105,6 +105,36 @@ class StoppedByNameOnly(Plan):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("claude --name alpha --resume u-alpha", r.stdout)
         self.assertNotIn("not relaunched", r.stdout)
+
+class RecoveryBrief(unittest.TestCase):
+    """--brief used to write RECOVERY.md into each session's cwd. For a repo
+    session that is the repo root: untracked, not gitignored, and `git add -A` is
+    how most commits are made. Raised independently by four sessions within
+    minutes of the 2026-09-30 restore; one copy landed in a public repository and
+    one in the tree that feeds a manuscript.
+
+    It now goes to the state directory, beside the ledgers and the watcher
+    registrations, which is where a record about a session already lives.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.r = load_tool("fleetrestore")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def test_the_brief_goes_to_the_state_directory_not_a_work_tree(self):
+        self.assertTrue(self.r.RECOVERY_DIR.startswith(self.cfg.state),
+                        f"{self.r.RECOVERY_DIR} is not under the state dir")
+        self.assertTrue(self.r.RECOVERY_DIR.endswith("recovery"))
+
+    def test_nothing_is_written_into_a_session_cwd(self):
+        """The guard that matters: no path the tool builds for a brief may sit
+        under a session's working directory."""
+        src = open(os.path.join(APP, "bin", "fleetrestore")).read()
+        self.assertNotIn('os.path.join(s["cwd"], "RECOVERY.md")', src)
+        self.assertIn("RECOVERY_DIR", src)
+
 
 if __name__ == "__main__":
     unittest.main()

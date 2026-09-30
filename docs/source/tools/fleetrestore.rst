@@ -12,7 +12,7 @@ Usage
    fleetrestore <fleet>          plan one fleet (tiled layout)
    fleetrestore --all            plan everything, with each window's exact layout
    ... --go                      build it
-   ... --brief                   write RECOVERY.md into each session's directory (with --go)
+   ... --brief                   write a recovery brief per session
    ... --stagger SECONDS         pause between launches (default 3)
 
 **Run it without** ``--go`` **first and read the plan.** A stale manifest rebuilds a

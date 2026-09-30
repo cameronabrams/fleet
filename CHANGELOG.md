@@ -15,6 +15,15 @@ Releases are cut with `scripts/release.sh <version>`.
 
 ### Fixed
 
+- `fleetrestore --brief` no longer writes its recovery brief into a session's
+  working directory. For a repo session that is the repo root, so the brief landed
+  untracked and un-ignored in a work tree — a public one in at least one case, and
+  the tree feeding a manuscript in another — where `git add -A` would have swept
+  fleet tooling output into a commit. Raised independently by four sessions within
+  minutes of a power cycle, which is the argument for fixing it rather than
+  circulating a convention about it. Briefs now go to `<state>/recovery/<session>.md`,
+  beside the ledgers and watcher registrations, and the restore prints the path.
+
 - `fleetcost` reported about half the tokens actually read, and called the figure an
   over-count. One stale constant did both: a 200k-token window applied as a sliding
   byte cap, from when that was the whole context. It truncated the bill — 88% of

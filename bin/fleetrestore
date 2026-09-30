@@ -17,6 +17,7 @@ from fleet import config as fc
 CFG = fc.load()
 
 STATE = fc.state_dir(CFG)
+RECOVERY_DIR = os.path.join(STATE, "recovery")
 
 
 BRIEF = """# Recovery brief — {label}
@@ -169,15 +170,25 @@ def main():
 
     if a.brief:
         for s in m["sessions"]:
-            path = os.path.join(s["cwd"], "RECOVERY.md")
+            # NOT the session's cwd: for a repo session that is the repo root,
+            # so the brief landed untracked in a work tree -- a public one in at
+            # least one case -- and `git add -A` is how most commits are made.
+            # Raised independently by four sessions within minutes of the
+            # 2026-09-30 restore. The state directory already holds ledgers and
+            # watcher registrations; a recovery brief belongs with them.
+            os.makedirs(RECOVERY_DIR, exist_ok=True)
+            path = os.path.join(RECOVERY_DIR, s["label"] + ".md")
             txt = BRIEF.format(label=s["label"], now=time.strftime("%Y-%m-%d %H:%M"),
                                durable=", ".join(s["durable_files"]) or "none recorded")
             print(f"    write {path}")
             if a.go:
                 try:
-                    open(path, "w").write(txt)
+                    with open(path, "w") as f:
+                        f.write(txt)
                 except OSError as e:
                     print(f"      ! {e}")
+                    continue
+
 
     if not a.go:
         print("  PLAN (nothing executed; pass --go to run):\n")
