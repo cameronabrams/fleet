@@ -95,6 +95,26 @@ carries only what no repository owns.
 
 ## The screen as a state oracle
 
+- **An unreproduced disagreement between the pane and the session.** Reported
+  2026-09-30: `fleetcontext` reported four consecutive times that one pane read
+  idle while the session reported busy, and a capture taken by hand seconds later
+  showed the busy marker plainly present. `screen_state` checks that marker before
+  anything else, so a capture containing it cannot return idle — which means the
+  two captures differed, and the one that mattered is gone.
+
+  Not reproduced, and not closed. What is ruled out: the pane mapping (checked —
+  the tool captures the pane the label says), an empty capture (that returns
+  `no-prompt`, not `idle`), and a stale marker string (present and matching on
+  2.1.285). What is not: a frame caught mid-redraw, and a footer whose right-hand
+  region changes shape near the auto-compact threshold, which would make the
+  capture width-sensitive.
+
+  The disagreement now prints the last line the tool itself captured, so the next
+  occurrence carries the evidence a later look cannot recover. **What would decide
+  it is one recurrence with that line in it.**
+
+
+
 - **Nothing checks that the TUI markers still match the installed `claude`.**
   `fleet/panes.py` decides whether a session is busy, at a trust prompt, or holding
   a draft by parsing a captured pane. Two of its markers carry the version they

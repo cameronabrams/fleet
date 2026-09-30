@@ -45,6 +45,7 @@ from fleet import version_flag
 from fleet.agents import by_session_prefix, list_agents
 from fleet.procs import alive, ancestors, children, claude_procs, ppid, starttime
 from fleet.panes import (CAPTURE, in_fleet, input_line, reconcile, screen_state,
+                         strip_escapes,
                          state_problem, type_line)
 from fleet.transcripts import agent_color, compactions, context_stats, session_name
 
@@ -173,6 +174,12 @@ def enrich(r, now=None):
     r["idle_s"] = now - st["mtime"] if st and st["mtime"] else None
     text = screen(r["pane"]) if r["pane"] else ""
     seen = screen_state(text) if r["pane"] else "no-pane"
+    # Keep the bottom of what was actually captured, for the disagreement report.
+    # A report that a screen and a status disagree is not diagnosable without the
+    # screen: the 2026-09-30 case could not be resolved because the only evidence
+    # was a capture taken by a person seconds later, in a pane that had moved on.
+    r["footer"] = next((l for l in reversed(strip_escapes(text).splitlines())
+                        if l.strip()), "") if text else ""
     # One reconciliation for both tools: this one used to count only "busy" while
     # fleetnudge also counted "waiting", so they disagreed about what busy means.
     r["state"], r["disagree"] = reconcile(seen, r.get("status"))
@@ -244,9 +251,11 @@ def report(rows, agents, as_json):
         # disagree, both resolve to busy -- never typing is the safe error -- but
         # saying nothing turns a moved marker into silence.
         print("\n!! THE PANE AND THE SESSION DISAGREE about whether these are busy.")
-        print("   Treated as busy either way. A marker in fleet/panes.py may have moved:")
+        print("   Treated as busy either way. Shown with the LAST LINE THIS TOOL")
+        print("   CAPTURED, because that is the thing a later look cannot recover:")
         for r in clash:
             print("   %-22s %s" % ((r["name"] or f"(pid {r['pid']})")[:22], r["disagree"]))
+            print("     pane %s saw: %r" % (r["pane"], (r.get("footer") or "")[-100:]))
     todo = [r for r in rows if r["action"] == "compact"]
     if todo:
         print("\n  Compact, one at a time:")

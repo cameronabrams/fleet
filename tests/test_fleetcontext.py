@@ -403,5 +403,38 @@ class Color(Base):
         self.assertEqual(code, 4, out)
 
 
+class DisagreementCarriesItsEvidence(Base):
+    """A report that the screen and the status disagree is not diagnosable without
+    the screen. On 2026-09-30 four consecutive runs reported one for the same pane
+    while a capture taken by hand, seconds later, showed the busy marker plainly
+    present -- and neither of us could resolve it, because the only evidence was a
+    different capture of a pane that had moved on.
+
+    The tool has the frame it judged. It should show it."""
+
+    def test_the_line_it_actually_captured_is_reported(self):
+        self.agents[0]["status"] = "busy"
+        self.screen = "⏺ done\n" + "─" * 40 + "\n❯ \n" + "─" * 40 + "\n  a quiet footer\n"
+        code, out = self.run_main()
+        self.assertEqual(code, 0, out)
+        self.assertIn("DISAGREE", out)
+        self.assertIn("a quiet footer", out,
+                      "the disagreement must carry what this tool saw")
+
+    def test_the_evidence_is_the_stripped_last_nonblank_line(self):
+        self.agents[0]["status"] = "busy"
+        self.screen = ("⏺ done\n" + "─" * 40 + "\n❯ \n" + "─" * 40 +
+                       "\n  \x1b[2mdim footer\x1b[0m\n\n\n")
+        code, out = self.run_main()
+        self.assertIn("dim footer", out, "escapes must be stripped, blanks skipped")
+        self.assertNotIn("\x1b", out)
+
+    def test_no_disagreement_means_no_evidence_line(self):
+        """It is shown where it is needed and nowhere else."""
+        self.agents[0]["status"] = "idle"
+        code, out = self.run_main()
+        self.assertNotIn("saw:", out)
+
+
 if __name__ == "__main__":
     unittest.main()

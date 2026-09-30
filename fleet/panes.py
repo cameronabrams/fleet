@@ -14,7 +14,7 @@ a pane: `❯\xa0\x1b[39mzq`). So dim text in the input line is not a draft.
 import re
 import time
 
-BUSY_MARKER = "esc to interrupt"           # footer while a turn runs (2.1.270)
+BUSY_MARKER = "esc to interrupt"           # footer while a turn runs (2.1.285)
 TRUST_MARKERS = ("trust this folder", "Is this a project you created")
 BACKGROUND_MARKER = "Background work is running"
 PROMPT = "❯"                              # the input line, followed by a no-break space when empty (2.1.272)

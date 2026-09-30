@@ -32,6 +32,14 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- When `fleetcontext` reports that a pane and a session disagree about being busy,
+  it now prints the last line it actually captured. A disagreement is not
+  diagnosable without the screen that produced it, and a capture taken by hand
+  afterwards is of a pane that has moved on — which is exactly how one report on
+  2026-09-30 could not be resolved either way.
+
+### Added
+
 - Every tool answers `--version` (and `-V`), reporting the one version written in
   `fleet/__init__.py`: `fleetwatch (fleet 0.2.0)`. There had been no way to ask a
   running fleet which version it was, which stopped being merely untidy once there
