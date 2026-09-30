@@ -15,6 +15,16 @@ Releases are cut with `scripts/release.sh <version>`.
 
 ### Fixed
 
+- `fleetregister --clear` no longer abandons the whole clear on meeting a live
+  registration. It exited from inside the loop, so every dead file sorting after
+  the live one survived — and the glob is lexical on the pid string, so whether a
+  clear worked depended on which pid happened to sort first. It bit exactly the
+  re-armed case, a dead old pid beside a live new one, which is what every restart
+  produces. Dead entries are now cleared and live ones skipped with the warning
+  kept. A run that skipped something exits 3 and says what it cleared and what it
+  did not: 1 still means no registration matched, and the two used to be
+  indistinguishable, so a caller could not tell nothing-to-do from nothing-cleared.
+
 - `fleetrestore` builds on a tmux server it chooses, not the caller's. `$TMUX` is
   set inside any pane, so a restore run from one would have built the fleet on that
   pane's server; the variable is now cleared for every tmux call and `--socket NAME`

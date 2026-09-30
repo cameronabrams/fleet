@@ -21,6 +21,10 @@
 # is still alive (same pid AND starttime): clearing a live watcher would make its
 # job read UNWATCHED while it is being watched. Before 2026-09-13 there was no
 # clear, and sessions deleted registration files by hand.
+#
+# Exit: 0 everything cleared; 1 no registration matched; 3 something was skipped
+# because its watcher is live -- a partial clear, which is not a failure and is
+# not success either.
 set -u
 # State dir comes from fleet.toml via the one loader, so bash and python agree.
 HERE=$(dirname "$(readlink -f "$0")")
@@ -28,17 +32,31 @@ D=$(PYTHONPATH="$HERE/.." python3 -c 'from fleet import config as c; print(c.sta
 [ "$D" = "/watchers" ] && { echo "fleetregister: could not resolve state dir from fleet.toml" >&2; exit 2; }
 mkdir -p "$D"
 if [ "${1:-}" = "--clear" ]; then
-  S=${2:?session}; J=${3:?jobid}; n=0
+  S=${2:?session}; J=${3:?jobid}; n=0; skipped=0
   for f in "$D/$S-$J-"*.json; do
     [ -e "$f" ] || continue
     read -r P ST < <(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["pid"], r.get("starttime",""))' "$f")
     NOW=$(awk '{n=split($0,a,")"); rest=a[n]; split(rest,x," "); print x[1], x[20]}' /proc/"$P"/stat 2>/dev/null)
     if [ -n "$NOW" ] && [ "${NOW%% *}" != "Z" ] && [ "${NOW##* }" = "$ST" ]; then
+      # `continue`, not `exit`. This used to abandon the whole clear on meeting a
+      # live registration, so every DEAD file sorting after it survived -- and the
+      # glob is lexical on the pid string, so whether it worked depended on which
+      # pid happened to sort first. It bit exactly the re-armed case (dead old pid
+      # beside live new pid), which is what every restart produces; four in three
+      # days, 2026-09-30.
       echo "fleetregister: pid $P is still alive -- stop the watcher first; not clearing $f" >&2
-      exit 1
+      skipped=$((skipped+1))
+      continue
     fi
     rm -- "$f" && echo "cleared: $f" && n=$((n+1))
   done
+  if [ $skipped -gt 0 ]; then
+    # Never 0: the caller asked for a clear and did not fully get one. Saying so
+    # is the difference between a partial clear and a complete one, which a
+    # caller reading $? cannot otherwise tell.
+    echo "fleetregister: cleared $n, skipped $skipped live watcher(s) for $S / $J" >&2
+    exit 3
+  fi
   [ $n -gt 0 ] || { echo "fleetregister: no registration for $S / $J" >&2; exit 1; }
   exit 0
 fi
