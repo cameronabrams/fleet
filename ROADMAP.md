@@ -102,12 +102,28 @@ carries only what no repository owns.
   anything else, so a capture containing it cannot return idle — which means the
   two captures differed, and the one that mattered is gone.
 
-  Not reproduced, and not closed. What is ruled out: the pane mapping (checked —
-  the tool captures the pane the label says), an empty capture (that returns
-  `no-prompt`, not `idle`), and a stale marker string (present and matching on
-  2.1.285). What is not: a frame caught mid-redraw, and a footer whose right-hand
-  region changes shape near the auto-compact threshold, which would make the
-  capture width-sensitive.
+  Not reproduced, and not closed. Ruled out by checking: the pane mapping (the
+  tool captures the pane the label says), an empty capture (that returns
+  `no-prompt`, not `idle`), a stale marker string (present and matching on
+  2.1.285), and width-sensitivity near the auto-compact threshold — the reporter
+  raised that one and then lowered it, because only one of the two footers carried
+  the `% until auto-compact` text and both produced the disagreement.
+
+  **What the two cases share is a compaction**: one session about to auto-compact,
+  one mid-`/compact`. That fits a structural gap rather than a flaky capture.
+  `screen_state` can return `trust`, `dialog`, `busy`, `input`, `no-prompt` and
+  `idle` — there is **no state for a compacting pane**, and `fleetcontext` learns
+  that a compaction happened from the TRANSCRIPT (`compact_boundary`), never from
+  the screen. So if a compacting pane draws something other than the busy footer,
+  the parse falls through to `idle` while the session correctly reports busy, and
+  the two sources disagree by construction for as long as the compaction runs —
+  which also explains *sustained but not permanent*, which neither earlier
+  candidate did.
+
+  Deliberately not built on yet: nobody has captured a compacting pane, and adding
+  a marker for a screen no one has seen would be the same mistake one level down.
+  The instrumented line from a run during a compaction confirms or kills it in one
+  observation.
 
   The disagreement now prints the last line the tool itself captured, so the next
   occurrence carries the evidence a later look cannot recover. **What would decide
