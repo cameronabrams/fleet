@@ -15,6 +15,24 @@ Releases are cut with `scripts/release.sh <version>`.
 
 ### Fixed
 
+- `fleetrestore` no longer computes which pane to type into. Targets were built as
+  `<window>.<index + pane-base-index>`, and the base index was read from tmux
+  **before the first `new-session`** — so with no server running the query returned
+  nothing and the code fell back to 0, while the config sets 1. After a power cycle
+  every session went one pane to the left: five never started and seven launched in
+  another session's working directory. The function that read the setting had been
+  added to fix that exact class of failure after an earlier restore, and could not
+  hold in the one case the tool exists for. Pane ids are now captured from
+  `new-session` and `split-window` as each pane is made, so there is no index to be
+  off by and renumbering cannot matter either.
+
+- `fleetrestore` checks before it types and after it builds. A tmux failure never
+  stopped the run, so seven `claude --resume` lines went into the wrong panes: it
+  now compares each pane's directory to the manifest first and skips a mismatch
+  rather than launching into it, refuses to type into a pane it cannot name, and
+  ends by comparing every pane's `@repo` label and directory against the manifest
+  instead of telling the operator to go and check.
+
 - `fleetrestore --brief` no longer writes its recovery brief into a session's
   working directory. For a repo session that is the repo root, so the brief landed
   untracked and un-ignored in a work tree — a public one in at least one case, and

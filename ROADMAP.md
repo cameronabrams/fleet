@@ -143,6 +143,36 @@ carries only what no repository owns.
   the hard half and they are written. Waiting on a second fleet to make it worth
   rendering.
 
+## Recovery
+
+- **No end-to-end test builds a fleet and checks where it landed.** The
+  2026-09-30 restore put every session one pane to the left; five never started
+  and seven launched in another session's directory. The fix removed the class of
+  bug — pane ids are captured at creation, so there is no index to be off by — but
+  what is tested is that no target is *computed*, not that a restore *works*.
+
+  A real test would run `--go` against a throwaway tmux server with
+  `pane-base-index 1` and no server already running, then compare every pane's
+  `@repo` and directory to the manifest. It needs sandboxing that does not exist
+  yet, and shipping it without that is worse than not having it: a `--go` restore
+  types `claude --resume` into panes, so a careless version launches real sessions.
+  Two pieces are needed — a fake `claude` earlier on `PATH`, and a temporary `HOME`
+  so tmux reads a test config rather than the owner's.
+
+- **`$TMUX` decides which server gets built on.** `fleetrestore` calls plain
+  `tmux`, so run from a pane on another server it would build the fleet there.
+  Untested, because testing it means building a fleet somewhere. `tmux -L`, or
+  clearing `TMUX` from the subprocess environment, plus a `--socket` option — which
+  would also make the test above straightforward.
+
+- **`fleetsnap` never removes a manifest for a fleet that no longer exists.**
+  Residue accumulates, and a session that predates its `@fleet` label is filed
+  under its tmux session name as well, so it appears in two fleets. Harmless today
+  — the parked/retired filter runs on the loaded manifest before anything launches,
+  on both the `--all` and named-fleet paths — but a stale manifest is a record of
+  observed state kept by hand, which is the thing this repository refuses
+  everywhere else.
+
 ## The screen as a state oracle
 
 - **Nothing checks that the TUI markers still match the installed `claude`.**

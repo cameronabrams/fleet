@@ -17,6 +17,9 @@ from fleet import config as fc
 CFG = fc.load()
 
 STATE = fc.state_dir(CFG)
+
+# window index AND the id of the pane it came with, in one query
+WIN_FMT = "#{window_index} #{pane_id}"
 RECOVERY_DIR = os.path.join(STATE, "recovery")
 
 
@@ -75,14 +78,36 @@ def run(cmd, go, capture=False):
     return None
 
 
-def pane_base_index():
-    """tmux pane indices need not start at 0. Reading this rather than assuming
-    is the whole fix for the 2026-09-09 restore: with pane-base-index 1 every
-    session was sent one pane too high, and the first of each window nowhere."""
-    r = subprocess.run(["tmux", "show-window-options", "-gv", "pane-base-index"],
+def verify(sessions):
+    """[(label, what is wrong)] comparing what tmux now HAS against the manifest.
+
+    The run used to end by telling the human to go and check. It built the thing;
+    it can say whether what it built is what was asked for. On 2026-09-30 every
+    session came up one pane to the left and nothing in the output said so -- the
+    only check that caught it was a human comparing panes by hand afterwards.
+
+    Compares the two facts a restore is responsible for: the @repo label on each
+    pane, and the directory that pane is in."""
+    r = subprocess.run(["tmux", "list-panes", "-a", "-F",
+                        "#{@repo}\t#{pane_current_path}\t#{pane_id}"],
                        capture_output=True, text=True)
-    v = r.stdout.strip()
-    return int(v) if v.isdigit() else 0
+    if r.returncode != 0:
+        return [("(all)", "could not list panes to check the restore: "
+                          + (r.stderr.strip() or "tmux failed"))]
+    have = {}
+    for row in r.stdout.splitlines():
+        f = row.split("\t")
+        if len(f) == 3 and f[0]:
+            have[f[0]] = (f[1], f[2])
+    out = []
+    for s_ in sessions:
+        got = have.get(s_["label"])
+        if not got:
+            out.append((s_["label"], "no pane carries this @repo label"))
+        elif got[0] != s_["cwd"]:
+            out.append((s_["label"], f"pane {got[1]} is in {got[0]!r}, "
+                                     f"manifest says {s_['cwd']!r}"))
+    return out
 
 def main():
     ap = argparse.ArgumentParser()
@@ -195,7 +220,6 @@ def main():
 
     # group panes by window; create in original pane order, then apply the exact
     # layout tmux itself recorded. Geometry is restored verbatim, not approximated.
-    pbi = pane_base_index()
     by_win = {}
     for s_ in m["sessions"]:
         by_win.setdefault(s_["tmux"]["window"], []).append(s_)
@@ -208,21 +232,34 @@ def main():
                                     capture_output=True).returncode == 0
             if exists:
                 print(f"    (tmux session '{sess}' already exists — adding a window to it)")
-                got = run(["tmux", "new-window", "-P", "-F", "#{window_index}",
+                got = run(["tmux", "new-window", "-P", "-F", WIN_FMT,
                            "-t", f"{sess}:", "-c", panes[0]["cwd"]], a.go, capture=True)
             else:
-                got = run(["tmux", "new-session", "-d", "-P", "-F", "#{window_index}",
+                got = run(["tmux", "new-session", "-d", "-P", "-F", WIN_FMT,
                            "-s", sess, "-c", panes[0]["cwd"]], a.go, capture=True)
             first = False
         else:
-            got = run(["tmux", "new-window", "-P", "-F", "#{window_index}",
+            got = run(["tmux", "new-window", "-P", "-F", WIN_FMT,
                        "-t", f"{sess}:", "-c", panes[0]["cwd"]], a.go, capture=True)
         # tmux is the authority on where the window landed; the manifest index is
         # only a fallback for the dry run, which creates nothing to ask about.
-        win = int(got) if (got or "").isdigit() else w
+        win_s, _, first_id = (got or "").partition(" ")
+        win = int(win_s) if win_s.isdigit() else w
         key = f"{sess}:{win}"
+        # Pane IDS, captured as each pane is made. Targets used to be computed as
+        # "<window>.<index + pane-base-index>", and pane_base_index() asked tmux for
+        # that setting BEFORE the first new-session -- so with no server running it
+        # got nothing and fell back to 0, while ~/.tmux.conf sets 1. Every session
+        # then went one pane to the left: on 2026-09-30 five never started and seven
+        # launched in another session's directory. The function existed to fix that
+        # exact failure after the 2026-09-09 restore, and could not hold in the one
+        # case this tool is for -- a machine that just came back with no server.
+        # A %N id cannot be off by one, and survives renumbering too.
+        pane_ids = [first_id.strip()]
         for extra in panes[1:]:
-            run(["tmux", "split-window", "-t", key, "-c", extra["cwd"]], a.go)
+            pane_ids.append((run(["tmux", "split-window", "-P", "-F", "#{pane_id}",
+                                  "-t", key, "-c", extra["cwd"]],
+                                 a.go, capture=True) or "").strip())
         # Name the window, then pin it. automatic-rename is ON by default, so a
         # window left unnamed gets renamed to the running command — "claude" —
         # within seconds, and the next fleetsnap records THAT as the window name.
@@ -245,7 +282,22 @@ def main():
         else:
             run(["tmux", "select-layout", "-t", key, "tiled"], a.go)   # partial fleet: exact layout would not fit
         for i, s_ in enumerate(panes):
-            target = f"{key}.{i + pbi}"
+            target = pane_ids[i] if a.go else f"{key}.<pane {i}>"
+            if a.go and not target.startswith("%"):
+                print(f"    !! no pane id for {s_['label']} -- tmux did not report one. "
+                      f"NOT launching it; nothing is typed into a pane this tool "
+                      f"cannot name.")
+                continue
+            if a.go:
+                here = (run(["tmux", "display", "-p", "-t", target,
+                             "#{pane_current_path}"], a.go, capture=True) or "").strip()
+                if here != s_["cwd"]:
+                    # Issue 2: a tmux failure never stopped the run, so seven
+                    # `claude --resume` lines were typed into the wrong panes.
+                    # This catches a pane-mapping bug whatever its cause.
+                    print(f"    !! {s_['label']}: pane {target} is in {here!r}, "
+                          f"manifest says {s_['cwd']!r}. NOT launching it.")
+                    continue
             run(["tmux", "set", "-p", "-t", target, "@repo", s_["label"]], a.go)
             if s_.get("fleet"):
                 run(["tmux", "set", "-p", "-t", target, "@fleet", s_["fleet"]], a.go)
@@ -260,6 +312,16 @@ def main():
             if a.go and a.stagger:
                 time.sleep(a.stagger)
 
+    if a.go:
+        bad = verify(m["sessions"])
+        if bad:
+            print("\n  !! THE RESTORE DID NOT MATCH THE MANIFEST:")
+            for label, why in bad:
+                print(f"     {label}: {why}")
+            print("     Fix these before asking the sessions to do anything.")
+        else:
+            print("\n  verified: every session's pane carries its @repo label and sits "
+                  "in its manifest directory.")
     print(f"\n  After restore: run `fleetsnap` to re-capture, and ask each session to "
           f"confirm it re-armed what its state files require.\n")
 
