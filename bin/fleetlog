@@ -153,6 +153,7 @@ def parse_transcript(path):
     """Return (identity, how_resolved, [events])."""
     events, ident, how = [], None, None
     last_agent, last_self = None, None
+    own_names = []          # every name THIS transcript recorded, in order
     seen = set()
     trigger = None
     for line in open(path, errors="replace"):
@@ -164,6 +165,8 @@ def parse_transcript(path):
         rtype = rec.get("type", "")
         if rtype == "agent-name" and rec.get("agentName"):
             last_agent = rec["agentName"]
+            if not own_names or own_names[-1] != last_agent:
+                own_names.append(last_agent)
         strings = []
         walk_strings(rec, strings)
         envelope_sender = None
@@ -171,6 +174,8 @@ def parse_transcript(path):
         for s in strings:
             for m in SELF_RE.finditer(s):
                 last_self = m.group(1)
+                if not own_names or own_names[-1] != last_self:
+                    own_names.append(last_self)
             for m in ENV_RE.finditer(s):
                 attrs = dict(ATTR_RE.findall(m.group(1)))
                 sender = canon(attrs.get("from-name"))
@@ -216,20 +221,40 @@ def parse_transcript(path):
                                    "subject": inp.get("summary") or first_line(body),
                                    "body": body, "src": "SendMessage",
                                    "trigger": trigger})
-    ident, how = own_identity(path, last_agent, last_self)
+    ident, how = own_identity(path, last_agent, last_self, own_names)
     if ident is None:
         ident, how = fallback_identity(path, events)
     return ident, how, events
 
-def own_identity(path, last_agent, last_self):
+def own_identity(path, last_agent, last_self, own_names=()):
     """(name, how) from the transcript's OWN records, or (None, None) if it has none.
     The last agent-name record, else the last ListAgents self-report; the rules for
-    a retired name are fleet.identity's, shared with fleetgantt."""
+    a retired name are fleet.identity's, shared with fleetgantt.
+
+    `own_names` is this transcript's own sequence, and it gates the rename branch.
+    `name_map()` is keyed by bare name across EVERY transcript, and its own
+    docstring says why that is dangerous -- "a name is not an identity, a
+    TRANSCRIPT is" -- but this function then applied it across transcripts anyway.
+    `fleetgantt` was fixed in v0.1.0; here the same evidence was still producing
+    "renamed: X became Y" in `fleetlog sessions`, which is a table headed
+    *identity*, for a session started by hand that was never that role.
+
+    What this changes is the CLAIM, not the placement. `place_named` is still true
+    here because the message graph needs a node for every transcript that sent
+    something, so a one-off started in a role's directory is still shown under that
+    role -- but now as "named X; placed by its directory", which is the inference it
+    is, rather than as a rename that never happened. A genuine rename is
+    unaffected: the transcript that was renamed carries both names itself.
+
+    Whether those messages should be folded into the role at all is a separate
+    question, and a live one for per-sender figures. It is not this gate's to
+    answer."""
     name = last_agent or last_self
     if not name:
         return None, None
     ident, how, _ = identity.attribute(name, os.path.basename(os.path.dirname(path)),
-                                       current_sessions(), name_map(), dir_owners())
+                                       current_sessions(), name_map(), dir_owners(),
+                                       own_seq=list(own_names) or [name])
     return ident, how
 
 _OWNERS = None

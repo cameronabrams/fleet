@@ -8,22 +8,6 @@ Rough ordering within each section is by value, not by effort. Items that belong
 to the fleet *application* live here; a fleet-level roadmap indexes this file and
 carries only what no repository owns.
 
-## Identity and attribution
-
-- **`fleetlog` can still state a rename it cannot know about.** `v0.1.0` fixed
-  this for `fleetgantt` by gating the rename branch on the transcript's own name
-  record (`own_seq`), because the rename table is keyed by bare name across every
-  transcript and auto-generated display names are not unique. `fleetlog` calls
-  `identity.attribute` without `own_seq`, deliberately: the message graph wants
-  old messages under the role that sent them, and a graph has no lane to
-  mislabel. But it still prints a `how`, and that `how` can say "renamed" on the
-  same evidence that was wrong in the chart.
-
-  What would decide it: whether any `fleetlog` output is read as an identity
-  rather than as an edge. If it is, the gate applies there too; if not, the
-  docstring should say so where the caller can see it, not only where the
-  function is defined.
-
 ## Versioning
 
 - **No tool reports its version.** There are tags now, so "which fleet is this?"

@@ -30,6 +30,29 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Fixed
+
+- `fleetlog` no longer states a rename it cannot know about. `fleetlog sessions` is
+  a table headed *identity*, and five of its rows claimed one — including the same
+  transcript that was wrong in `fleetgantt` before `v0.1.0`: a session started by
+  hand in a role's directory, which had only ever recorded the auto-generated
+  display name it happened to be given. The rename table is keyed by bare name
+  across every transcript, and `name_map`'s own docstring says why that is
+  dangerous — *"a name is not an identity, a TRANSCRIPT is"* — while this caller
+  applied it across transcripts anyway.
+
+  **The answer is kept; the claim is not.** Cross-transcript lineage is right as
+  often as it is wrong — a session resumed elsewhere and renamed there has its old
+  transcript here — and the two cases are indistinguishable from the data. So a
+  mapping this transcript does not corroborate now reads
+  `'X' -> 'Y', from another transcript` instead of `renamed: 'X' became 'Y'`, and
+  a caller that treats the answer as an identity rather than an edge — a lane on a
+  chart — still keeps it apart, which is the `v0.1.0` behaviour and is now tested
+  so that it survives.
+
+  A mapping that came from the directory branch was also being called a rename.
+  Nothing there was ever renamed, and it no longer says so.
+
 ## [0.2.0] - 2026-09-30
 
 ### Fixed

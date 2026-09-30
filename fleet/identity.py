@@ -69,8 +69,21 @@ def attribute(own_name, project, current, renames, dir_owner, place_named=True,
     wants it for the message graph, where there is no lane to mislabel."""
     if own_name and (current is None or own_name in current):
         return own_name, "own name record", False
-    if own_name and own_name in renames and (own_seq is None or renames[own_name] in own_seq):
-        return renames[own_name], f"renamed: {own_name!r} became {renames[own_name]!r}", True
+    if own_name and own_name in renames:
+        target = renames[own_name]
+        # Corroborated: THIS transcript recorded both names, so it really was
+        # renamed. Uncorroborated: the mapping comes from another transcript's
+        # record -- which is often right (a session resumed elsewhere and renamed
+        # there; its old transcript is that session's earlier life) and sometimes
+        # wrong (a different session that merely ended up with the same
+        # auto-generated display name). The two are indistinguishable from the
+        # data, so the answer is kept and the CLAIM is not.
+        if own_seq is None or target in own_seq:
+            return target, f"renamed: {own_name!r} became {target!r}", True
+        if place_named:
+            return target, f"{own_name!r} -> {target!r}, from another transcript", True
+        # place_named=False: a caller that treats the answer as an identity -- a
+        # lane on a chart -- shows it apart rather than binding it to the role.
     owner = dir_owner.get(project) if (place_named or not own_name) else None
     if owner:
         why = f"named {own_name!r}; " if own_name else "no name recorded; "

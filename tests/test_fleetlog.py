@@ -1,6 +1,6 @@
 import json, os, tempfile, unittest
 from unittest import mock
-from tests.support import FakeConfig, load_tool
+from tests.support import APP, FakeConfig, load_tool
 
 class Log(unittest.TestCase):
     def setUp(self):
@@ -251,7 +251,12 @@ class Identity(unittest.TestCase):
         old = self.transcript("-home-u-runs", "old", [self.said("runs-41")])
         ident, how, _ = self.log.parse_transcript(old)
         self.assertEqual(ident, "study")
-        self.assertIn("renamed", how)
+        # NOT "renamed". This mapping comes from name_map()'s DIRECTORY branch --
+        # a successor took over the role in the same place -- and calling that a
+        # rename was always a mislabel: nothing here was renamed, and this
+        # transcript records only the one name.
+        self.assertNotIn("renamed", how)
+        self.assertIn("another transcript", how)
 
     def test_retired_name_renamed_in_a_later_transcript_elsewhere(self):
         # a session named lit-98 in one directory, later resumed elsewhere and
@@ -341,6 +346,67 @@ class RenamedSender(Identity):
     test_retired_name_goes_to_its_own_directory_owner = None
     test_retired_name_with_no_owner_stays_as_written = None
     test_retired_name_renamed_in_a_later_transcript_elsewhere = None
+
+class IdentityDoesNotInventARename(unittest.TestCase):
+    """`fleetlog sessions` is a table headed *identity*, and it stated renames it
+    could not know about -- the same evidence that was wrong in `fleetgantt`,
+    fixed there in v0.1.0 and left here because the graph wanted the lineage.
+
+    Five rows claimed one on 2026-09-30, including e88309d5: a session started by
+    hand in a role's directory, which had only ever recorded the auto-generated
+    display name it happened to be given.
+
+    `name_map()`'s own docstring is the argument -- "a name is not an identity, a
+    TRANSCRIPT is" -- and this is the caller that applied it across transcripts.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.g = load_tool("fleetlog")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def attribute(self, own_name, own_seq, project="-w-proj"):
+        return self.g.identity.attribute(
+            own_name, project, {"repo-role"}, {"auto-8c": "repo-role"},
+            {"-w-proj": "repo-role"}, own_seq=own_seq)
+
+    def test_another_transcripts_lineage_is_not_this_one_s_rename(self):
+        """The answer is kept -- the graph needs a node, and the mapping is often
+        right -- but it stops being stated as a rename this transcript recorded."""
+        who, how, inferred = self.attribute("auto-8c", ["auto-8c"])
+        self.assertNotIn("renamed", how)
+        self.assertIn("from another transcript", how)
+        self.assertTrue(inferred, "an inference must say it is one")
+
+    def test_a_real_rename_still_reads_as_one(self):
+        """The transcript that was actually renamed carries both names itself."""
+        who, how, _ = self.attribute("auto-8c", ["auto-8c", "repo-role"])
+        self.assertEqual(who, "repo-role")
+        self.assertIn("renamed", how)
+
+    def test_the_placement_is_unchanged_only_the_claim(self):
+        """The graph still needs a node for every transcript that sent something,
+        and the mapping is right as often as not -- a session resumed elsewhere and
+        renamed there has its old transcript here. What changes is the claim."""
+        who, _, _ = self.attribute("auto-8c", ["auto-8c"])
+        self.assertEqual(who, "repo-role")
+
+    def test_a_chart_still_keeps_it_apart(self):
+        """fleetgantt passes place_named=False, because a LANE is an identity
+        claim. There the uncorroborated mapping is not applied at all -- which is
+        the v0.1.0 fix, and it must survive this one."""
+        who, how, _ = self.g.identity.attribute(
+            "auto-8c", "-w-proj", {"repo-role"}, {"auto-8c": "repo-role"},
+            {"-w-proj": "repo-role"}, place_named=False, own_seq=["auto-8c"])
+        self.assertEqual(who, "auto-8c")
+        self.assertNotIn("renamed", how)
+
+    def test_the_tool_passes_its_own_sequence(self):
+        src = open(os.path.join(APP, "bin", "fleetlog")).read()
+        self.assertIn("own_seq=list(own_names)", src)
+        self.assertIn("own_names.append", src)
+
 
 if __name__ == "__main__":
     unittest.main()
