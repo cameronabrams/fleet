@@ -15,6 +15,38 @@ Releases are cut with `scripts/release.sh <version>`.
 
 ### Fixed
 
+- `fleetrestore` builds on a tmux server it chooses, not the caller's. `$TMUX` is
+  set inside any pane, so a restore run from one would have built the fleet on that
+  pane's server; the variable is now cleared for every tmux call and `--socket NAME`
+  names a server explicitly. All nineteen invocations go through one place, so the
+  choice is made once.
+
+- `fleetsnap` no longer snapshots panes that are not the fleet's. It read `@repo`
+  only as a source for a session's NAME and fell back to the tmux session name for
+  the fleet, so a personal tmux session was captured **as a fleet** and given its own
+  manifest offering to restore it. Membership is now the same `@repo`/`@fleet` label
+  the other tools use, and excluded panes are reported — a fleet pane that lost its
+  labels is missing from the snapshot, which means missing from recovery.
+
+- `fleetsnap` retires per-fleet manifests for fleets that no longer exist. It wrote
+  one per snapshot and never removed any, so `fleetrestore` offered to rebuild fleets
+  that had not existed for weeks. They are moved to `<name>.json.stale` rather than
+  deleted, which is the rule `install` already follows. A manifest is kept when its
+  sessions are parked or retired — that manifest is how they come back — or when it
+  cannot be read, and the reason is stated rather than assumed.
+
+### Added
+
+- An end-to-end test that builds a fleet on a throwaway tmux server with
+  `pane-base-index 1` and checks where every session landed. This is what was missing
+  when a restore put every session one pane to the left: everything about the tool
+  was tested except whether it worked. It is safe to run because of the three things
+  that did not exist before — `--socket`, a fake `claude` earlier on `PATH`, and a
+  temporary `HOME` so tmux reads a test config rather than the owner's. Reintroducing
+  the original defect fails it.
+
+### Fixed
+
 - `fleetrestore` no longer computes which pane to type into. Targets were built as
   `<window>.<index + pane-base-index>`, and the base index was read from tmux
   **before the first `new-session`** — so with no server running the query returned

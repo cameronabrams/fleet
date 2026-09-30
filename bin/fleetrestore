@@ -69,10 +69,31 @@ confirmed clean an hour ago may have been superseded by a scheduled job you neve
 saw run. "Verified" carries a timestamp whether or not you wrote one down.
 """
 
+# Which tmux server this tool builds on. `$TMUX` is set inside any pane, so a
+# fleetrestore run from a pane on ANOTHER server would silently build the fleet
+# there. Clearing it makes tmux use the socket it would use from a plain shell,
+# which is where the fleet lives; TMUX_TMPDIR still selects a directory, so a test
+# can point the whole tool at a throwaway server. `--socket` names one explicitly.
+SOCKET = None
+
+def tmux_argv(args):
+    return ["tmux"] + (["-L", SOCKET] if SOCKET else []) + list(args)
+
+def tmux_env():
+    e = dict(os.environ)
+    e.pop("TMUX", None)          # never inherit the caller's server
+    return e
+
+def tmux_run(args, **kw):
+    """Every tmux call in this tool goes through here, so the server is decided
+    once rather than nineteen times."""
+    return subprocess.run(tmux_argv(args), env=tmux_env(), **kw)
+
 def run(cmd, go, capture=False):
-    print(("  $ " if go else "    ") + " ".join(f"'{c}'" if " " in c else c for c in cmd))
+    argv = tmux_argv(cmd[1:]) if cmd and cmd[0] == "tmux" else cmd
+    print(("  $ " if go else "    ") + " ".join(f"'{c}'" if " " in c else c for c in argv))
     if go:
-        r = subprocess.run(cmd, check=False,
+        r = subprocess.run(argv, check=False, env=tmux_env(),
                            capture_output=capture, text=capture)
         return (r.stdout or "").strip() if capture else None
     return None
@@ -88,9 +109,9 @@ def verify(sessions):
 
     Compares the two facts a restore is responsible for: the @repo label on each
     pane, and the directory that pane is in."""
-    r = subprocess.run(["tmux", "list-panes", "-a", "-F",
-                        "#{@repo}\t#{pane_current_path}\t#{pane_id}"],
-                       capture_output=True, text=True)
+    r = tmux_run(["list-panes", "-a", "-F",
+                  "#{@repo}\t#{pane_current_path}\t#{pane_id}"],
+                 capture_output=True, text=True)
     if r.returncode != 0:
         return [("(all)", "could not list panes to check the restore: "
                           + (r.stderr.strip() or "tmux failed"))]
@@ -115,9 +136,14 @@ def main():
     ap.add_argument("--all", action="store_true", help="restore every fleet, exact geometry")
     ap.add_argument("--go", action="store_true", help="actually build it")
     ap.add_argument("--brief", action="store_true", help="write per-session RECOVERY.md")
+    ap.add_argument("--socket", metavar="NAME",
+                    help="build on the tmux server at this socket (tmux -L NAME) "
+                         "instead of the default one")
     ap.add_argument("--stagger", type=float, default=3.0,
                     help="seconds between launches (default 3; avoids a load spike)")
     a = ap.parse_args()
+    global SOCKET
+    SOCKET = a.socket
 
     import glob as _g
     avail = sorted(os.path.basename(f)[:-5] for f in _g.glob(f"{STATE}/*.json")
@@ -145,8 +171,8 @@ def main():
     # liveness: never rebuild a session that is already running
     live = set()
     try:
-        out = subprocess.run(["tmux", "list-panes", "-a", "-F", "#{@repo}"],
-                             capture_output=True, text=True, timeout=5).stdout
+        out = tmux_run(["list-panes", "-a", "-F", "#{@repo}"],
+                       capture_output=True, text=True, timeout=5).stdout
         live = {l.strip() for l in out.splitlines() if l.strip()}
     except Exception:
         pass
@@ -228,8 +254,8 @@ def main():
     for w in sorted(by_win):
         panes = sorted(by_win[w], key=lambda x: x["tmux"]["pane_index"])
         if first:
-            exists = subprocess.run(["tmux", "has-session", "-t", sess],
-                                    capture_output=True).returncode == 0
+            exists = tmux_run(["has-session", "-t", sess],
+                              capture_output=True).returncode == 0
             if exists:
                 print(f"    (tmux session '{sess}' already exists — adding a window to it)")
                 got = run(["tmux", "new-window", "-P", "-F", WIN_FMT,

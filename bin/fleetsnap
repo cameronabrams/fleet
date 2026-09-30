@@ -11,6 +11,7 @@ import json, os, re, shutil, subprocess, glob, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.agents import list_agents
+from fleet.panes import in_fleet
 from fleet.procs import proc_cwd
 from fleet.transcripts import agent_color, newest_transcript, resume_handle, session_name
 CFG = fc.load()
@@ -19,6 +20,61 @@ STATE = fc.state_dir(CFG)
 
 def sh(*a, **kw):
     return subprocess.run(a, capture_output=True, text=True, **kw).stdout
+
+def manifest_is_held(path, held):
+    """Why this manifest must be kept, or None if it may be retired.
+
+    Two different reasons, and saying the wrong one is its own small lie: a
+    manifest whose sessions are parked is being kept deliberately, and one that
+    will not parse is being kept because nothing can show it is disposable."""
+    try:
+        with open(path) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return "it cannot be read, so it cannot be shown to be disposable"
+    if any(s.get("resume_uuid") in held for s in d.get("sessions", [])):
+        return ("its sessions are parked or retired in fleet.toml, and this "
+                "manifest is how they come back")
+    return None
+
+def retire_stale(current):
+    """Move aside per-fleet manifests for fleets that no longer exist.
+
+    `fleetsnap` wrote `<fleet>.json` per snapshot and never removed one, so the
+    residue accumulated and `fleetrestore` offered to rebuild fleets that had not
+    existed for weeks. A record of observed state kept by hand is the thing this
+    repository refuses everywhere else; one it keeps by NOT removing is the same
+    thing more slowly.
+
+    Moved aside rather than deleted, which is the rule `install` already follows
+    for anything it displaces: the residue is evidence until someone has looked
+    at it."""
+    keep = {"manifest"} | set(current)
+    # A PARKED fleet has no live sessions, so it is absent from this snapshot and
+    # looks exactly like one that no longer exists -- and its manifest is the only
+    # thing that can bring it back. Retiring it would remove a recovery path in the
+    # name of tidying, which is the failure `manifest.json` is protected from three
+    # lines up. Caught before shipping: a parked fleet was in the first retire list.
+    held = fc.stopped_uuids(CFG)
+    moved = []
+    for path in glob.glob(f"{STATE}/*.json"):
+        name = os.path.basename(path)[:-5]
+        if name in keep or name.endswith(".stale"):
+            continue
+        why = manifest_is_held(path, held or {})
+        if why:
+            print(f"  keeping {name}.json: {why}")
+            continue
+        dest = path + ".stale"
+        try:
+            os.replace(path, dest)
+            moved.append(name)
+        except OSError:
+            continue
+    if moved:
+        print(f"  retired manifests for fleets that no longer exist: "
+              f"{', '.join(sorted(moved))}  (moved to <name>.json.stale)")
+    return moved
 
 def rotate(path, keep=10):
     """Keep history of the file the whole recovery path depends on.
@@ -273,14 +329,27 @@ def main():
             # session resumes that transcript, via --resume in its process argv or
             # via a descendant executing from its scratchpad path.
             "authority": CFG.get("authority", {})}
+    outside = []
     for r in pane_rows():
         if len(r) < 11:
             continue
         sess, win, winname, pidx, pane, repo, fleet, title, pane_path, ppid, size = r[:11]
-        fleet = fleet or sess or "default"
         proc = claude_proc(ppid)
         if not proc:
             continue
+        if not in_fleet(repo, fleet):
+            # `tmux list-panes -a` crosses tmux SESSIONS, so this sees the owner's
+            # own windows too. Without this check a personal session was snapshotted
+            # AS A FLEET -- `fleet = fleet or sess` named it after its tmux session,
+            # and `<that>.json` then sat in the state directory offering to restore
+            # something that was never ours. Observed 2026-09-30.
+            #
+            # Reported, never dropped in silence: a fleet pane that lost its labels
+            # would otherwise vanish from the snapshot, and a session missing from
+            # the manifest is a session missing from recovery.
+            outside.append((pane, sess, title or "(no title)"))
+            continue
+        fleet = fleet or sess or "default"
         # The session's own cwd. pane_current_path follows whatever the pane runs,
         # so a `cd` in one of the session's shell calls would be snapshotted as its
         # directory and rebuilt there (fleet.procs.proc_cwd).
@@ -334,6 +403,15 @@ def main():
     with open(f"{STATE}/manifest.json", "w") as f:
         json.dump(snap, f, indent=2)
 
+    if outside:
+        print("  not this fleet's, so not snapshotted (no @repo/@fleet label; "
+              "`tmux list-panes -a` crosses tmux sessions):")
+        for pane, tsess, title in outside:
+            print(f"    {pane} in tmux session {tsess!r}  {title}")
+        print("    If one of these SHOULD be in the fleet it is missing its label, "
+              "and it is missing from recovery too:")
+        print("      tmux set -p -t <pane> @fleet <name>; tmux set -p -t <pane> @repo <name>")
+
     fleets = {}
     for sess in snap["sessions"]:
         fleets.setdefault(sess["fleet"], []).append(sess)
@@ -348,6 +426,7 @@ def main():
                                         for m in members)}
         with open(f"{STATE}/{name}.json", "w") as f:
             json.dump(sub, f, indent=2)
+    retire_stale(set(fleets))
     idx = [f"# Fleets on {snap['host']} — {snap['captured']}\n",
            "One manifest per fleet. `fleetrestore <fleet>` rebuilds one; "
            "`fleetrestore --all` rebuilds everything with exact geometry.\n",

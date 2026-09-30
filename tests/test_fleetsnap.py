@@ -1,6 +1,6 @@
 import json, os, tempfile, unittest
 from unittest import mock
-from tests.support import FakeConfig, load_tool
+from tests.support import APP, FakeConfig, load_tool
 from fleet import transcripts
 
 class SnapshotDirectory(unittest.TestCase):
@@ -245,6 +245,104 @@ class LiveColor(unittest.TestCase):
         with mock.patch.object(self.snap, "agent_color", return_value="cyan"):
             self.assertEqual(self.snap.live_color(["claude", "--name", "a"], "u"), ("cyan", True))
         self.assertEqual(self.snap.live_color(["claude", "--name", "a"], None)[1], False)
+
+class StaleManifests(unittest.TestCase):
+    """fleetsnap wrote <fleet>.json per snapshot and never removed one, so
+    manifests accumulated for fleets that no longer existed and `fleetrestore`
+    offered to rebuild them. Observed 2026-09-30: `sidebar.json` -- a personal tmux
+    session that was never a fleet at all -- and `0.json`, a session filed under its
+    tmux session name from before it had an @fleet label."""
+
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.s = load_tool("fleetsnap")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def put(self, *names):
+        for n in names:
+            with open(os.path.join(self.cfg.state, n + ".json"), "w") as f:
+                f.write("{}")
+
+    def names(self, suffix=".json"):
+        return sorted(f[:-len(suffix)] for f in os.listdir(self.cfg.state)
+                      if f.endswith(suffix))
+
+    def test_a_fleet_that_no_longer_exists_is_retired(self):
+        self.put("manifest", "coord", "sidebar", "0")
+        moved = self.s.retire_stale({"coord"})
+        self.assertEqual(sorted(moved), ["0", "sidebar"])
+        self.assertEqual(self.names(), ["coord", "manifest"])
+
+    def test_it_is_moved_aside_not_deleted(self):
+        """`install`'s rule: what is displaced is moved, not destroyed. The
+        residue is evidence until someone has looked at it."""
+        self.put("manifest", "sidebar")
+        self.s.retire_stale(set())
+        self.assertEqual(self.names(".json.stale"), ["sidebar"])
+
+    def test_the_whole_fleet_manifest_is_never_retired(self):
+        """manifest.json is what `--all` restores from; retiring it would remove
+        the recovery path in the name of tidying."""
+        self.put("manifest")
+        self.assertEqual(self.s.retire_stale(set()), [])
+        self.assertEqual(self.names(), ["manifest"])
+
+    def test_a_parked_fleet_is_kept_because_its_manifest_is_how_it_returns(self):
+        """A parked fleet has no live sessions, so it is absent from the snapshot
+        and looks exactly like one that no longer exists. Caught before shipping:
+        the first version of this cleanup would have retired a real parked fleet,
+        removing the only thing that can bring it back."""
+        import json as _j
+        with open(os.path.join(self.cfg.state, "manifest.json"), "w") as f:
+            f.write("{}")
+        with open(os.path.join(self.cfg.state, "parkedfleet.json"), "w") as f:
+            _j.dump({"sessions": [{"resume_uuid": "u-parked"}]}, f)
+        with mock.patch.object(self.s.fc, "stopped_uuids",
+                               return_value={"u-parked": ("parked", "parked")}):
+            self.assertEqual(self.s.retire_stale(set()), [])
+        self.assertIn("parkedfleet", self.names())
+
+    def test_an_unreadable_manifest_is_never_retired(self):
+        """It cannot be checked, so it cannot be shown to be disposable."""
+        with open(os.path.join(self.cfg.state, "manifest.json"), "w") as f:
+            f.write("{}")
+        with open(os.path.join(self.cfg.state, "broken.json"), "w") as f:
+            f.write("{not json")
+        with mock.patch.object(self.s.fc, "stopped_uuids", return_value={"x": ("p", "p")}):
+            self.assertEqual(self.s.retire_stale(set()), [])
+
+    def test_a_live_fleet_is_left_alone(self):
+        self.put("manifest", "coord", "records")
+        self.assertEqual(self.s.retire_stale({"coord", "records"}), [])
+        self.assertEqual(self.names(), ["coord", "manifest", "records"])
+
+
+class OutsidePanes(unittest.TestCase):
+    """A pane with no @repo/@fleet label is not this fleet's. Without the check,
+    `fleet = fleet or sess` named it after its tmux session and wrote a manifest
+    offering to restore something that was never ours."""
+
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.s = load_tool("fleetsnap")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def test_membership_is_the_label_not_the_tmux_session_name(self):
+        self.assertTrue(self.s.in_fleet("coord", "coord"))
+        self.assertTrue(self.s.in_fleet("literature", ""))   # relabelled by hand
+        self.assertFalse(self.s.in_fleet("", ""))
+
+    def test_the_session_name_fallback_only_applies_to_panes_that_are_ours(self):
+        src = open(os.path.join(APP, "bin", "fleetsnap")).read()
+        i = src.index("if not in_fleet(repo, fleet):")
+        j = src.index('fleet = fleet or sess or "default"')
+        self.assertLess(i, j, "the membership check must run BEFORE the fallback "
+                              "that names a fleet after its tmux session")
+
 
 if __name__ == "__main__":
     unittest.main()
