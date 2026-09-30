@@ -5,9 +5,18 @@ Cost of a peer message is not its size. It is size x the number of assistant
 turns it then sits through in the receiver's context. Measured on this fleet:
 ~107x. This script re-measures it.
 
-Estimates only: transcript bytes at 4 chars/token, a 200k-token window treated
-as a sliding cap. Real compaction summarizes rather than slides, so absolutes
-over-count by an unknown margin. Ratios are sound. /cost is the truth.
+The bill is not an estimate: every assistant turn carries `message.usage`, so the
+tokens actually read are read off the transcript. It used to be guessed at four
+characters per token with each turn capped at a 200k-token window, which
+UNDER-counted by about half once contexts outgrew that cap -- 88% of turns were
+hitting it -- while the output still called itself an over-count (reported
+2026-09-30).
+
+Survival is still a model, and now a defensible one: a message is re-read on every
+assistant turn until the context holding it is COMPACTED, which is what actually
+evicts it. The old byte window modelled a sliding cap that does not exist --
+compaction summarizes rather than slides -- and put survival at a third of what
+the compaction boundaries in the same transcripts show.
 
   fleetcost            summary
   fleetcost --senders  per-sender volume
@@ -16,7 +25,9 @@ over-count by an unknown margin. Ratios are sound. /cost is the truth.
 import json, glob, os, sys
 from collections import defaultdict
 
-CAP = 800_000                     # ~200k tokens, in chars
+# No character cap any more. One stale constant produced two wrong numbers: it
+# truncated the bill AND cut survival short. The bill comes from usage; survival
+# ends at a compaction boundary.
 ROOT = os.path.expanduser("~/.claude/projects")
 # Scan EVERY project dir, not just -home-<user>*. A session whose cwd is outside
 # $HOME (e.g. /data/...) lands in its own project dir; globbing
@@ -25,27 +36,57 @@ ROOT = os.path.expanduser("~/.claude/projects")
 # was being undercounted. Never narrow this glob to make a scan cheaper.
 PAT = os.path.join(ROOT, "*", "*.jsonl")
 
+def is_boundary(d):
+    """A compaction boundary: past it, the message is a summary, not itself.
+
+    A `/clear` needs no case of its own -- it starts a new transcript, so the file
+    simply ends."""
+    return d.get("subtype") == "compact_boundary" or "compactMetadata" in d
+
+def usage_of(d):
+    """(read, written) tokens for one assistant turn, as BILLED, or None.
+
+    Read is input + cache reads + cache writes: every token the model had to be
+    given. Cache reads dominate (about 97% here) and are billed at a fraction of
+    the input rate, so this is a token count, not a price."""
+    m = d.get("message") or {}
+    if m.get("role") != "assistant" or not isinstance(m.get("usage"), dict):
+        return None
+    u = m["usage"]
+    return (u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
+            + u.get("cache_creation_input_tokens", 0),
+            u.get("output_tokens", 0))
+
 def scan():
     files = [f for f in glob.glob(PAT) if os.path.getsize(f) > 10_000]
-    msgs, bill, turns = [], 0, 0
+    msgs, turns = [], 0
+    bill = {"read": 0, "written": 0, "cache_read": 0, "fresh": 0}
     for f in files:
         try:
-            lines = open(f, errors="ignore").readlines()
+            with open(f, errors="ignore") as fh:
+                lines = fh.readlines()
         except OSError:
             continue
-        recs, is_a = [], []
+        recs, is_a, is_b = [], [], []
         for line in lines:
             try:
                 d = json.loads(line)
             except ValueError:
-                recs.append(None); is_a.append(0); continue
+                recs.append(None); is_a.append(0); is_b.append(0); continue
             recs.append(d)
             is_a.append(1 if (d.get("message") or {}).get("role") == "assistant" else 0)
-        run = 0
-        for i, line in enumerate(lines):
-            run += len(line)
-            if is_a[i]:
-                bill += min(run, CAP); turns += 1
+            is_b.append(1 if is_boundary(d) else 0)
+        for d in recs:
+            if not d:
+                continue
+            u = usage_of(d)
+            if u is None:
+                continue
+            turns += 1
+            bill["read"] += u[0]; bill["written"] += u[1]
+            cache = (d["message"]["usage"].get("cache_read_input_tokens", 0))
+            bill["cache_read"] += cache
+            bill["fresh"] += u[0] - cache
         for i, d in enumerate(recs):
             if not d or d.get("type") == "queue-operation":
                 continue
@@ -55,13 +96,11 @@ def scan():
             c = str(c)
             if "cross-session-message" not in c:
                 continue
-            added, rr = 0, 0
+            rr = 0
             for j in range(i, len(lines)):
-                added += len(lines[j])
-                if added > CAP:
-                    break
-                if is_a[j]:
-                    rr += 1
+                if is_b[j]:
+                    break              # compacted: what follows re-reads a summary
+                rr += is_a[j]
             sender = "unknown"
             k = c.find('from-name=')
             if k >= 0:
@@ -79,14 +118,24 @@ def main():
     surv = sorted(m[2] for m in msgs)
     sizes = sorted(m[1] for m in msgs)
     print("transcripts %d   assistant turns %d" % (len(files), turns))
-    print("fleet input-token bill  ~%.1f M  (pre-cache-discount, over-counts)" % (bill / 4e6))
+    # Read off message.usage, not estimated: this is what was given to the model.
+    # The cache share matters because those tokens are billed at a fraction of the
+    # input rate, so this is a token count and not a price.
+    print("tokens READ    %8.2f G   (%.0f%% of them cache reads)"
+          % (bill["read"] / 1e9, 100 * bill["cache_read"] / max(bill["read"], 1)))
+    print("  fresh + cache writes %6.2f G" % (bill["fresh"] / 1e9))
+    print("tokens WRITTEN %8.2f G" % (bill["written"] / 1e9))
     print()
     print("peer messages   %d   mean %d chars   median %d   max %d"
           % (len(msgs), w // len(msgs), sizes[len(sizes)//2], sizes[-1]))
     print("written once    ~%d tok" % (w / 4))
     print("re-read         ~%d tok" % (r / 4))
-    print("AMPLIFICATION   %.0fx   median msg survives %d turns, p90 %d"
+    print("AMPLIFICATION   %.0fx   median msg survives %d turns to compaction, p90 %d"
           % (r / w, surv[len(surv)//2], surv[int(len(surv)*.9)]))
+    print("                (survival is a model: re-read every assistant turn until")
+    print("                 the context is compacted. The message sizes either side")
+    print("                 of it are characters at 4/token, so the ratio is sound")
+    print("                 and the absolutes are approximate.)")
     med = surv[len(surv)//2]
     print()
     print("a 4,000-char peer message costs ~%d tok; at 800 chars, ~%d tok"

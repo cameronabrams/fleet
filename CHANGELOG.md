@@ -15,6 +15,21 @@ Releases are cut with `scripts/release.sh <version>`.
 
 ### Fixed
 
+- `fleetcost` reported about half the tokens actually read, and called the figure an
+  over-count. One stale constant did both: a 200k-token window applied as a sliding
+  byte cap, from when that was the whole context. It truncated the bill — 88% of
+  turns exceeded it — and it cut message survival off at the same boundary, which
+  put **amplification at roughly a third** of what the compaction records in the same
+  transcripts show. The bill now comes from `message.usage`, which every assistant
+  turn carries, so it is read rather than estimated and needs no characters-per-token
+  assumption; survival now ends at a compaction boundary, which is what actually
+  evicts a message. On this fleet the amplification figure moves from ~110x to ~356x.
+  Reported by a session that had the old number on a public slide.
+
+- `fleetcost` has tests. It had none, which is how a number wrong by half, labelled
+  wrong in the other direction, survived in the figure the messaging convention rests
+  on.
+
 - The pane and the session no longer disagree in silence about whether a session
   is busy. Whether a pane is idle was decided by parsing a captured terminal —
   a TUI whose markers move — and `claude agents` answers the same question

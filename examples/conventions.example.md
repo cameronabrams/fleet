@@ -10,8 +10,14 @@ Applies to every session in this fleet. Each session's brief points here.
 ## 1. Peer messages: a pointer, not a payload
 
 A message is not paid for once. It sits in the receiver's context and is re-read on
-every later turn. Measured in an earlier fleet: median message survived ~120 turns,
-~107x amplification.
+every later turn. Measured in an earlier fleet: the median message survived ~270
+turns before the context was compacted, ~356x amplification.
+
+**Measure your own** — `fleetcost` does it from your transcripts, and the figure is
+not portable. An earlier version of these notes carried ~107x, which came from a
+tool that cut survival off at a fixed 200k-token window; once contexts outgrew that
+window the number was about a third of what the compaction boundaries in the same
+transcripts showed.
 
 - Write the content to a file; send the path plus a **one-line conclusion**. If the
   reader can act without opening the file, you sent the payload anyway.
