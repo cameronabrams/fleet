@@ -97,5 +97,52 @@ class ChangelogNotes(unittest.TestCase):
         self.assertTrue(r.stdout.strip())
 
 
+class BumpKind(unittest.TestCase):
+    """`release.sh` names the bump beside the pending entries before asking you to
+    confirm it. v0.1.1 was chosen by arguing "it is 0.x, so anything may move",
+    which is a reason to ignore the rule rather than an application of it."""
+
+    def setUp(self):
+        sys.path.insert(0, os.path.join(APP, "scripts"))
+        from bump_kind import kind
+        self.kind = kind
+
+    def test_each_component(self):
+        self.assertEqual(self.kind("0.1.1", "1.0.0"), "MAJOR")
+        self.assertEqual(self.kind("0.1.1", "0.2.0"), "MINOR")
+        self.assertEqual(self.kind("0.1.1", "0.1.2"), "PATCH")
+        self.assertEqual(self.kind("0.1.1", "0.1.1"), "SAME")
+
+    def test_the_first_release_from_nothing_is_a_minor(self):
+        self.assertEqual(self.kind("0.0.0", "0.1.0"), "MINOR")
+
+    def test_a_prerelease_suffix_does_not_confuse_it(self):
+        self.assertEqual(self.kind("0.1.1", "0.2.0-rc1"), "MINOR")
+
+    def test_a_short_version_is_padded_not_rejected(self):
+        self.assertEqual(self.kind("0.1", "0.2"), "MINOR")
+
+
+class ReleaseRules(unittest.TestCase):
+    def test_the_changelog_states_how_to_choose(self):
+        """The rule has to live where the entries are, or it is re-derived every
+        time -- which is how it was decided for the first two releases."""
+        with open(CHANGELOG) as f:
+            text = f.read()
+        self.assertIn("Which number to bump", text)
+        for word in ("arguments", "exit codes", "--json", "where it writes"):
+            self.assertIn(word, text)
+
+    def test_the_script_refuses_to_confirm_without_a_terminal(self):
+        """A confirmation that defaults to yes when nothing can answer is
+        decorative. --yes is the deliberate way past it."""
+        src = open(os.path.join(APP, "scripts", "release.sh")).read()
+        self.assertIn("! -t 0", src)
+        self.assertIn("ASSUME_YES", src)
+        i, j = src.index("Pending entries"), src.index("Running the test suite")
+        self.assertLess(i, j, "the entries must be shown BEFORE the tests run, "
+                              "so a stop costs nothing")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -9,7 +9,24 @@ The tools are run by hand and by agent sessions rather than imported as a
 library, so "public API" here means a tool's arguments, its exit codes, and the
 shape of its `--json`.
 
-Releases are cut with `scripts/release.sh <version>`.
+## Which number to bump
+
+Decided against that surface, not by how large the change feels:
+
+- **Minor** (`0.1.x` -> `0.2.0`) if any tool's **arguments**, **exit codes**,
+  **`--json` shape**, or **where it writes** changed — including a value a caller
+  could reasonably branch on, and including a removal.
+- **Patch** otherwise: fixes, added output, new tests, documentation, and new
+  optional arguments that change nothing for an existing caller.
+
+Two things this rule is meant to stop. "It is 0.x, so anything may move" is an
+argument for ignoring the rule rather than an application of it. And a number this
+project *reports* — an amplification factor, a token count — is part of the surface
+when someone has quoted it: a reader needs a version boundary to say which figure
+they meant.
+
+Releases are cut with `scripts/release.sh <version>`, which prints the pending
+entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 

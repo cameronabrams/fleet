@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Release fleet at a given version.
 #
-# Usage: ./scripts/release.sh <version>
+# Usage: ./scripts/release.sh <version> [--yes]
 # Example: ./scripts/release.sh 0.1.0
 #
 # Prerequisites (checked automatically):
@@ -29,7 +29,17 @@
 
 set -euo pipefail
 
-VERSION="${1:?Usage: scripts/release.sh <version>  (e.g. 0.1.0)}"
+ASSUME_YES=0
+ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        --yes|-y) ASSUME_YES=1 ;;
+        *) ARGS+=("$arg") ;;
+    esac
+done
+set -- ${ARGS[@]+"${ARGS[@]}"}
+
+VERSION="${1:?Usage: scripts/release.sh <version> [--yes]  (e.g. 0.1.0)}"
 VERSION="${VERSION#v}"
 TODAY="$(date +%Y-%m-%d)"
 
@@ -73,6 +83,43 @@ fi
 if git ls-remote --tags origin "refs/tags/v$VERSION" | grep -q .; then
     echo "ERROR: tag v$VERSION already exists on origin" >&2
     exit 1
+fi
+
+# ── Confirm the bump against what is actually pending ─────────────────────────
+# The script cannot decide whether a change touched the surface -- that is a
+# judgement -- but it can refuse to let the number be chosen without the entries
+# in front of you. v0.1.1 was picked by arguing "it is 0.x, so anything may move",
+# which is a reason to ignore the rule rather than an application of it.
+#   - Non-interactive (CI, a pipe): --yes is REQUIRED. Defaulting to yes there
+#     would make the confirmation decorative.
+LAST="$(git tag --sort=-v:refname | head -1)"
+LAST="${LAST#v}"
+KIND="$(python3 scripts/bump_kind.py "${LAST:-0.0.0}" "$VERSION")"
+
+echo
+echo "  Pending entries for v$VERSION (last release: ${LAST:-none}):"
+echo "  ------------------------------------------------------------"
+python3 scripts/changelog_notes.py Unreleased | sed 's/^/  /'
+echo "  ------------------------------------------------------------"
+echo "  This is a $KIND bump."
+echo
+echo "  MINOR if any tool's arguments, exit codes, --json shape, or where it"
+echo "  writes changed -- including a value a caller could branch on."
+echo "  PATCH otherwise.  (CHANGELOG.md, \"Which number to bump\".)"
+echo
+
+if [ "$ASSUME_YES" != "1" ]; then
+    if [ ! -t 0 ]; then
+        echo "ERROR: not a terminal, so the bump cannot be confirmed. Re-run with --yes" >&2
+        echo "       once you have checked the entries above against the rule." >&2
+        exit 1
+    fi
+    printf "  Is %s the right number for these changes? [y/N] " "$VERSION"
+    read -r reply
+    case "$reply" in
+        y|Y|yes|YES) ;;
+        *) echo "  stopped; nothing has been changed." >&2; exit 1 ;;
+    esac
 fi
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
