@@ -47,7 +47,8 @@ import argparse, contextlib, fcntl, glob, json, os, re, subprocess, sys, time, u
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.agents import list_agents
-from fleet.panes import in_fleet, CAPTURE, screen_state, state_problem, type_line
+from fleet.panes import (in_fleet, CAPTURE, reconcile, screen_state,
+                         state_problem, type_line)
 from fleet.procs import ancestors, claude_procs, ppid
 from fleet.transcripts import PROJECTS, session_name
 
@@ -190,13 +191,14 @@ def resolve(session):
         return None, ("refuse", f"transcript not verified ({r['how']}); delivery could not be confirmed")
     pane_pids = panes()
     r["pane"] = pane_pids.get(r["pid"]) or pane_pids.get(ppid(r["pid"]))
-    r["state"] = screen_state(screen(r["pane"])) if r["pane"] else "no-pane"
+    seen = screen_state(screen(r["pane"])) if r["pane"] else "no-pane"
     # `shell` and `monitor` mean at the prompt while holding runtime: typeable.
-    if r["state"] == "idle" and r["agent"].get("status") in ("busy", "waiting"):
-        r["state"] = "busy"
+    r["state"], r["disagree"] = reconcile(seen, r["agent"].get("status"))
     why = state_problem(r["state"], session, r["pane"])
     if why:
-        return r, ("wait", why)
+        # Say it on the refusal. A screen and a status that disagree is what a
+        # moved TUI marker looks like, and a silent refusal is how it stays hidden.
+        return r, ("wait", why + (f" [{r['disagree']}]" if r["disagree"] else ""))
     return r, None
 
 @contextlib.contextmanager

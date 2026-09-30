@@ -108,6 +108,50 @@ def screen_state(text):
         return "no-prompt"
     return "input" if held else "idle"
 
+# `claude agents` reports these while a session cannot take a typed line.
+# fleetnudge counted "waiting" and fleetcontext did not, so the two tools
+# disagreed about what busy means; this is the superset, which is the safe one.
+BUSY_STATUSES = ("busy", "waiting")
+
+# States only the SCREEN can report: `claude agents` has no idea a folder-trust
+# prompt, a background-work dialog or a half-typed draft is on the pane.
+SCREEN_ONLY = ("trust", "dialog", "input", "no-prompt", "no-pane")
+
+def reconcile(screen, status):
+    """(state, disagreement or None) from the pane and `claude agents`' status.
+
+    The screen is a parse of a TUI that moves. `BUSY_MARKER` and `PROMPT` each
+    carry the version they were last checked against, and they carry DIFFERENT
+    versions because they were re-checked separately after moving. A dim prompt
+    suggestion once read as a human's draft in four panes (2026-09-17), which made
+    fleetnudge decline to type into sessions that were in fact idle.
+
+    The structured status cannot replace the screen -- it cannot see a trust
+    prompt, a dialog or a draft -- but where both can answer, it is the one that
+    does not depend on how a frame was drawn. So the structured source decides
+    busy-vs-idle, the screen decides what only it can see, and a disagreement is
+    RETURNED rather than resolved quietly.
+
+    The dangerous direction is a screen that reads idle while the session reports
+    busy: that is what a moved busy marker looks like, and acting on it types into
+    a session mid-turn. Both directions resolve to busy -- never typing is the
+    safe error -- but a caller that hides the disagreement turns a moved marker
+    into silence, which is how this repository's worst bugs have all read."""
+    # Belt and braces: only "idle" and "busy" are reconciled below, so any other
+    # screen state would fall through to the same answer. Removing this line
+    # changes nothing TODAY -- proved by breaking it -- and it is kept so that a
+    # branch added later cannot start overriding a state the status cannot see.
+    if screen in SCREEN_ONLY or status is None:
+        return screen, None
+    reported_busy = status in BUSY_STATUSES
+    if screen == "idle" and reported_busy:
+        return "busy", (f"the pane reads idle but the session reports {status!r} -- "
+                        f"the busy marker may have moved")
+    if screen == "busy" and not reported_busy:
+        return "busy", (f"the pane reads busy but the session reports {status!r} -- "
+                        f"one of the two is stale")
+    return screen, None
+
 def state_problem(state, name, pane):
     """Why a pane in `state` must not be typed into, or None when it is idle."""
     return {

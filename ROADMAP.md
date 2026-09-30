@@ -143,6 +143,30 @@ carries only what no repository owns.
   the hard half and they are written. Waiting on a second fleet to make it worth
   rendering.
 
+## The screen as a state oracle
+
+- **Nothing checks that the TUI markers still match the installed `claude`.**
+  `fleet/panes.py` decides whether a session is busy, at a trust prompt, or holding
+  a draft by parsing a captured pane. Two of its markers carry the version they
+  were last checked against — and they carry *different* versions, because each was
+  re-checked separately after moving. A dim prompt suggestion once read as a
+  human's draft in four panes (2026-09-17), which made `fleetnudge` decline to type
+  into sessions that were in fact idle.
+
+  `reconcile()` now covers the busy/idle half: `claude agents` answers that
+  structurally, so a moved busy marker is caught and named rather than acting as a
+  silent refusal. **The other states have no second source.** `trust`, `dialog` and
+  `input` are visible only on the screen, so if one of those markers moves there is
+  nothing to disagree with it — and every one of them fails toward *decline*, which
+  is the reassuring direction: the tool goes quiet and the fleet looks calm.
+
+  What would decide it: whether a marker check can be made to fail loudly on its
+  own. The candidates are a canary — capture a pane in a known state at a known
+  version and assert the parse — or recording the version each marker was last
+  confirmed against and warning when the installed binary has moved past it. The
+  second is cheap and catches the class; it does not prove the marker is still
+  right, only that nobody has looked since it changed.
+
 ## Visibility
 
 - **`fleetwatch` could check that tmux's lock is real.** It reports who is

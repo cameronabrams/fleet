@@ -42,9 +42,9 @@ import argparse, glob, json, os, re, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet.agents import by_session_prefix, list_agents
-from fleet.panes import in_fleet
 from fleet.procs import alive, ancestors, children, claude_procs, ppid, starttime
-from fleet.panes import CAPTURE, input_line, screen_state, state_problem, type_line
+from fleet.panes import (CAPTURE, in_fleet, input_line, reconcile, screen_state,
+                         state_problem, type_line)
 from fleet.transcripts import agent_color, compactions, context_stats, session_name
 
 CFG = fc.load()
@@ -171,9 +171,10 @@ def enrich(r, now=None):
     r["since_h"] = (now - st["since"]) / 3600 if st and st["since"] else None
     r["idle_s"] = now - st["mtime"] if st and st["mtime"] else None
     text = screen(r["pane"]) if r["pane"] else ""
-    r["state"] = screen_state(text) if r["pane"] else "no-pane"
-    if r["state"] == "idle" and r.get("status") == "busy":
-        r["state"] = "busy"
+    seen = screen_state(text) if r["pane"] else "no-pane"
+    # One reconciliation for both tools: this one used to count only "busy" while
+    # fleetnudge also counted "waiting", so they disagreed about what busy means.
+    r["state"], r["disagree"] = reconcile(seen, r.get("status"))
     kids = children(r["pid"])
     r["runtime"] = [f"{len(kids)} child process(es)"] if kids else []
     if r["name"]:
@@ -236,6 +237,15 @@ def report(rows, agents, as_json):
                          r["action"] + (f"  ({r['why']})" if r["why"] else "")))
     if agents is None:
         print("\n  note: could not read `claude agents --json`; names and ids come from transcripts")
+    clash = [r for r in rows if r.get("disagree")]
+    if clash:
+        # The screen is a parse of a TUI that moves; the status is not. When they
+        # disagree, both resolve to busy -- never typing is the safe error -- but
+        # saying nothing turns a moved marker into silence.
+        print("\n!! THE PANE AND THE SESSION DISAGREE about whether these are busy.")
+        print("   Treated as busy either way. A marker in fleet/panes.py may have moved:")
+        for r in clash:
+            print("   %-22s %s" % ((r["name"] or f"(pid {r['pid']})")[:22], r["disagree"]))
     todo = [r for r in rows if r["action"] == "compact"]
     if todo:
         print("\n  Compact, one at a time:")

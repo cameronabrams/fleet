@@ -134,5 +134,51 @@ class InFleet(unittest.TestCase):
         self.assertFalse(panes.in_fleet("  ", "\t"))
 
 
+class Reconcile(unittest.TestCase):
+    """The screen is a parse of a TUI that moves; `claude agents` is not. Where
+    both can answer, the structured source decides -- and a disagreement is
+    returned rather than resolved quietly, because a screen that reads idle while
+    the session reports busy is what a moved busy marker looks like."""
+
+    def test_the_dangerous_direction_is_caught_and_named(self):
+        # BUSY_MARKER moves -> a mid-turn pane falls through to "idle" -> a tool
+        # types into a session mid-turn. The status is what catches it.
+        state, why = panes.reconcile("idle", "busy")
+        self.assertEqual(state, "busy")
+        self.assertIn("busy marker may have moved", why)
+
+    def test_the_other_direction_is_also_reported(self):
+        state, why = panes.reconcile("busy", "idle")
+        self.assertEqual(state, "busy")          # never typing is the safe error
+        self.assertIn("stale", why)
+
+    def test_agreement_is_quiet(self):
+        self.assertEqual(panes.reconcile("idle", "idle"), ("idle", None))
+        self.assertEqual(panes.reconcile("busy", "busy"), ("busy", None))
+
+    def test_waiting_counts_as_busy_in_both_tools_now(self):
+        """fleetnudge counted `waiting`; fleetcontext did not, so the two tools
+        disagreed about what busy means. This is the superset."""
+        self.assertEqual(panes.reconcile("idle", "waiting")[0], "busy")
+
+    def test_shell_and_monitor_are_at_the_prompt_and_typeable(self):
+        self.assertEqual(panes.reconcile("idle", "shell"), ("idle", None))
+        self.assertEqual(panes.reconcile("idle", "monitor"), ("idle", None))
+
+    def test_only_the_screen_can_see_these_so_the_status_never_overrides(self):
+        """An INVARIANT over the whole list, not a guard test: the early return is
+        redundant with the fall-through today, and breaking it changes nothing.
+        It is here so that a branch added later cannot quietly violate this."""
+        for screen in ("trust", "dialog", "input", "no-prompt", "no-pane"):
+            for status in ("busy", "idle", "waiting", None):
+                self.assertEqual(panes.reconcile(screen, status), (screen, None),
+                                 f"{screen} with status {status}")
+
+    def test_an_unknown_status_leaves_the_screen_alone(self):
+        """No structured answer is not a disagreement -- it is one source."""
+        self.assertEqual(panes.reconcile("idle", None), ("idle", None))
+        self.assertEqual(panes.reconcile("busy", None), ("busy", None))
+
+
 if __name__ == "__main__":
     unittest.main()

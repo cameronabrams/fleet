@@ -169,6 +169,17 @@ class Deliver(Base):
         self.assertEqual(code, 4, out)
         self.assertEqual(self.keys(), [])
 
+    def test_a_screen_status_disagreement_is_named_on_the_refusal(self):
+        """Both directions resolve to busy, so behaviour is unchanged; what changes
+        is that a moved TUI marker stops being invisible. The screen reads idle and
+        the session reports busy -- exactly what a moved BUSY_MARKER looks like."""
+        self.agents[0]["status"] = "busy"
+        self.screens = [IDLE]
+        code, out = self.go()
+        self.assertEqual(code, 4, out)
+        self.assertIn("mid-turn", out)
+        self.assertIn("busy marker may have moved", out)
+
     def test_shell_and_monitor_status_are_typeable(self):
         for status in ("shell", "monitor"):
             self.calls, self.agents[0]["status"] = [], status

@@ -13,6 +13,23 @@ Releases are cut with `scripts/release.sh <version>`.
 
 ## [Unreleased]
 
+### Fixed
+
+- The pane and the session no longer disagree in silence about whether a session
+  is busy. Whether a pane is idle was decided by parsing a captured terminal —
+  a TUI whose markers move — and `claude agents` answers the same question
+  structurally. The two are now reconciled in one place: the structured status
+  decides busy-vs-idle, the screen decides what only it can see (a trust prompt, a
+  dialog, a draft), and a **disagreement is reported rather than resolved quietly**
+  — a pane reading idle while the session reports busy is what a moved busy marker
+  looks like. Both directions still resolve to busy, so no tool becomes more
+  willing to type; what changes is that the moved marker stops being invisible.
+  `fleetnudge` names it on the refusal, `fleetcontext` in its report.
+
+- `fleetnudge` and `fleetcontext` had each rolled their own version of that
+  override and disagreed: one counted a `waiting` session as busy and the other did
+  not. They now share the safer definition.
+
 ## [0.1.1] - 2026-09-26
 
 ### Fixed
