@@ -230,8 +230,9 @@ class OtherTmuxSessions(unittest.TestCase):
     rather than silently dropped: a fleet pane that lost its labels would
     otherwise vanish from a roll with no warning, which is the worse direction.
     """
-    PANES = ("%1\t100\tcoord\t/home/u/work\tcoord\tcoord\t0\n"
-             "%26\t200\tsidebar\t/home/u\t\t\tsidebar\n")
+    # pane_id, pane_pid, pane_title, pane_current_path, @agent, session_name
+    PANES = ("%1\t100\tcoord\t/home/u/work\tcoord\t0\n"
+             "%26\t200\tsidebar\t/home/u\t\tsidebar\n")
 
     def setUp(self):
         self.cfg = FakeConfig()
@@ -261,9 +262,10 @@ class OtherTmuxSessions(unittest.TestCase):
         self.assertEqual([o["pane"] for o in self.up.OUTSIDE], ["%26"])
         self.assertEqual(self.up.OUTSIDE[0]["tmux_session"], "sidebar")
 
-    def test_a_relabelled_pane_is_still_ours(self):
-        """Only @fleet set, no @repo: a pane someone labelled by hand still counts."""
-        self.PANES = "%26\t200\tx\t/home/u\t\trecords\tother\n"
+    def test_a_pane_labelled_by_hand_is_ours(self):
+        """A pane in another tmux session that carries `@agent` counts, whoever
+        set it. Membership is the label, never the tmux session it sits in."""
+        self.PANES = "%26\t200\tx\t/home/u\trecords\tother\n"
         self.assertEqual([r["pane"] for r in self.rows()], ["%26"])
         self.assertEqual(self.up.OUTSIDE, [])
 

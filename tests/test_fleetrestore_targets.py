@@ -70,20 +70,21 @@ class Verify(unittest.TestCase):
     def tearDown(self):
         self.cfg.close()
 
-    def panes(self, rows, legacy=False):
-        """rows are (label, cwd, pane_id). The label goes in `@agent`, or in the
-        old `@repo` when `legacy` -- panes carry both during the rename.
+    def panes(self, rows):
+        """rows are (label, cwd, pane_id), matching the three fields the tool asks
+        tmux for.
 
         The mock SUPPLIES the rows, so nothing here exercises the format string
-        the tool hands tmux. That is the half that actually breaks: ask for
-        `@agent` alone and a legacy pane comes back empty no matter how well the
-        parse handles it. `self.asked` keeps the argv so a test can check it."""
+        the tool hands tmux -- and that is the half that actually breaks. During
+        the rename, narrowing the format to `@agent` alone made every legacy pane
+        come back empty, and this test passed unchanged because the mock answered
+        a question the tool had stopped asking. `self.asked` keeps the argv so a
+        test can check the request as well as the response."""
         self.asked = []
         def run(argv, *a, **kw):
             self.asked.append(list(argv))
             return subprocess.CompletedProcess([], 0, out, "")
-        out = "\n".join("\t".join(("", r[0]) if legacy else (r[0], "")) + "\t"
-                         + "\t".join(r[1:]) for r in rows)
+        out = "\n".join("\t".join(r) for r in rows)
         return mock.patch.object(self.r.subprocess, "run", run)
 
     def sessions(self, *pairs):
@@ -105,20 +106,17 @@ class Verify(unittest.TestCase):
         self.assertIn("/w/b", bad[0][1])
         self.assertIn("/w/a", bad[0][1])
 
-    def test_a_pane_still_labelled_the_old_way_is_found(self):
-        """Mid-rename a pane may carry only `@repo`. Reading `@agent` alone would
-        report every such session as missing -- and `verify` runs right after a
-        --go, so that reads as a restore that failed when it worked.
-
-        Both halves: the format it ASKS tmux for, and the parse of what comes
-        back. The first version of this test checked only the second, and passed
-        unchanged with the format narrowed to `@agent` -- the mock was answering
-        a question the tool had stopped asking."""
-        with self.panes([("alpha", "/w/a", "%1")], legacy=True):
+    def test_it_asks_tmux_for_the_label_it_parses(self):
+        """The request, not only the response. A mock makes the response a
+        constant, so whatever is in the format string goes untested unless a test
+        reaches for it -- which is how a narrowed format slipped through once."""
+        with self.panes([("alpha", "/w/a", "%1")]):
             self.assertEqual(self.r.verify(self.sessions(("alpha", "/w/a"))), [])
         fmt = self.asked[0][self.asked[0].index("-F") + 1]
         self.assertIn("#{@agent}", fmt)
-        self.assertIn("#{@repo}", fmt)
+        self.assertNotIn("#{@repo}", fmt)
+        self.assertEqual(len(fmt.split("\t")), 3,
+                         "the format and the three-field parse are one unit")
 
     def test_a_session_that_never_started_is_named(self):
         """Five of them, with `no such pane`."""

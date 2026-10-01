@@ -74,17 +74,17 @@ def panes():
     windows too. This tool compacts sessions, so acting on one of those would be
     acting on somebody's unrelated work. Membership is the `@agent` label
     fleetspawn stamps; see fleet.panes.is_agent_pane."""
-    fmt = "\t".join(["#{pane_id}", "#{pane_pid}", "#{@agent}", "#{@repo}", "#{session_name}"])
+    fmt = "\t".join(["#{pane_id}", "#{pane_pid}", "#{@agent}", "#{session_name}"])
     rc, out, _ = tmux("list-panes", "-a", "-F", fmt)
     found, outside = {}, []
     for row in out.splitlines() if rc == 0 else []:
         p = row.split("\t")
-        if len(p) != 5 or not p[1].isdigit():
+        if len(p) != 4 or not p[1].isdigit():
             continue
-        if is_agent_pane(p[2], p[3]):
+        if is_agent_pane(p[2]):
             found[int(p[1])] = p[0]
         else:
-            outside.append({"pane": p[0], "pane_pid": int(p[1]), "tmux_session": p[4]})
+            outside.append({"pane": p[0], "pane_pid": int(p[1]), "tmux_session": p[3]})
     return found, outside
 
 def screen(pane):

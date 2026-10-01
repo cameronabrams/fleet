@@ -103,12 +103,21 @@ must not disappear from a roll without a word. Relabel one with
 ``tmux set -p -t <pane> @agent <name>``.
 
 Until 2026-10-01 membership was a *pair*: ``@repo``, the name, and ``@fleet``, a
-group. Both are gone as the primary. ``@repo`` named a session after a repository,
-which is wrong for every session that owns none, and tools still read it as a
-fallback while live panes carry it. ``@fleet`` named a subdivision that did not
+group. Both are gone. ``@repo`` named a session after a repository, which is wrong
+for every session that owns none. ``@fleet`` named a subdivision that did not
 exist: there is one fleet, and the groups agreed with the tmux window they
 appeared to name only by accident — seven of fourteen panes disagreed, six because
 one group had outgrown any single window.
+
+The rename ran in four steps, and could not have run in fewer. The label lives in
+tmux runtime state, not in this repository, so code and panes cannot change at the
+same instant: the moment the tools stopped reading ``@repo``, every pane still
+carrying it would have stopped being recognised — the whole fleet at once, with
+``fleetsnap`` then writing a snapshot of nothing over a good manifest. That is not
+a worry, it is a measurement: with the fallback removed before the panes were
+re-stamped, **0 of 14** sessions were recognised; with it, 14 of 14. So: read
+both, re-stamp every pane, drop the fallback, unset the old option. Any rename of
+a label that lives outside the repository has the same shape.
 
 Three layers, kept apart on purpose
 -----------------------------------

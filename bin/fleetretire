@@ -78,9 +78,9 @@ def pane_of(pid):
     parent = ppid(pid)
     for row in out.splitlines():
         p = row.split("\t")
-        if len(p) == 6 and p[1].isdigit() and int(p[1]) in (pid, parent):
+        if len(p) == 5 and p[1].isdigit() and int(p[1]) in (pid, parent):
             return {"pane": p[0], "window": p[2], "panes": int(p[3] or 0),
-                    "label": agent_label(p[4], p[5])}
+                    "label": agent_label(p[4])}
     return None
 
 def argv_resume(argv):

@@ -58,9 +58,9 @@ def live_sessions():
     fmt = LABELS + "\t#{pane_pid}\t#{pane_current_path}"
     for row in sh("tmux", "list-panes", "-a", "-F", fmt).strip().splitlines():
         p = row.split("\t")
-        if len(p) < 4:
+        if len(p) < 3:
             continue
-        label, ppid, cwd = agent_label(p[0], p[1]), p[2], p[3]
+        label, ppid, cwd = agent_label(p[0]), p[1], p[2]
         if not label:
             continue
         pids = [ppid] + sh("pgrep", "-P", ppid).split()

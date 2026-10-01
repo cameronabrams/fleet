@@ -10,7 +10,7 @@ What it records, per session
 ----------------------------
 
 - tmux position (session, window, pane index and id, size) and the ``@agent``
-  label (``@repo`` is still read on panes that carry the old name)
+  label
 - working directory, claude version, pid and start time
 - ``resume_uuid`` and ``resume_uuid_source`` — how the handle was resolved. A
   handle reading ``verified:`` came from process arguments (corrected for a

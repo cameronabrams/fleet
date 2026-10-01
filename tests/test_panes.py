@@ -118,48 +118,55 @@ class TypeLine(unittest.TestCase):
 
 
 class AgentLabel(unittest.TestCase):
-    """`@repo` is becoming `@agent`. The label lives in tmux runtime state, not in
-    this repository, so the two cannot change at the same instant: the moment the
-    code stops reading `@repo`, every pane still carrying it stops being
-    recognised -- the whole fleet at once, with fleetsnap then snapshotting
-    nothing over a good manifest.
+    """A pane's agent is `@agent`, and nothing else.
 
-    So both are read, `@agent` wins, and the fallback goes only after the panes
-    have been re-stamped."""
+    It was `@repo` until 2026-10-01, and the rename ran in four steps because the
+    label lives in tmux runtime state rather than in this repository: the moment
+    the code stopped reading `@repo`, every pane still carrying it would stop
+    being recognised -- the whole fleet at once, with fleetsnap then snapshotting
+    nothing over a good manifest. Measured, not assumed: 0 of 14 sessions
+    recognised with the fallback removed early, 14 of 14 with it. Read both,
+    re-stamp every pane, drop the fallback, unset the old option."""
 
-    def test_agent_wins_when_both_are_set(self):
-        self.assertEqual(panes.agent_label("coord", "old-name"), "coord")
+    def test_the_label_is_the_name(self):
+        self.assertEqual(panes.agent_label("coord"), "coord")
+        self.assertEqual(panes.agent_label(" coord "), "coord")
 
-    def test_repo_is_the_transitional_fallback(self):
-        self.assertEqual(panes.agent_label("", "literature"), "literature")
-        self.assertEqual(panes.agent_label(None, "literature"), "literature")
+    def test_no_label_is_not_an_agent_pane(self):
+        self.assertEqual(panes.agent_label(""), "")
+        self.assertEqual(panes.agent_label(None), "")      # tmux gives "" not None
+        self.assertFalse(panes.is_agent_pane(""))
+        self.assertFalse(panes.is_agent_pane("  "))
+        self.assertFalse(panes.is_agent_pane("\t"))
 
-    def test_neither_is_not_an_agent_pane(self):
-        self.assertEqual(panes.agent_label("", ""), "")
-        self.assertFalse(panes.is_agent_pane("", ""))
-        self.assertFalse(panes.is_agent_pane("  ", "\t"))
+    def test_a_label_makes_it_ours(self):
+        self.assertTrue(panes.is_agent_pane("coord"))
 
-    def test_either_label_makes_it_ours(self):
-        self.assertTrue(panes.is_agent_pane("coord", ""))
-        self.assertTrue(panes.is_agent_pane("", "coord"))
+    def test_the_old_option_is_not_read_as_a_fallback(self):
+        """The step-4 contract. A second argument used to be the `@repo` fallback;
+        passing one now is a caller that was not updated, and it must raise rather
+        than be ignored -- an ignored second argument would read as still working
+        while the fallback it asks for is gone."""
+        with self.assertRaises(TypeError):
+            panes.agent_label("", "literature")
+        with self.assertRaises(TypeError):
+            panes.is_agent_pane("", "literature")
 
-    def test_the_format_string_asks_for_both_new_first(self):
-        """A tool that pastes LABELS into `list-panes -F` gets the two fields in
-        the order `agent_label` expects."""
-        self.assertEqual(panes.LABELS, "#{@agent}\t#{@repo}")
+    def test_the_format_string_asks_for_the_one_label(self):
+        self.assertEqual(panes.LABELS, "#{@agent}")
 
-    def test_no_tool_reads_the_old_label_on_its_own(self):
-        """Exhaustive over `bin/`, not a list of five. Every tool that asks tmux
-        for a label must ask for BOTH and resolve them with the shared helper.
+    def test_no_tool_reads_the_old_label(self):
+        """Exhaustive over `bin/`, not a list of five. No tool may ask tmux for
+        `@repo`, and any tool that reads a label resolves it with the shared
+        helper.
 
         The hand-written list this replaces named the five tools that decide
         MEMBERSHIP. Four others read `@repo` to identify a session rather than to
         admit it -- `fleetrestore`, `fleetwaiting`, `fleetlog`, and `fleetspawn`'s
-        duplicate-name check -- and the list did not reach them, so each went on
-        reading `@repo` alone through the whole rename. A pane carrying only the
-        new label was invisible to all four, and `fleetrestore`'s was the worst
-        place for it: that read runs right after a `--go`, so it would have
-        reported a restore that worked as a restore that failed.
+        duplicate-name check -- and the list did not reach them, so each read
+        `@repo` alone for the whole rename. `fleetrestore`'s was the worst place
+        for it: that read runs right after a `--go`, so a pane labelled the new
+        way alone would have made a restore that worked report as one that failed.
 
         A list of names cannot catch the tool nobody added to the list."""
         import os, re
@@ -176,23 +183,20 @@ class AgentLabel(unittest.TestCase):
             # Only the lines that build a tmux format string; prose about the
             # options is not a read, and a tool that reads no label at all --
             # fleetcost, fleetregister -- is not in scope.
+            #
+            # Judged PER LINE. An earlier version asked `"LABELS" not in src`
+            # first, and every one of these files contains that word on its
+            # import line -- so the clause was always true, the check never ran,
+            # and reverting four tools to `@repo` alone produced no failure at
+            # all. A guard answering from the wrong part of the file is worse
+            # than no guard: it reports clean.
             fmts = [l for l in src.splitlines()
                     if "#{@repo}" in l or "#{@agent}" in l]
             if not fmts:
                 continue
-            #
-            # Judged PER LINE. The first version asked `"LABELS" not in src`
-            # first, and every one of these files contains that word on its
-            # import line -- so the clause was always true, the check never ran,
-            # and reverting all four tools to `@repo` alone produced no failure
-            # at all. A guard answering from the wrong part of the file is worse
-            # than no guard: it reports clean.
             for line in fmts:
-                if "#{@agent}" in line and "#{@repo}" in line:
-                    continue                      # spelled out, both, in order
-                if re.search(r"\bLABELS\b", line):
-                    continue                      # or built from the shared pair
-                bad.append(f"{tool}: asks for one label, not both: {line.strip()}")
+                if "#{@repo}" in line:
+                    bad.append(f"{tool}: still asks tmux for @repo: {line.strip()}")
             if not re.search(r"\bagent_label\b|\bis_agent_pane\b", src):
                 bad.append(f"{tool}: reads a label without the shared helper")
         self.assertEqual(bad, [])

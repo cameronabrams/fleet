@@ -121,8 +121,8 @@ def verify(sessions):
     have = {}
     for row in r.stdout.splitlines():
         f = row.split("\t")
-        if len(f) == 4 and agent_label(f[0], f[1]):
-            have[agent_label(f[0], f[1])] = (f[2], f[3])
+        if len(f) == 3 and agent_label(f[0]):
+            have[agent_label(f[0])] = (f[1], f[2])
     out = []
     for s_ in sessions:
         got = have.get(s_["label"])
@@ -178,7 +178,7 @@ def main():
     try:
         out = tmux_run(["list-panes", "-a", "-F", LABELS],
                        capture_output=True, text=True, timeout=5).stdout
-        live = {agent_label(*(l.split("\t") + [""])[:2]) for l in out.splitlines()}
+        live = {agent_label(l) for l in out.splitlines()}
         live.discard("")
     except Exception:
         pass

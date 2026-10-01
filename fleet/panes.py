@@ -23,23 +23,24 @@ TYPE_WAIT = 10.0                           # seconds for typed text to reach the
 CAPTURE = ("capture-pane", "-p", "-e")     # -e keeps the attributes that mark a suggestion
 _ESC = re.compile(r"\x1b\[([0-9;:]*)([A-Za-z])|\x1b[^\[]")
 
-# The pane options that say a pane is an agent's. `@agent` is the name; `@repo`
-# is what it used to be called and is still on every live pane, so both are read
-# and `@agent` wins. Put this in a tool's `list-panes -F` and pass the two fields
-# to `agent_label`.
+# The pane option that says a pane is an agent's: `@agent`, the session's name.
+# Put this in a tool's `list-panes -F` and pass the field to `agent_label`.
 #
-# The rename cannot be done in one step: the label lives in tmux runtime state,
-# not in this repository, so the moment the code stops reading `@repo` every pane
-# that still carries it stops being recognised -- the whole fleet at once, with
-# fleetsnap then snapshotting nothing over a good manifest. Read both, re-stamp
-# the panes, then drop the fallback.
-LABELS = "#{@agent}\t#{@repo}"
+# It was `@repo` until 2026-10-01, and the rename could not be done in one step:
+# the label lives in tmux runtime state, not in this repository, so the moment the
+# code stopped reading `@repo` every pane still carrying it would stop being
+# recognised -- the whole fleet at once, with fleetsnap then snapshotting nothing
+# over a good manifest. Measured rather than assumed: with the fallback removed
+# before the panes were re-stamped, 0 of 14 sessions were recognised; with it, 14
+# of 14. So: read both, re-stamp every pane, drop the fallback, unset the old
+# option. This is the fourth step, and `@repo` is no longer read anywhere.
+LABELS = "#{@agent}"
 
-def agent_label(agent, repo=""):
-    """A pane's agent name: `@agent`, or `@repo` while panes still carry it."""
-    return (agent or "").strip() or (repo or "").strip()
+def agent_label(agent):
+    """A pane's agent name, from `@agent`."""
+    return (agent or "").strip()
 
-def is_agent_pane(agent, repo=""):
+def is_agent_pane(agent):
     """Whether a pane belongs to an agent: does it carry a name.
 
     Succeeds `in_fleet`, which also took `@fleet`. That grouping is retired --
@@ -54,7 +55,7 @@ def is_agent_pane(agent, repo=""):
     got a restart plan with `CCP_AGENT=1` prepended -- the flag that makes a
     session an addressable agent. The plan asserted an environment it had never
     observed."""
-    return bool(agent_label(agent, repo))
+    return bool(agent_label(agent))
 
 def strip_escapes(text):
     """`text` without terminal escape sequences."""

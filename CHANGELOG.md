@@ -32,6 +32,23 @@ entries and makes you confirm the bump against this list.
 
 ### Changed
 
+- **The `@repo` fallback is gone. `@agent` is the only pane label read.** Every
+  format string lost a field and every consumer moved with it — nine tools, each
+  a format-and-unpack pair, which is the shape that produced three separate bugs
+  during this rename. `agent_label` and `is_agent_pane` take one argument, and a
+  caller still passing two now raises rather than being quietly ignored.
+
+  One real hazard inside it: `fleetsnap`'s membership check took both the raw pane
+  option and the resolved name, which hid which one it was really asking about.
+  With one argument that choice becomes visible, and the raw option is the wrong
+  one — a pane named only by `claude agents` carries no option, and checking it
+  would drop exactly the sessions the check ordering exists to keep.
+
+  The whole rename needed four steps because the label lives in tmux runtime
+  state, not in this repository: code and panes cannot change at the same instant.
+  Measured, not assumed — with the fallback removed before the panes were
+  re-stamped, 0 of 14 sessions were recognised; with it, 14 of 14.
+
 - **A pane's agent is `@agent`, and `@fleet` is retired.** Membership used to be a
   pair of tmux pane options: `@repo`, the session's name, and `@fleet`, a group.
 

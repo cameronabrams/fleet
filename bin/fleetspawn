@@ -73,7 +73,7 @@ def preflight(a, brief):
         problems.append(f"a claude named {a.name!r} is already running: "
                         + ", ".join(f"pid {p} in {c}" for p, c in clash))
     rc, labels, _ = tmux("list-panes", "-a", "-F", LABELS)
-    taken = {agent_label(*(l.split("\t") + [""])[:2]) for l in labels.splitlines()}
+    taken = {agent_label(l) for l in labels.splitlines()}
     if a.name in taken:
         problems.append(f"a pane is already labelled @agent={a.name}")
     stopped = fc.stopped(CFG)
@@ -147,7 +147,7 @@ def check(a):
     # where all fourteen needed it (2026-10-01).
     _, rows, _ = tmux("list-panes", "-a", "-F", "#{pane_id}\t" + LABELS)
     row = next((r for r in rows.splitlines()
-                if agent_label(*(r.split("\t") + ["", "", ""])[1:3]) == a.name), None)
+                if agent_label((r.split("\t") + [""])[1]) == a.name), None)
     print(f"  pane labels: {row or 'NONE -- no pane carries @agent=' + a.name}")
     # A process named right, in the right directory, exists BEFORE the trust prompt
     # is answered, so everything above passes a session that has not started.

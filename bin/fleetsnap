@@ -166,7 +166,7 @@ def window_layouts(meta):
 def pane_rows():
     fmt = "\t".join(["#{session_name}", "#{window_index}", "#{window_name}",
                      "#{pane_index}", "#{pane_id}",
-                     "#{@agent}", "#{@repo}", "#{pane_title}",
+                     "#{@agent}", "#{pane_title}",
                      "#{pane_current_path}", "#{pane_pid}", "#{pane_width}x#{pane_height}"])
     return [r.split("\t") for r in sh("tmux", "list-panes", "-a", "-F", fmt).strip().splitlines()]
 
@@ -186,10 +186,10 @@ def claude_proc(pane_pid):
                     "argv": [c for c in cmd if c]}
     return None
 
-def corrected_label(repo, title, argv, cwd):
-    """(label, note): the pane's @repo label, or the pane title where the label is stale.
+def corrected_label(label, title, argv, cwd):
+    """(label, note): the pane's @agent label, or the pane title where it is stale.
 
-    @repo is a hand-set label and goes stale on rename; pane_title is set by
+    @agent is a hand-set label and goes stale on rename; pane_title is set by
     the app from `claude --name` and follows `/rename`. But a title is not always
     the app's: before claude draws, it is the shell's `user@host:path`, or tmux's
     bare hostname while the trust prompt is up. "No spaces, so it looks like a
@@ -198,40 +198,40 @@ def corrected_label(repo, title, argv, cwd):
     it IS this session's name: the process was launched `--name <title>`, or a
     transcript in its project self-reports it (a /rename since launch)."""
     t = title.lstrip("✳✴✵ ").strip()
-    if not (t and repo and t != repo and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", t)):
-        return repo, None
+    if not (t and label and t != label and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", t)):
+        return label, None
     launched = next((argv[i + 1] for i, x in enumerate(argv[:-1]) if x == "--name"), None)
     if launched == t:
-        return t, f"pane label said {repo!r}; corrected from pane_title (= --name)"
+        return t, f"pane label said {label!r}; corrected from pane_title (= --name)"
     if newest_transcript(cwd, t)[1].startswith("verified"):
-        return t, f"pane label said {repo!r}; corrected from pane_title (transcript self-reports it)"
-    return repo, None
+        return t, f"pane label said {label!r}; corrected from pane_title (transcript self-reports it)"
+    return label, None
 
 def shown(s):
     """A session's label for display: never a made-up name for an unnamed pane."""
     return s["label"] or f"(unnamed, pane {s['tmux']['pane_id']})"
 
-def resolve_label(repo, title, proc, cwd, agents):
+def resolve_label(label, title, proc, cwd, agents):
     """(label or None, note): what this session is called.
 
-    `@repo` is the hand-set pane label and wins when it is there (corrected by the
+    `@agent` is the hand-set pane label and wins when it is there (corrected by the
     pane title, above). A pane launched as a bare `claude`, named later, has NO
     label -- OBSERVED 2026-09-18, when fleetsnap invented "(unlabeled %21)" for a
     session fleetupgrade resolved as `literature`, and then asked the reader to
     write a brief under that invented name. So fall back to the sources that carry
     a name the session answers to, and to None rather than to a fiction."""
-    if repo:
-        return corrected_label(repo, title, proc["argv"], cwd)
+    if label:
+        return corrected_label(label, title, proc["argv"], cwd)
     a = next((x for x in agents or [] if x.get("pid") == proc["pid"] and x.get("name")), None)
     if a:
-        return a["name"], f"no @repo on the pane; name from `claude agents` ({a['name']})"
+        return a["name"], f"no @agent on the pane; name from `claude agents` ({a['name']})"
     name = session_name(proc["pid"], cwd, proc["argv"])[0]
     if name:
-        return name, f"no @repo on the pane; name from its transcript ({name})"
+        return name, f"no @agent on the pane; name from its transcript ({name})"
     t = title.lstrip("\u2733\u2734\u2735 ").strip()
     if t and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", t) \
             and newest_transcript(cwd, t)[1].startswith("verified"):
-        return t, f"no @repo on the pane; name from pane_title, which a transcript self-reports ({t})"
+        return t, f"no @agent on the pane; name from pane_title, which a transcript self-reports ({t})"
     return None, None
 
 def live_color(argv, uuid):
@@ -343,16 +343,16 @@ def main():
     for r in pane_rows():
         # Must match the unpack below. It said 11 while the unpack took 12: a row
         # of exactly 11 would pass this and raise in the next statement.
-        if len(r) < 11:
+        if len(r) < 10:
             continue
-        # Two labels: `@agent` is the name, `@repo` is what it used to be called
-        # and is still on live panes. 2026-10-01: this unpack was left behind while
-        # the format moved -- so the variable named `fleet` held the AGENT NAME and
-        # one snapshot recorded fourteen sessions in fourteen fleets. A positional
-        # format and its consumer are one thing; changing either alone is the bug.
+        # One label: `@agent`. 2026-10-01: this unpack was left behind twice while
+        # the format moved -- once holding the AGENT NAME in a variable named
+        # `fleet`, so one snapshot recorded fourteen sessions in fourteen fleets.
+        # A positional format and its consumer are one thing; changing either
+        # alone is the bug. The arity test below is what makes that structural.
         (sess, win, winname, pidx, pane,
-         agent, repo, title, pane_path, ppid, size) = r[:11]
-        repo = agent_label(agent, repo)
+         agent, title, pane_path, ppid, size) = r[:10]
+        label = agent_label(agent)
         proc = claude_proc(ppid)
         if not proc:
             continue
@@ -360,8 +360,12 @@ def main():
         # so a `cd` in one of the session's shell calls would be snapshotted as its
         # directory and rebuilt there (fleet.procs.proc_cwd).
         cwd = proc_cwd(proc["pid"]) or pane_path
-        repo, label_note = resolve_label(repo, title, proc, cwd, agents)
-        if not is_agent_pane(agent, repo):
+        label, label_note = resolve_label(label, title, proc, cwd, agents)
+        # `label`, NOT the raw pane option: resolve_label is what names a pane that
+        # carries none, from `claude agents` or its transcript. Checking the option
+        # here would drop exactly those sessions -- the case this ordering exists
+        # for. Two arguments used to hide that, since either could carry the name.
+        if not is_agent_pane(label):
             # Two things are being told apart here, and the LABEL alone cannot do
             # it. `tmux list-panes -a` crosses tmux sessions, so this sees the
             # owner's own windows: one was snapshotted as a fleet of its own on
@@ -379,20 +383,20 @@ def main():
             #
             # Reported either way, never dropped in silence: a session missing from
             # the manifest is a session missing from recovery.
-            if not repo:
+            if not label:
                 outside.append((pane, sess, title or "(no title)"))
                 continue
         snap["sessions"].append({
-            "label": repo,
+            "label": label,
             "label_note": label_note,
             "tmux": {"session": sess, "window": int(win),
                      "window_name": meta.get(f"{sess}:{win}", {}).get("name", winname),
                      "pane_index": int(pidx), "pane_id": pane, "size": size},
             "cwd": cwd,
             **dict(zip(("resume_uuid", "resume_uuid_source"),
-                       resume_handle(proc, cwd, repo))),
+                       resume_handle(proc, cwd, label))),
             "version": proc["version"], "pid": proc["pid"], "started": proc["started"],
-            "durable_files": durable_files(cwd, repo),
+            "durable_files": durable_files(cwd, label),
         })
         s = snap["sessions"][-1]
         live, known = live_color(proc["argv"], s["resume_uuid"])
@@ -403,7 +407,7 @@ def main():
         # and it went dead on 2026-10-01 when the membership check moved after
         # `resolve_label` -- a pane nothing can name is now reported as somebody
         # else's window instead. The branch outlived its reachability by one
-        # commit, still telling the reader to set `@repo`, the option being
+        # commit, still telling the reader to set `@repo`, the option now
         # retired. Unnameable panes are in `outside`; see the report below.
         s["membership_problems"] = [
             {"kind": k, "problem": p, "fix": f} for k, p, f in fc.membership_problems(
@@ -492,12 +496,12 @@ def main():
     L.append(f"`~/.tmux.conf` {'present' if tc['exists'] else 'MISSING'}"
              + (f", last modified {tc['mtime']}. " if tc['exists'] else ". ")
              + "It is a file on disk, so it survives a power cycle and is re-read when "
-               "the tmux server next starts. The `@repo` pane-border logic lives there.")
+               "the tmux server next starts. The `@agent` pane-border logic lives there.")
     L.append("\nExact window layouts, restorable verbatim with `tmux select-layout`:\n")
     for k, v in sorted(snap["window_layouts"].items()):
         L.append(f"- `{k}` ({v['name']}): `{v['layout']}`")
     L.append("\n## What does NOT survive a power cycle\n")
-    L.append("- tmux layout, pane ids, `@repo` labels — rebuilt by the restore script")
+    L.append("- tmux layout, pane ids, `@agent` labels — rebuilt by the restore script")
     L.append("- every local background job, including anything started with `setsid`")
     L.append("- every in-session Monitor/watcher — transcripts still *show* them being "
              "created, so nothing in a resumed session flags them as dead")

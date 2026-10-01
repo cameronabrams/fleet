@@ -302,9 +302,9 @@ def live_dirs():
                              capture_output=True, text=True, timeout=5).stdout
         for row in out.strip().splitlines():
             parts = row.split("\t")
-            if len(parts) < 3 or not agent_label(parts[0], parts[1]):
+            if len(parts) < 2 or not agent_label(parts[0]):
                 continue
-            _DIRS[project_slug(parts[2])].append(canon(agent_label(parts[0], parts[1])))
+            _DIRS[project_slug(parts[1])].append(canon(agent_label(parts[0])))
     except Exception:
         pass
     return _DIRS
@@ -323,9 +323,9 @@ def live_map():
                                capture_output=True, text=True, timeout=5).stdout
         for row in panes.strip().splitlines():
             parts = row.split("\t")
-            if len(parts) < 4 or not agent_label(parts[1], parts[2]):
+            if len(parts) < 3 or not agent_label(parts[1]):
                 continue
-            name, ppid = canon(agent_label(parts[1], parts[2])), parts[3]
+            name, ppid = canon(agent_label(parts[1])), parts[2]
             kids = subprocess.run(["pgrep", "-P", ppid], capture_output=True,
                                   text=True).stdout.split()
             for pid in [ppid] + kids:

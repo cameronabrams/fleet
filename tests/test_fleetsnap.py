@@ -15,8 +15,8 @@ class SnapshotDirectory(unittest.TestCase):
 
     def manifest(self, proc_cwd="/home/u/work", repo="alpha", title="title",
                  agents=None, transcript_name=None):
-        # eleven fields: @agent and @repo, the grouping having been retired
-        row = ["fleet", "1", "win", "0", "%1", repo, repo, title,
+        # ten fields: one label, `@agent`; the grouping and the old name retired
+        row = ["fleet", "1", "win", "0", "%1", repo, title,
                "/home/u/somewhere-else", "100", "80x40"]
         proc = {"pid": 200, "version": "2.1.276", "resume_uuid": None, "started": "",
                 "argv": ["claude", "--name", "alpha"]}
@@ -379,24 +379,25 @@ class FormatMatchesItsUnpack(unittest.TestCase):
 
     def test_the_row_unpacks_to_the_fields_the_format_asks_for(self):
         """The defect this class exists for, in its post-retirement form: a row
-        must unpack so that the NAME comes from the label fields and nothing
-        downstream reads a neighbouring column by accident."""
-        row = ["0", "1", "win", "0", "%1", "alpha", "alpha",
+        must unpack so that the NAME comes from the label field and nothing
+        downstream reads a neighbouring column by accident. The format has lost a
+        field twice now -- the grouping, then the old name -- and each time every
+        index after it moved."""
+        row = ["0", "1", "win", "0", "%1", "alpha",
                "title", "/w", "123", "80x24"]
         (sess, win, winname, pidx, pane,
-         agent, repo, title, path, ppid, size) = row[:11]
-        self.assertEqual(self.s.agent_label(agent, repo), "alpha")
+         agent, title, path, ppid, size) = row[:10]
+        self.assertEqual(self.s.agent_label(agent), "alpha")
         self.assertEqual((title, path, size), ("title", "/w", "80x24"),
                          "a shifted unpack shows up here first")
 
-    def test_a_pane_is_ours_under_either_label(self):
-        self.assertTrue(self.s.is_agent_pane("alpha", ""))
-        self.assertTrue(self.s.is_agent_pane("", "alpha"))
-        self.assertFalse(self.s.is_agent_pane("", ""))
+    def test_a_pane_is_ours_when_it_carries_the_label(self):
+        self.assertTrue(self.s.is_agent_pane("alpha"))
+        self.assertFalse(self.s.is_agent_pane(""))
 
 
 class OutsidePanes(unittest.TestCase):
-    """A pane with no @repo/@fleet label is not this fleet's. Without the check,
+    """A pane with no `@agent` label is not this fleet's. Without the check,
     `fleet = fleet or sess` named it after its tmux session and wrote a manifest
     offering to restore something that was never ours."""
 
@@ -408,20 +409,21 @@ class OutsidePanes(unittest.TestCase):
         self.cfg.close()
 
     def test_membership_is_the_label_not_the_tmux_session_name(self):
-        # `@agent` is the name now; `@repo` is still on every live pane and is
-        # read as a fallback until they have been re-stamped.
-        self.assertTrue(self.s.is_agent_pane("coord", ""))          # @agent
-        self.assertTrue(self.s.is_agent_pane("", "literature"))     # @repo, transitional
-        self.assertFalse(self.s.is_agent_pane("", ""))
+        self.assertTrue(self.s.is_agent_pane("coord"))
+        self.assertFalse(self.s.is_agent_pane(""))
 
     def test_the_name_is_resolved_before_membership_is_decided(self):
         """Order matters: `claude agents` is what tells an unlabelled pane of OURS
         from somebody else's window, so resolve_label has to run first. Reversed,
         a session named only by the platform would be dropped from recovery."""
         src = open(os.path.join(APP, "bin", "fleetsnap")).read()
-        i = src.index("repo, label_note = resolve_label(")
-        j = src.index("if not is_agent_pane(agent, repo):")
+        i = src.index("label, label_note = resolve_label(")
+        j = src.index("if not is_agent_pane(label):")
         self.assertLess(i, j, "resolve_label must run before the membership check")
+        self.assertNotIn("is_agent_pane(agent)", src,
+                         "the check must take the RESOLVED label, not the raw pane "
+                         "option -- a pane named only by `claude agents` carries "
+                         "no option and would be dropped")
 
 
 if __name__ == "__main__":
