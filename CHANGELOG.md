@@ -86,6 +86,13 @@ entries and makes you confirm the bump against this list.
   version of this guard reported clean with all four tools reverted, and a mocked
   tmux call left the tool's own format string untested.
 
+- `fleetsnap` no longer carries a branch for a session it cannot name. It went
+  dead when the membership check moved after `resolve_label` — a pane nothing can
+  name is now reported as somebody else's window instead of recorded as a nameless
+  row — and it outlived its reachability still telling the reader to set `@repo`,
+  the option being retired. Every recorded session has a name by construction, and
+  a test now says so.
+
 ### Added
 
 - When `fleetcontext` reports that a pane and a session disagree about being busy,

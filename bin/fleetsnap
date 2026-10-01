@@ -397,21 +397,20 @@ def main():
         s = snap["sessions"][-1]
         live, known = live_color(proc["argv"], s["resume_uuid"])
         s["color"] = {"declared": fc.colors(CFG).get(s["label"]), "live": live, "known": known}
-        if s["label"]:
-            s["membership_problems"] = [
-                {"kind": k, "problem": p, "fix": f} for k, p, f in fc.membership_problems(
-                    CFG, s["label"], s["color"]["live"], color_known=known)]
-            s["membership_problems"] += [
-                {"kind": k, "problem": p, "fix": f} for k, p, f in stopped_problems(
-                    s["label"], s["resume_uuid"])]
-        else:
-            # No name: say so against the PANE, and do not invent one. A restore
-            # cannot relaunch this row, since --name and the brief both need a name.
-            s["membership_problems"] = [{
-                "kind": "name",
-                "problem": f"pane {pane}: name unresolved -- no @repo, and neither "
-                           f"`claude agents` nor its transcript names it",
-                "fix": f"tmux set -p -t {pane} @repo <name>   (or relaunch it with --name <name>)"}]
+        # Every recorded session has a name, by construction: a pane reaches here
+        # only if `is_agent_pane` passed, which means `resolve_label` returned one.
+        # There used to be an `else` recording a nameless session against its pane,
+        # and it went dead on 2026-10-01 when the membership check moved after
+        # `resolve_label` -- a pane nothing can name is now reported as somebody
+        # else's window instead. The branch outlived its reachability by one
+        # commit, still telling the reader to set `@repo`, the option being
+        # retired. Unnameable panes are in `outside`; see the report below.
+        s["membership_problems"] = [
+            {"kind": k, "problem": p, "fix": f} for k, p, f in fc.membership_problems(
+                CFG, s["label"], s["color"]["live"], color_known=known)]
+        s["membership_problems"] += [
+            {"kind": k, "problem": p, "fix": f} for k, p, f in stopped_problems(
+                s["label"], s["resume_uuid"])]
     # Correct the window names only now: which windows are fleet windows is not
     # known until the sessions have been collected.
     fleet_wins = {f"{s['tmux']['session']}:{s['tmux']['window']}"

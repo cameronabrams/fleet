@@ -68,6 +68,17 @@ class UnlabelledPane(SnapshotDirectory):
         self.assertEqual(s["label"], "literature")
         self.assertIn("transcript", s["label_note"])
 
+    def test_every_recorded_session_has_a_name(self):
+        """The invariant the dead branch used to hedge against. fleetrestore needs
+        a name for `--name` and for the brief, so a nameless row cannot be
+        relaunched; now none is written. Checked against a manifest built with the
+        hardest case present -- a pane with no label at all."""
+        m = self.manifest(repo="", agents=[], transcript_name=None)
+        self.assertTrue(all(s.get("label") for s in m["sessions"]),
+                        [s.get("label") for s in m["sessions"]])
+        self.assertNotIn("@repo", json.dumps(m),
+                         "nothing may tell a reader to set the retired option")
+
     def test_a_pane_nothing_can_name_is_somebody_else_s_window(self):
         """No label, and neither `claude agents` nor the transcript names it. That
         is the shape of the owner's own window -- the personal session excluded on
