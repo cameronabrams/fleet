@@ -334,7 +334,9 @@ def main():
             "authority": CFG.get("authority", {})}
     outside = []
     for r in pane_rows():
-        if len(r) < 11:
+        # Must match the unpack below. It said 11 while the unpack took 12: a row
+        # of exactly 11 would pass this and raise in the next statement.
+        if len(r) < 12:
             continue
         # Three labels now, not two. `@agent` is the name, `@repo` is what it used
         # to be called and is still on live panes, `@fleet` is the grouping.

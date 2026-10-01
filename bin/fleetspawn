@@ -29,6 +29,7 @@ import argparse, os, shlex, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
+from fleet.panes import agent_label
 from fleet.procs import claude_procs, named
 from fleet.transcripts import session_name
 CFG = fc.load()
@@ -138,8 +139,15 @@ def check(a):
     if len(hits) > 1:
         print(f"  {len(hits)} processes answer to {a.name!r}: peers will be refused by name")
         rc = 1
-    _, rows, _ = tmux("list-panes", "-a", "-F", "#{pane_id} #{@repo} #{@fleet}")
-    row = next((r for r in rows.splitlines() if r.split()[1:2] == [a.name]), None)
+    # Tab-separated, not space: an empty label collapses two space separators into
+    # one, so a pane with no @repo would put the NEXT field at position 1 and the
+    # fleet name would read as the agent name. The same collapse made a hand-written
+    # preview of the @agent re-stamp report "0 panes to stamp" on a fleet where all
+    # fourteen needed it (2026-10-01).
+    _, rows, _ = tmux("list-panes", "-a", "-F",
+                      "#{pane_id}\t#{@agent}\t#{@repo}\t#{@fleet}")
+    row = next((r for r in rows.splitlines()
+                if agent_label(*(r.split("\t")[1:3] + ["", ""])[:2]) == a.name), None)
     print(f"  pane labels: {row or 'NONE -- no pane carries @repo=' + a.name}")
     # A process named right, in the right directory, exists BEFORE the trust prompt
     # is answered, so everything above passes a session that has not started.

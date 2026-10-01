@@ -47,7 +47,8 @@ class Check(unittest.TestCase):
         procs = [(4242, self.dir, ["claude", "--name", "alpha", "prompt"])]
         def tmux(*a):
             if a[0] == "list-panes":
-                return 0, "%16 alpha coord", ""
+                # tab-separated: pane, @agent, @repo, @fleet
+                return 0, "%16\talpha\talpha\tcoord", ""
             if a[0] == "capture-pane":
                 return 0, screen, ""
             return 1, "", "unexpected"
