@@ -38,7 +38,6 @@ entries and makes you confirm the bump against this list.
   afterwards is of a pane that has moved on — which is exactly how one report on
   2026-09-30 could not be resolved either way.
 
-### Added
 
 - Every tool answers `--version` (and `-V`), reporting the one version written in
   `fleet/__init__.py`: `fleetwatch (fleet 0.2.0)`. There had been no way to ask a
