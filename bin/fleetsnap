@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..
 from fleet import config as fc
 from fleet import version_flag
 from fleet.agents import list_agents
-from fleet.panes import is_agent_pane
+from fleet.panes import agent_label, is_agent_pane
 from fleet.procs import proc_cwd
 from fleet.transcripts import agent_color, newest_transcript, resume_handle, session_name
 CFG = fc.load()
@@ -158,7 +158,8 @@ def window_layouts(meta):
 
 def pane_rows():
     fmt = "\t".join(["#{session_name}", "#{window_index}", "#{window_name}",
-                     "#{pane_index}", "#{pane_id}", "#{@agent}", "#{@repo}", "#{pane_title}",
+                     "#{pane_index}", "#{pane_id}",
+                     "#{@agent}", "#{@repo}", "#{@fleet}", "#{pane_title}",
                      "#{pane_current_path}", "#{pane_pid}", "#{pane_width}x#{pane_height}"])
     return [r.split("\t") for r in sh("tmux", "list-panes", "-a", "-F", fmt).strip().splitlines()]
 
@@ -335,11 +336,19 @@ def main():
     for r in pane_rows():
         if len(r) < 11:
             continue
-        sess, win, winname, pidx, pane, repo, fleet, title, pane_path, ppid, size = r[:11]
+        # Three labels now, not two. `@agent` is the name, `@repo` is what it used
+        # to be called and is still on live panes, `@fleet` is the grouping.
+        # 2026-10-01: this unpack was left at two while the format moved to
+        # `@agent`,`@repo` -- so the variable named `fleet` held the AGENT NAME and
+        # one snapshot recorded fourteen sessions in fourteen fleets. A positional
+        # format and its consumer are one thing; changing either alone is the bug.
+        (sess, win, winname, pidx, pane,
+         agent, repo, fleet, title, pane_path, ppid, size) = r[:12]
+        repo = agent_label(agent, repo)
         proc = claude_proc(ppid)
         if not proc:
             continue
-        if not is_agent_pane(repo, fleet):
+        if not is_agent_pane(agent, repo, fleet):
             # `tmux list-panes -a` crosses tmux SESSIONS, so this sees the owner's
             # own windows too. Without this check a personal session was snapshotted
             # AS A FLEET -- `fleet = fleet or sess` named it after its tmux session,

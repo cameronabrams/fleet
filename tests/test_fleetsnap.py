@@ -15,7 +15,8 @@ class SnapshotDirectory(unittest.TestCase):
 
     def manifest(self, proc_cwd="/home/u/work", repo="alpha", title="title",
                  agents=None, transcript_name=None):
-        row = ["fleet", "1", "win", "0", "%1", repo, "grp", title,
+        # twelve fields: @agent, @repo and @fleet are three separate labels now
+        row = ["fleet", "1", "win", "0", "%1", repo, repo, "grp", title,
                "/home/u/somewhere-else", "100", "80x40"]
         proc = {"pid": 200, "version": "2.1.276", "resume_uuid": None, "started": "",
                 "argv": ["claude", "--name", "alpha"]}
@@ -319,6 +320,68 @@ class StaleManifests(unittest.TestCase):
         self.assertEqual(self.names(), ["coord", "manifest", "records"])
 
 
+class FormatMatchesItsUnpack(unittest.TestCase):
+    """A positional `list-panes -F` and the tuple that unpacks it are ONE thing.
+
+    2026-10-01: the format moved from `@repo`,`@fleet` to `@agent`,`@repo` and the
+    unpack was left at two names, so the variable called `fleet` held the agent
+    name. One snapshot then recorded fourteen sessions in fourteen fleets and
+    overwrote the real per-fleet manifests. Nothing failed: membership still
+    worked, labels were still right, and the output was plausible.
+
+    The test that existed asserted the format STRING contained `#{@agent}`. It
+    passed throughout. A token check cannot see a positional shift, which is why
+    these two are structural and behavioural instead.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.s = load_tool("fleetsnap")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def test_the_field_count_equals_the_unpack_arity(self):
+        """Count the elements joined by the tab, not the `#{...}` tokens: the size
+        field is `#{pane_width}x#{pane_height}`, two tokens in ONE field. Counting
+        tokens says 13 where tmux returns 12 -- a check that is wrong by one for
+        ever, which would either cry wolf or be "fixed" by breaking the code to
+        match it."""
+        import ast, inspect, re
+        src = inspect.getsource(self.s.pane_rows)
+        tree = ast.parse(src.strip())
+        joins = [n for n in ast.walk(tree)
+                 if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "join"]
+        self.assertEqual(len(joins), 1, "expected one '\\t'.join(...) in pane_rows")
+        fields = len(joins[0].args[0].elts)
+        unpack = inspect.getsource(self.s.snapshot) if hasattr(self.s, "snapshot") else \
+                 open(os.path.join(APP, "bin", "fleetsnap")).read()
+        m = re.search(r"\(sess, win, winname, pidx, pane,\s*\n\s*([^)]*)\) = r\[:(\d+)\]",
+                      unpack)
+        self.assertIsNotNone(m, "could not find the pane-row unpack")
+        names = 5 + len([n for n in m.group(1).split(",") if n.strip()])
+        self.assertEqual(fields, names,
+                         "the format asks tmux for %d fields and the unpack names %d"
+                         % (fields, names))
+        self.assertEqual(int(m.group(2)), fields,
+                         "the r[:N] slice must match the field count")
+
+    def test_the_grouping_comes_from_fleet_not_from_the_agent_name(self):
+        """The actual defect: with agent and repo both holding the name, the fleet
+        must still come from `@fleet`."""
+        row = ["0", "1", "win", "0", "%1", "alpha", "alpha", "records",
+               "title", "/w", "123", "80x24"]
+        (sess, win, winname, pidx, pane,
+         agent, repo, fleet, title, path, ppid, size) = row[:12]
+        self.assertEqual(self.s.agent_label(agent, repo), "alpha")
+        self.assertEqual(fleet or sess, "records",
+                         "the grouping must not be the agent's own name")
+
+    def test_a_pane_is_ours_under_either_label(self):
+        self.assertTrue(self.s.is_agent_pane("alpha", "", ""))
+        self.assertTrue(self.s.is_agent_pane("", "alpha", ""))
+        self.assertFalse(self.s.is_agent_pane("", "", ""))
+
+
 class OutsidePanes(unittest.TestCase):
     """A pane with no @repo/@fleet label is not this fleet's. Without the check,
     `fleet = fleet or sess` named it after its tmux session and wrote a manifest
@@ -340,7 +403,7 @@ class OutsidePanes(unittest.TestCase):
 
     def test_the_session_name_fallback_only_applies_to_panes_that_are_ours(self):
         src = open(os.path.join(APP, "bin", "fleetsnap")).read()
-        i = src.index("if not is_agent_pane(repo, fleet):")
+        i = src.index("if not is_agent_pane(agent, repo, fleet):")
         j = src.index('fleet = fleet or sess or "default"')
         self.assertLess(i, j, "the membership check must run BEFORE the fallback "
                               "that names a fleet after its tmux session")
