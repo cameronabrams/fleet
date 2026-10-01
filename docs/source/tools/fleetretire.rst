@@ -84,5 +84,5 @@ Add the printed ``[parked.NAME]`` or ``[retired.NAME]`` entry to ``fleet.toml``
 transcript and :doc:`fleetspawn` refuses the name except ``--resume`` with the
 recorded uuid. Run :doc:`fleetsnap`: the layout changed.
 
-A parked session comes back with ``fleetspawn NAME DIR --fleet GROUP --beside PANE
+A parked session comes back with ``fleetspawn NAME DIR --beside PANE
 --resume UUID --go``; then delete its ``[parked]`` entry.

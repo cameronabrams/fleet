@@ -30,6 +30,62 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Changed
+
+- **A pane's agent is `@agent`, and `@fleet` is retired.** Membership used to be a
+  pair of tmux pane options: `@repo`, the session's name, and `@fleet`, a group.
+
+  `@repo` named a session after a repository, which is wrong for every session that
+  owns none — a coordinator, a writing session, a sweep. It is now `@agent`. Every
+  tool reads `@agent` first and falls back to `@repo`, so panes carrying only the
+  old option keep working; the fallback goes in a later release, once nothing
+  carries it. Four tools read `@repo` *without* that fallback until now —
+  `fleetrestore`, `fleetwaiting`, `fleetlog` and `fleetspawn`'s duplicate-name
+  check — so a pane labelled the new way alone was invisible to them.
+
+  `@fleet` named a subdivision that did not exist. There is one fleet. The groups
+  appeared to name tmux windows and agreed with them only by accident: measured on
+  the live fleet, seven of fourteen panes disagreed, six because one group had
+  outgrown any single window. A group that cannot fit the thing it is named after
+  was describing the screen, not the fleet. Gone with it: `fleetspawn --fleet`
+  (now neither required nor accepted), the per-`<fleet>` manifests, and
+  `fleetrestore <fleet>`.
+
+- `fleetrestore` takes session names, not a fleet. Bare, it plans the whole fleet
+  with each window's exact layout — what `--all` did, and what the bare command
+  should always have done, since it previously *listed* the per-fleet manifests and
+  planned nothing. `fleetrestore NAME...` rebuilds only those. A name the manifest
+  does not hold is refused rather than skipped, because restoring the rest after a
+  typo reads as a successful partial restore.
+
+- `fleetrestore` decides on the exact layout from what it is rebuilding rather than
+  from a flag. `--all` stood in for "everything is being rebuilt" and was not the
+  same thing: `--all` with three sessions already live still applied a layout that
+  no longer fit.
+
+- One manifest: `manifest.json`. `fleetsnap` no longer writes `<fleet>.json`, no
+  longer records a per-session `fleet`, and moves any leftover aside as
+  `<name>.json.stale` — except a manifest whose sessions are parked, which is how
+  they come back. `index.md` lists sessions rather than fleets.
+
+- `fleetgantt` draws every live session in one lane group. A stopped role still
+  keeps whatever `group` `fleet.toml` declares for it, which is declared rather
+  than inferred; `fleetretire` no longer invents one from the pane's `@fleet`.
+
+- `fleetretire`'s resume recipe no longer embeds `--fleet`. **Ledgers written
+  before this carry a `fleetspawn ... --fleet <group>` line that no longer runs.**
+  They live in the state directory, which nothing in this repository reaches, so
+  that is a fix by hand.
+
+- The test that every tool reads both labels is exhaustive over `bin/` instead of
+  naming five tools. The hand-written list covered the five that decide
+  *membership* and reached none of the four that read `@repo` to *identify* a
+  session, which is why those four went the whole rename reading the old label
+  alone. A list of names cannot catch the tool nobody added to the list. Two
+  entries added to `docs/checks-that-reassure.md` from writing it: the first
+  version of this guard reported clean with all four tools reverted, and a mocked
+  tmux call left the tool's own format string untested.
+
 ### Added
 
 - When `fleetcontext` reports that a pane and a session disagree about being busy,

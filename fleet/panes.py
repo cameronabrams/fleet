@@ -39,34 +39,22 @@ def agent_label(agent, repo=""):
     """A pane's agent name: `@agent`, or `@repo` while panes still carry it."""
     return (agent or "").strip() or (repo or "").strip()
 
-def in_fleet(repo_label, fleet_label):
-    """Whether a pane belongs to this fleet, from the labels `fleetspawn` stamps.
+def is_agent_pane(agent, repo=""):
+    """Whether a pane belongs to an agent: does it carry a name.
 
-    `tmux list-panes -a` crosses tmux SESSIONS, so it returns every pane on the
-    server -- the human's own windows included. On 2026-09-26 that put a personal
-    session into `fleetupgrade`'s count ("3 of 12 sessions stale") and produced a
-    restart plan for it with `CCP_AGENT=1` prepended from `[spawn].env`: the flag
-    that makes a session an addressable agent. Following that plan would not have
-    restored what was running, it would have changed what it was. The plan
-    asserted an environment it never observed.
+    Succeeds `in_fleet`, which also took `@fleet`. That grouping is retired --
+    there is one fleet, and `@fleet` agreed with the window name only by accident:
+    seven of fourteen panes disagreed, six of them because one group had outgrown
+    any single window. A group that cannot fit the thing it is named after was
+    not describing the fleet, it was describing the screen.
 
-    `fleetspawn` sets BOTH `@repo` and `@fleet` on every pane it creates, and
-    `fleetsnap` already reads `@fleet` as membership. Either is enough here:
-    requiring both would drop a pane someone relabelled by hand.
-
-    Callers must REPORT what they exclude. A fleet pane that lost its labels
-    would otherwise vanish from a roll with no warning, which trades a stranger's
-    pane being included for one of ours being silently skipped -- the worse
-    direction of the two."""
-    return bool((repo_label or "").strip() or (fleet_label or "").strip())
-
-def is_agent_pane(agent, repo="", fleet=""):
-    """Whether a pane belongs to an agent, under either naming.
-
-    Succeeds `in_fleet`, which took `@repo`/`@fleet`. `@fleet` is being retired --
-    there is one fleet -- so membership is "does it carry a name", and the name is
-    `@agent` with `@repo` as the transitional fallback."""
-    return bool(agent_label(agent, repo) or (fleet or "").strip())
+    `tmux list-panes -a` still crosses tmux SESSIONS, so this check still earns its
+    keep -- it is what keeps the owner's own windows out of the fleet's tools. On
+    2026-09-26 one of the owner's own windows landed in fleetupgrade's count and
+    got a restart plan with `CCP_AGENT=1` prepended -- the flag that makes a
+    session an addressable agent. The plan asserted an environment it had never
+    observed."""
+    return bool(agent_label(agent, repo))
 
 def strip_escapes(text):
     """`text` without terminal escape sequences."""

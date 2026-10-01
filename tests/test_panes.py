@@ -148,33 +148,54 @@ class AgentLabel(unittest.TestCase):
         the order `agent_label` expects."""
         self.assertEqual(panes.LABELS, "#{@agent}\t#{@repo}")
 
-    def test_every_membership_check_uses_the_shared_helper(self):
-        """Five tools decide whether a pane is ours. If one keeps its own copy of
-        the rule, the rename strands that tool's view of the fleet."""
-        import os
+    def test_no_tool_reads_the_old_label_on_its_own(self):
+        """Exhaustive over `bin/`, not a list of five. Every tool that asks tmux
+        for a label must ask for BOTH and resolve them with the shared helper.
+
+        The hand-written list this replaces named the five tools that decide
+        MEMBERSHIP. Four others read `@repo` to identify a session rather than to
+        admit it -- `fleetrestore`, `fleetwaiting`, `fleetlog`, and `fleetspawn`'s
+        duplicate-name check -- and the list did not reach them, so each went on
+        reading `@repo` alone through the whole rename. A pane carrying only the
+        new label was invisible to all four, and `fleetrestore`'s was the worst
+        place for it: that read runs right after a `--go`, so it would have
+        reported a restore that worked as a restore that failed.
+
+        A list of names cannot catch the tool nobody added to the list."""
+        import os, re
         from tests.support import APP
-        for tool in ("fleetnudge", "fleetwatch", "fleetcontext",
-                     "fleetupgrade", "fleetsnap"):
-            src = open(os.path.join(APP, "bin", tool)).read()
-            self.assertIn("is_agent_pane", src, tool)
-            self.assertIn("#{@agent}", src, tool + " must ask tmux for the new label")
-
-
-class InFleet(unittest.TestCase):
-    """`tmux list-panes -a` crosses tmux SESSIONS. On 2026-09-26 that put one of
-    the human's own windows into fleetupgrade's count and produced a restart plan
-    for it with CCP_AGENT=1 prepended -- the flag that makes a session an
-    addressable agent. The plan asserted an environment it never observed."""
-
-    def test_either_label_is_enough_and_neither_is_not(self):
-        self.assertTrue(panes.in_fleet("coord", "coord"))
-        self.assertTrue(panes.in_fleet("coord", ""))        # relabelled by hand
-        self.assertTrue(panes.in_fleet("", "records"))
-        self.assertFalse(panes.in_fleet("", ""))
-        self.assertFalse(panes.in_fleet(None, None))        # tmux gives "" not None
-
-    def test_whitespace_is_not_a_label(self):
-        self.assertFalse(panes.in_fleet("  ", "\t"))
+        bad = []
+        for tool in sorted(os.listdir(os.path.join(APP, "bin"))):
+            path = os.path.join(APP, "bin", tool)
+            if not os.path.isfile(path):
+                continue
+            try:
+                src = open(path).read()
+            except (OSError, UnicodeDecodeError):
+                continue
+            # Only the lines that build a tmux format string; prose about the
+            # options is not a read, and a tool that reads no label at all --
+            # fleetcost, fleetregister -- is not in scope.
+            fmts = [l for l in src.splitlines()
+                    if "#{@repo}" in l or "#{@agent}" in l]
+            if not fmts:
+                continue
+            #
+            # Judged PER LINE. The first version asked `"LABELS" not in src`
+            # first, and every one of these files contains that word on its
+            # import line -- so the clause was always true, the check never ran,
+            # and reverting all four tools to `@repo` alone produced no failure
+            # at all. A guard answering from the wrong part of the file is worse
+            # than no guard: it reports clean.
+            for line in fmts:
+                if "#{@agent}" in line and "#{@repo}" in line:
+                    continue                      # spelled out, both, in order
+                if re.search(r"\bLABELS\b", line):
+                    continue                      # or built from the shared pair
+                bad.append(f"{tool}: asks for one label, not both: {line.strip()}")
+            if not re.search(r"\bagent_label\b|\bis_agent_pane\b", src):
+                bad.append(f"{tool}: reads a label without the shared helper")
+        self.assertEqual(bad, [])
 
 
 class Reconcile(unittest.TestCase):

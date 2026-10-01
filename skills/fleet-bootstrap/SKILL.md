@@ -37,7 +37,7 @@ manifest, a checkpoint or your memory says.
   an old one unless this file carries them.** Read it with the human and delete
   rules that do not apply rather than shipping them unread.
 - You are the coordinator, and the human launched you in a pane labelled for it
-  (`tmux set -p @repo coord; tmux set -p @fleet coord`). You cannot spawn yourself.
+  (`tmux set -p @agent coord`). You cannot spawn yourself.
 - **The coordinator's working directory is the fleet STATE directory**, with the
   application and configuration as added directories
   (`permissions.additionalDirectories` in `<state>/.claude/settings.json`) and a
@@ -142,8 +142,8 @@ UNATTRIBUTED — correctly, since nothing declared them.
 
 ### 2e. Plan, show, then spawn
 
-    fleetspawn <name> <dir> --fleet <group> --beside <pane>        # plan; changes nothing
-    fleetspawn <name> <dir> --fleet <group> --beside <pane> --go
+    fleetspawn <name> <dir> --beside <pane>        # plan; changes nothing
+    fleetspawn <name> <dir> --beside <pane> --go
 
 Preflight blocks on: missing directory, missing brief, no `[colors]` entry, no tmux, a live claude already
 `--name`d this, a pane already labelled this. Do not work around a block; fix its
@@ -264,7 +264,7 @@ keyed by transcript, so a new session that reuses a name is not blocked by an ol
 `fleetsnap` (the layout changed) and verify; update the coordinator checkpoint; tell
 the peers it worked with, by pointer.
 
-To bring a parked session back: `fleetspawn <name> <dir> --fleet <group> --beside
+To bring a parked session back: `fleetspawn <name> <dir> --beside
 <pane> --resume <uuid> --go` (the command is in its ledger), then delete its
 `[parked]` entry. Until the entry goes, `fleetsnap` flags the live session, because
 the next restore would not bring it back. A large session may stop at the

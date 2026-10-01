@@ -29,6 +29,7 @@ import argparse, glob, json, os, re, shlex, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
+from fleet.panes import LABELS, agent_label
 from fleet.procs import alive, ancestors, children, claude_procs, named, ppid, starttime
 from fleet.agents import background_named, list_agents
 from fleet.transcripts import resume_handle, session_name
@@ -69,17 +70,17 @@ def fleetwatch_json(name):
         return None, "unparseable output"
 
 def pane_of(pid):
-    """(pane_id, window_id, panes_in_window, @repo, @fleet) of the pane whose shell is
+    """(pane_id, window_id, panes_in_window, agent label) of the pane whose shell is
     the claude process's parent, or None."""
     fmt = "\t".join(["#{pane_id}", "#{pane_pid}", "#{window_id}", "#{window_panes}",
-                     "#{@repo}", "#{@fleet}"])
+                     LABELS])
     _, out, _ = tmux("list-panes", "-a", "-F", fmt)
     parent = ppid(pid)
     for row in out.splitlines():
         p = row.split("\t")
         if len(p) == 6 and p[1].isdigit() and int(p[1]) in (pid, parent):
             return {"pane": p[0], "window": p[2], "panes": int(p[3] or 0),
-                    "label": p[4], "fleet": p[5]}
+                    "label": agent_label(p[4], p[5])}
     return None
 
 def argv_resume(argv):
@@ -130,7 +131,7 @@ def gather(a):
         problems.append("no tmux pane holds this process -- stop it by hand")
     else:
         if pane["label"] and pane["label"] != a.name:
-            notes.append(f"pane {pane['pane']} is labelled @repo={pane['label']}")
+            notes.append(f"pane {pane['pane']} is labelled @agent={pane['label']}")
         _, screen, _ = tmux("capture-pane", "-p", "-t", pane["pane"])
         if any(m in screen for m in TRUST_MARKERS):
             problems.append(f"pane {pane['pane']} shows the folder-trust prompt")
@@ -228,24 +229,30 @@ def gather(a):
                 problems.append(msg + " -- update them, or --allow-references")
     return f, problems, notes
 
-def recipe(f, fleet):
+def recipe(f):
+    """The command that brings this session back, written into its ledger.
+
+    A ledger outlives the code that wrote it, and it is read months later by
+    someone who runs what it says. Ledgers written before 2026-10-01 embed
+    `--fleet <group>`, which fleetspawn no longer accepts; three parked sessions
+    carry one. Nothing in this repository can reach them -- they live in the state
+    directory -- so that is a migration by hand, not a code change."""
     env = fc.launch_env(CFG)
     cmd = " ".join(x for x in (env, "claude", "--name", shlex.quote(f["name"]),
                                "--resume", f["uuid"]) if x)
     return (f"    cd {shlex.quote(f['cwd'])} && {cmd}\n\n"
             f"or, into a new pane:\n\n"
-            f"    fleetspawn {shlex.quote(f['name'])} {shlex.quote(f['cwd'])} --fleet {fleet or '<group>'} "
+            f"    fleetspawn {shlex.quote(f['name'])} {shlex.quote(f['cwd'])} "
             f"--beside <pane> --resume {f['uuid']} --go\n")
 
 def ledger_text(f, mode, previous):
     today = time.strftime("%Y-%m-%d")
     word = "PARKED" if mode == "park" else "RETIRED"
-    fleet = (f.get("pane") or {}).get("fleet")
     txt = (f"# {f['name']} — {word} since {today}\n\n"
            f"Written by fleetretire at {time.strftime('%Y-%m-%d %H:%M %Z')}, before the process\n"
            f"(pid {f['pid']}) was stopped. It held no runtime: no child processes, no live\n"
            f"registered watchers, no cluster work.\n\n"
-           f"## Re-arm nothing. Resume with\n\n{recipe(f, fleet)}\n"
+           f"## Re-arm nothing. Resume with\n\n{recipe(f)}\n"
            f"Transcript uuid: {f['uuid']}\n")
     if mode == "park":
         txt += (f"\nAfter resuming, remove [parked.{f['name']}] from fleet.toml -- until then\n"
@@ -258,7 +265,10 @@ def snippet(name, mode, uuid, note="", group="", cwd=""):
     state = "parked" if mode == "park" else "retired"
     s = f'[{state}.{name}]\nuuid  = "{uuid}"\nsince = "{time.strftime("%Y-%m-%d")}"\n'
     # group and cwd keep a stopped role's lane, and its unnamed transcripts, in place
-    # on fleetgantt's chart; neither is knowable once the process is gone
+    # on fleetgantt's chart; neither is knowable once the process is gone. `group`
+    # used to be filled in from the pane's `@fleet`; with that retired there is
+    # nothing to read it from, so it is left for the configuration owner to write
+    # or to leave out. Left out, fleetgantt lanes the role under its state.
     if group:
         s += f'group = "{group}"\n'
     if cwd:
@@ -354,7 +364,7 @@ def main():
     if "pid" in f:
         p = f.get("pane") or {}
         print(f"  pid   {f['pid']}  in {f['cwd']}")
-        print(f"  pane  {p.get('pane', '?')}  fleet={p.get('fleet') or '?'}  "
+        print(f"  pane  {p.get('pane', '?')}  label={p.get('label') or '(none)'}  "
               f"({p.get('panes', '?')} pane(s) in its window)")
         print(f"  uuid  {f.get('uuid')}  ({f.get('uuid_source')})")
     for n in notes:
@@ -406,7 +416,7 @@ def main():
 
     state = "parked" if a.mode == "park" else "retired"
     print(f"\n  Remaining, for the configuration owner -- add to fleet.toml:\n")
-    print("    " + snippet(a.name, a.mode, f["uuid"], a.note, pane.get("fleet") or "",
+    print("    " + snippet(a.name, a.mode, f["uuid"], a.note, "",
                             f["cwd"]).replace("\n", "\n    "))
     if a.mode == "retire":
         print(f"  and remove {a.name}'s [colors] and [owners] rows; move briefs/{a.name}.md to")

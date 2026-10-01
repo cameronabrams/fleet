@@ -67,8 +67,8 @@ hosts, accounts and people; the application repository is public and must not.
 
 .. code-block:: bash
 
-   $ fleetspawn coord ~/.local/state/fleet --fleet coord --beside %0      # plan
-   $ fleetspawn coord ~/.local/state/fleet --fleet coord --beside %0 --go
+   $ fleetspawn coord ~/.local/state/fleet --beside %0      # plan
+   $ fleetspawn coord ~/.local/state/fleet --beside %0 --go
 
 :doc:`tools/fleetspawn` refuses before it acts: no brief, no ``[colors]`` entry, a name
 already running, a directory that does not exist. It creates the pane, labels it,

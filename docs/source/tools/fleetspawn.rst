@@ -8,10 +8,10 @@ Usage
 
 .. code-block:: text
 
-   fleetspawn NAME DIR --fleet GROUP --beside PANE [--split v|h] [--go]
-   fleetspawn NAME DIR --fleet GROUP --window TITLE [--go]
+   fleetspawn NAME DIR --beside PANE [--split v|h] [--go]
+   fleetspawn NAME DIR --window TITLE [--go]
    fleetspawn --check NAME DIR
-   fleetspawn NAME DIR --fleet GROUP --beside PANE --resume UUID [--go]
+   fleetspawn NAME DIR --beside PANE --resume UUID [--go]
 
 Other options: ``--brief PATH`` (default ``<config>/briefs/NAME.md``) and ``--wait
 SECONDS`` for startup (default 60).
@@ -21,7 +21,7 @@ Preflight
 
 Blocks, and changes nothing, on any of: a missing directory, a missing brief, no
 ``[colors]`` entry for the name, no tmux server, a live claude already answering to
-``NAME``, a pane already labelled ``@repo=NAME``, or a nonexistent
+``NAME``, a pane already labelled ``@agent=NAME``, or a nonexistent
 ``--beside`` pane. Fix the cause; do not work around it.
 
 A live claude answers to the name in its transcript's last ``agent-name`` record,
@@ -40,7 +40,7 @@ With ``--go``
 -------------
 
 Creates the pane (split beside ``PANE``, or a new window with automatic-rename
-off), sets ``@repo``, ``@fleet`` and the pane title, and types
+off), sets ``@agent`` and the pane title, and types
 ``[spawn].env claude --name NAME '<first prompt>'``. It then watches the pane until
 the version banner is drawn and a process with that name runs in ``DIR``, or the
 folder-trust prompt appears.

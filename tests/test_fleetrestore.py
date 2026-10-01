@@ -3,9 +3,11 @@ from tests.support import APP, BASE_TOML, FakeConfig, load_tool
 
 TOOL = os.path.join(APP, "bin", "fleetrestore")
 
-def session(label, window, pane, fleet="f", uuid="u"):
-    return {"label": label, "fleet": fleet, "cwd": "/tmp",
-            "tmux": {"session": "0", "window": window, "window_name": fleet,
+def session(label, window, pane, uuid="u"):
+    # No `fleet` key: fleetsnap stopped writing one on 2026-10-01, so a fixture
+    # carrying it would be a shape nothing produces.
+    return {"label": label, "cwd": "/tmp",
+            "tmux": {"session": "0", "window": window, "window_name": "w",
                      "pane_index": pane, "pane_id": "%1", "size": "80x24"},
             "resume_uuid": uuid, "resume_uuid_source": "verified: test",
             "durable_files": []}
@@ -16,14 +18,13 @@ class Plan(unittest.TestCase):
     def setUp(self):
         self.cfg = FakeConfig(toml=BASE_TOML + '\n[spawn]\nenv = {{ NOTIFY = "1" }}\n')
         self.tmux = tempfile.mkdtemp(prefix="ftmux", dir="/tmp")
-        man = {"captured": "now", "installed_claude": "x", "fleet": "f",
+        man = {"captured": "now", "installed_claude": "x",
                "coordinator": "coord",
                "sessions": [session("beta", 2, 1, uuid="u-beta"),
                             session("alpha", 2, 0, uuid="u-alpha"),
                             session("gamma", 3, 0, uuid="UNVER-x")]}
         man["sessions"][2]["resume_uuid_source"] = "UNVERIFIED: guess"
-        for name in ("manifest", "f"):
-            json.dump(man, open(os.path.join(self.cfg.state, f"{name}.json"), "w"))
+        json.dump(man, open(os.path.join(self.cfg.state, "manifest.json"), "w"))
 
     def tearDown(self):
         shutil.rmtree(self.tmux); self.cfg.close()
@@ -32,26 +33,40 @@ class Plan(unittest.TestCase):
         env = dict(os.environ, TMUX_TMPDIR=self.tmux); env.pop("TMUX", None)
         return subprocess.run([TOOL, *args], capture_output=True, text=True, env=env)
 
+    def manifest(self):
+        return os.path.join(self.cfg.state, "manifest.json")
+
     def test_an_unnamed_session_is_not_relaunched(self):
-        man = json.load(open(os.path.join(self.cfg.state, "f.json")))
+        man = json.load(open(self.manifest()))
         man["sessions"].append(dict(session(None, 4, 0, uuid="u-unnamed"),
                                     cwd="/tmp/unnamed-cwd"))
         man["sessions"][-1]["tmux"]["pane_id"] = "%21"
-        json.dump(man, open(os.path.join(self.cfg.state, "f.json"), "w"))
-        r = self.run_tool("f")
+        json.dump(man, open(self.manifest(), "w"))
+        r = self.run_tool()
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("could not name these panes", r.stdout)
         self.assertIn("%21", r.stdout)
         self.assertNotIn("u-unnamed", r.stdout)          # no relaunch line for it
         self.assertIn("--resume", r.stdout)              # the named ones still planned
 
-    def test_lists_fleets(self):
+    def test_no_arguments_plans_the_whole_fleet(self):
+        """There is one manifest, so running it bare plans everything. It used to
+        LIST the per-fleet manifests and plan nothing, which meant the bare command
+        -- the one a recovering human types first -- did nothing at all."""
         r = self.run_tool()
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("f ", r.stdout)
+        self.assertIn("PLAN (nothing executed", r.stdout)
+        for name in ("alpha", "beta", "gamma"):
+            self.assertIn(f"claude --name {name}", r.stdout)
+
+    def test_a_named_subset_restores_only_those(self):
+        r = self.run_tool("alpha")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("claude --name alpha", r.stdout)
+        self.assertNotIn("claude --name beta", r.stdout)
 
     def test_plan_changes_nothing_and_resumes_in_pane_order(self):
-        r = self.run_tool("f")
+        r = self.run_tool()
         self.assertEqual(r.returncode, 0, r.stderr)
         out = r.stdout
         self.assertIn("PLAN (nothing executed", out)
@@ -62,10 +77,13 @@ class Plan(unittest.TestCase):
         self.assertLess(a, b)                               # pane 0 before pane 1
         self.assertIn("NOTIFY=1 claude --name alpha", out)  # [spawn].env carried into a restore
 
-    def test_unknown_fleet(self):
+    def test_a_name_the_manifest_does_not_hold_is_refused(self):
+        """Not "restore the rest and say nothing": a typo would then read as a
+        successful partial restore, which is the shape fleetwatch was fixed for."""
         r = self.run_tool("nope")
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("unknown fleet", r.stderr)
+        self.assertIn("not in the manifest: nope", r.stderr)
+        self.assertIn("alpha", r.stderr)                 # and what it does hold
 
 
 class StoppedSessions(Plan):
@@ -76,15 +94,14 @@ class StoppedSessions(Plan):
         with open(os.path.join(self.cfg.config, "fleet.toml"), "a") as f:
             f.write('\n[retired.alpha]\nuuid = "aaaaaaaa-0000-4000-8000-000000000001"\n'
                     'since = "2026-09-13"\n')
-        for name in ("manifest", "f"):
-            p = os.path.join(self.cfg.state, f"{name}.json")
-            m = json.load(open(p))
-            m["sessions"][1]["resume_uuid"] = "aaaaaaaa-0000-4000-8000-000000000001"  # alpha, retired
-            m["sessions"][0]["label"] = "alpha2"
-            json.dump(m, open(p, "w"))
+        p = os.path.join(self.cfg.state, "manifest.json")
+        m = json.load(open(p))
+        m["sessions"][1]["resume_uuid"] = "aaaaaaaa-0000-4000-8000-000000000001"  # alpha, retired
+        m["sessions"][0]["label"] = "alpha2"
+        json.dump(m, open(p, "w"))
 
     def test_retired_transcript_not_relaunched(self):
-        r = self.run_tool("f")
+        r = self.run_tool()
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("not relaunched (fleet.toml): alpha is retired", r.stdout)
         self.assertNotIn("--resume aaaaaaaa-0000-4000-8000-000000000001", r.stdout)
@@ -92,6 +109,8 @@ class StoppedSessions(Plan):
 
     # inherited from Plan, whose manifest this class changes; not collected here
     test_plan_changes_nothing_and_resumes_in_pane_order = None
+    test_no_arguments_plans_the_whole_fleet = None
+    test_a_named_subset_restores_only_those = None
 
 class StoppedByNameOnly(Plan):
     def setUp(self):
@@ -101,7 +120,7 @@ class StoppedByNameOnly(Plan):
                     'since = "2026-09-01"\n')
 
     def test_same_name_different_transcript_is_restored(self):
-        r = self.run_tool("f")
+        r = self.run_tool()
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("claude --name alpha --resume u-alpha", r.stdout)
         self.assertNotIn("not relaunched", r.stdout)

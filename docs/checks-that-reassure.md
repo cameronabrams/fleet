@@ -89,6 +89,20 @@ Three mechanisms produce it.
   swapped passes identically (2026-09-05).
 - **`sacct` COLLAPSES pending array tasks** into one row, so a row count is not a
   task count; and **without `-D` it hides requeued runs**, under-counting cost.
+- **A guard that answers from the wrong part of the file.** A test meant to catch
+  any tool still asking tmux for the old `@repo` label alone began
+  `if "LABELS" not in src and ...`. Every one of those files imports `LABELS`, so
+  the first clause was always true and the check never ran. Reverting all four
+  tools to `@repo` alone produced **no failure at all** — the guard reported
+  clean. Written while fixing the exact bug it was meant to catch, and caught
+  only because the repository requires breaking a new guard to prove it can fail
+  (2026-10-01). The fix: judge each format line, never the file.
+- **A mock that answers a question the tool has stopped asking.** The same day, a
+  test for `fleetrestore`'s verify step fed rows through a mocked `subprocess.run`
+  and checked the parse. Narrowing the format string the tool hands tmux — the
+  half that actually breaks — changed nothing, because the mock supplied the rows
+  regardless. A mock makes the *response* a constant; whatever is in the
+  **request** is then untested. Assert on the argv too.
 
 ## The rule that covers all three
 

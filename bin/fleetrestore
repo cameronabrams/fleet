@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """fleetrestore - rebuild the agent fleet from the last fleetsnap manifest.
 
-Prints the plan and does nothing unless given --go. Restores tmux layout, @repo
+Prints the plan and does nothing unless given --go. Restores tmux layout, @agent
 labels, working directories, and resumes each session by transcript UUID.
 
 It deliberately does NOT restart any compute. Local jobs died with the power cycle
 and whether to rerun them is a judgement call, not a recovery step.
 
-  fleetrestore              show the plan (default; changes nothing)
+  fleetrestore              plan the whole fleet (default; changes nothing)
+  fleetrestore NAME...      plan only these sessions
   fleetrestore --go         build it
   fleetrestore --brief      write per-session RECOVERY.md notes, then show the plan
 """
@@ -15,6 +16,7 @@ import json, os, subprocess, sys, argparse, time, shlex
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
+from fleet.panes import LABELS, agent_label
 CFG = fc.load()
 
 STATE = fc.state_dir(CFG)
@@ -108,10 +110,10 @@ def verify(sessions):
     session came up one pane to the left and nothing in the output said so -- the
     only check that caught it was a human comparing panes by hand afterwards.
 
-    Compares the two facts a restore is responsible for: the @repo label on each
+    Compares the two facts a restore is responsible for: the agent label on each
     pane, and the directory that pane is in."""
     r = tmux_run(["list-panes", "-a", "-F",
-                  "#{@repo}\t#{pane_current_path}\t#{pane_id}"],
+                  LABELS + "\t#{pane_current_path}\t#{pane_id}"],
                  capture_output=True, text=True)
     if r.returncode != 0:
         return [("(all)", "could not list panes to check the restore: "
@@ -119,13 +121,13 @@ def verify(sessions):
     have = {}
     for row in r.stdout.splitlines():
         f = row.split("\t")
-        if len(f) == 3 and f[0]:
-            have[f[0]] = (f[1], f[2])
+        if len(f) == 4 and agent_label(f[0], f[1]):
+            have[agent_label(f[0], f[1])] = (f[2], f[3])
     out = []
     for s_ in sessions:
         got = have.get(s_["label"])
         if not got:
-            out.append((s_["label"], "no pane carries this @repo label"))
+            out.append((s_["label"], "no pane carries this @agent label"))
         elif got[0] != s_["cwd"]:
             out.append((s_["label"], f"pane {got[1]} is in {got[0]!r}, "
                                      f"manifest says {s_['cwd']!r}"))
@@ -134,8 +136,8 @@ def verify(sessions):
 def main():
     version_flag()
     ap = argparse.ArgumentParser()
-    ap.add_argument("fleet", nargs="?", help="fleet to restore (omit to list them)")
-    ap.add_argument("--all", action="store_true", help="restore every fleet, exact geometry")
+    ap.add_argument("sessions", nargs="*", metavar="NAME",
+                    help="restore only these sessions (default: all of them)")
     ap.add_argument("--go", action="store_true", help="actually build it")
     ap.add_argument("--brief", action="store_true", help="write per-session RECOVERY.md")
     ap.add_argument("--socket", metavar="NAME",
@@ -147,35 +149,37 @@ def main():
     global SOCKET
     SOCKET = a.socket
 
-    import glob as _g
-    avail = sorted(os.path.basename(f)[:-5] for f in _g.glob(f"{STATE}/*.json")
-                   if os.path.basename(f) != "manifest.json")
-    if not avail:
-        sys.exit(f"no manifests in {STATE} — run fleetsnap while the fleet is healthy")
-    if a.all:
-        path = f"{STATE}/manifest.json"
-    elif a.fleet:
-        if a.fleet not in avail:
-            sys.exit(f"unknown fleet {a.fleet!r}; available: {', '.join(avail)}")
-        path = f"{STATE}/{a.fleet}.json"
-    else:
-        print(f"\n  fleets in {STATE}:\n")
-        for f in avail:
-            d = json.load(open(f"{STATE}/{f}.json"))
-            print(f"    {f:<12} {len(d['sessions'])}  "
-                  f"{', '.join(x['label'] for x in d['sessions'])}")
-        print("\n  fleetrestore <fleet>    plan one fleet")
-        print("  fleetrestore --all      plan everything, exact geometry\n")
-        return
+    path = f"{STATE}/manifest.json"
+    if not os.path.exists(path):
+        sys.exit(f"no manifest at {path} — run fleetsnap while the fleet is healthy")
     m = json.load(open(path))
     MANIFEST = path
+
+    # Whether the ORIGINAL layout can be reapplied is a fact about what is being
+    # rebuilt, not a flag: an exact layout needs every pane that was in the window.
+    # `--all` used to stand in for it, and `--all` with three sessions already live
+    # still applied a layout that no longer fit. Counted here, BEFORE any filtering,
+    # so a named subset is partial too.
+    full = len(m["sessions"])
+
+    # A name given on the command line that the manifest does not hold is a typo or
+    # a session that was never snapshotted, and silently restoring the rest would
+    # read as success. Refuse, the way fleetwatch refuses an unknown session.
+    if a.sessions:
+        known = {x.get("label") for x in m["sessions"]}
+        unknown = [n for n in a.sessions if n not in known]
+        if unknown:
+            sys.exit(f"not in the manifest: {', '.join(unknown)}\n"
+                     f"  it holds: {', '.join(sorted(x for x in known if x))}")
+        m["sessions"] = [x for x in m["sessions"] if x.get("label") in set(a.sessions)]
 
     # liveness: never rebuild a session that is already running
     live = set()
     try:
-        out = tmux_run(["list-panes", "-a", "-F", "#{@repo}"],
+        out = tmux_run(["list-panes", "-a", "-F", LABELS],
                        capture_output=True, text=True, timeout=5).stdout
-        live = {l.strip() for l in out.splitlines() if l.strip()}
+        live = {agent_label(*(l.split("\t") + [""])[:2]) for l in out.splitlines()}
+        live.discard("")
     except Exception:
         pass
     # Parked and retired sessions are declared in fleet.toml by transcript. An older
@@ -198,7 +202,7 @@ def main():
             print("  nothing to restore.\n")
             return
     age = time.time() - os.path.getmtime(MANIFEST)
-    print(f"\n  fleet: {m.get('fleet','ALL')}   coordinator: {m.get('coordinator','?')}")
+    print(f"\n  coordinator: {m.get('coordinator','?')}")
     print(f"  manifest captured {m['captured']}  ({age/3600:.1f} h ago)")
     print(f"  {len(m['sessions'])} sessions, claude {m['installed_claude']}\n")
 
@@ -210,7 +214,7 @@ def main():
               "name them and re-run fleetsnap:")
         for s in unnamed:
             print(f"     pane {s['tmux'].get('pane_id')} in {s['cwd']}  "
-                  f"(tmux set -p -t {s['tmux'].get('pane_id')} @repo <name>)")
+                  f"(tmux set -p -t {s['tmux'].get('pane_id')} @agent <name>)")
         print()
         m["sessions"] = [s for s in m["sessions"] if s.get("label")]
 
@@ -294,8 +298,7 @@ def main():
         # The --all path did neither until 2026-09-09, which is how three window
         # names were lost. Restoring names is not cosmetic: it is what
         # stops the next snapshot from overwriting them with the command name.
-        wname = m["fleet"] if (m.get("fleet") and not a.all) else \
-                panes[0]["tmux"].get("window_name")
+        wname = panes[0]["tmux"].get("window_name")
         if wname and wname != "claude":
             run(["tmux", "rename-window", "-t", key, wname], a.go)
         elif wname == "claude":
@@ -304,7 +307,7 @@ def main():
                   f"Rename it by hand after the restore.")
         run(["tmux", "set", "-w", "-t", key, "automatic-rename", "off"], a.go)
         lay = m.get("window_layouts", {}).get(f"{sess}:{w}", {})
-        partial = not a.all
+        partial = len(m["sessions"]) != full
         if lay.get("layout") and not partial:
             run(["tmux", "select-layout", "-t", key, lay["layout"]], a.go)
         else:
@@ -326,9 +329,7 @@ def main():
                     print(f"    !! {s_['label']}: pane {target} is in {here!r}, "
                           f"manifest says {s_['cwd']!r}. NOT launching it.")
                     continue
-            run(["tmux", "set", "-p", "-t", target, "@repo", s_["label"]], a.go)
-            if s_.get("fleet"):
-                run(["tmux", "set", "-p", "-t", target, "@fleet", s_["fleet"]], a.go)
+            run(["tmux", "set", "-p", "-t", target, "@agent", s_["label"]], a.go)
             # --name pins the peer-visible session name to the role label, so a
             # restart no longer changes how other sessions address this one.
             # Verified 2026-08-26: `claude --name X` appears verbatim in ListAgents.
@@ -348,7 +349,7 @@ def main():
                 print(f"     {label}: {why}")
             print("     Fix these before asking the sessions to do anything.")
         else:
-            print("\n  verified: every session's pane carries its @repo label and sits "
+            print("\n  verified: every session's pane carries its @agent label and sits "
                   "in its manifest directory.")
     print(f"\n  After restore: run `fleetsnap` to re-capture, and ask each session to "
           f"confirm it re-armed what its state files require.\n")

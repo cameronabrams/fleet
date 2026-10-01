@@ -457,11 +457,11 @@ def main():
             (s["resume_uuid"] or "?")[:8]))
     if OUTSIDE:
         print("\n   not this fleet's, so not counted above and never in a plan below")
-        print("   (no @repo/@fleet label; `tmux list-panes -a` crosses tmux sessions):")
+        print("   (no @agent label; `tmux list-panes -a` crosses tmux sessions):")
         for o in OUTSIDE:
             print("   %-5s in tmux session %r   %s" % (o["pane"], o["tmux_session"], o["title"]))
         print("   If one of these SHOULD be in the fleet, it is missing its label:")
-        print("     tmux set -p -t <pane> @fleet <name>; tmux set -p -t <pane> @repo <name>")
+        print("     tmux set -p -t <pane> @agent <name>")
 
     declared = fc.colors(CFG)
     # No resume uuid means no transcript was read, so no colour record could be

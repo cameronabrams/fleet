@@ -9,8 +9,8 @@ risks tmux: the pane-to-transcript mapping exists only in live process arguments
 What it records, per session
 ----------------------------
 
-- tmux position (session, window, pane index and id, size), the ``@repo`` label and
-  ``@fleet`` group
+- tmux position (session, window, pane index and id, size) and the ``@agent``
+  label (``@repo`` is still read on panes that carry the old name)
 - working directory, claude version, pid and start time
 - ``resume_uuid`` and ``resume_uuid_source`` — how the handle was resolved. A
   handle reading ``verified:`` came from process arguments (corrected for a
@@ -35,7 +35,7 @@ reboot), and the ``[authority]`` table from configuration.
 Pane labels
 -----------
 
-The ``@repo`` label is hand-set and can go stale on a rename. When the pane title
+The ``@agent`` label is hand-set and can go stale on a rename. When the pane title
 differs, fleetsnap takes the title as the session's name **only** on positive
 evidence — the process was launched ``--name <title>``, or a transcript in its
 project self-reports that name — and notes the correction. A shell's
@@ -59,10 +59,13 @@ In the state directory:
    everything above, machine-readable
 ``manifest.md``
    human-readable, for rebuilding by hand when nothing is running
-``<fleet>.json``
-   one manifest per ``@fleet`` group, used by ``fleetrestore <fleet>``
 ``index.md``
-   the fleets and their members
+   the sessions and where they sit
+
+There is one fleet, so there is one manifest. ``<fleet>.json`` files, one per
+``@fleet`` group, were written until 2026-10-01; the next snapshot moves any
+leftover aside as ``<name>.json.stale``, except one whose sessions are parked —
+that manifest is how they come back.
 
 ``manifest.json`` and ``manifest.md`` are copied to ``.bak-<stamp>`` before each
 write; the newest 10 are kept.

@@ -39,7 +39,7 @@ drifting away from it writes nothing.
 | event | what goes stale |
 | :--- | :--- |
 | a fleet upgrade roll | `version` on every session; `installed_claude` |
-| `/rename` or a new `--name` | `label`, and `@repo` if it was hand-set |
+| `/rename` or a new `--name` | `label`, and `@agent` if it was hand-set |
 | adding or retiring a session | the whole session list |
 | a session changing cwd | `cwd`, and the transcript path derived from it |
 | tmux layout / pane changes | `window_layouts`, `tmux.pane_id` |
@@ -123,7 +123,7 @@ validation. **Check all four before treating a snapshot as good:**
    way had the old session been touched. Do not accept a corroborated uuid on the
    assumption the directory has only one transcript — look.
 2. **Session count and names match `ListAgents`.** `ListAgents` is the authority
-   on names. `@repo` is hand-set and goes stale on rename; `fleetsnap` flags the
+   on names. `@agent` is hand-set and goes stale on rename; `fleetsnap` flags the
    disagreement but does not resolve it.
 3. **`installed_claude` matches `claude --version`.**
 4. **Every `version` matches** — a straggler here means a roll left someone behind.
@@ -171,27 +171,35 @@ worse than no record, because the freshness of the file lends it false weight.
     fleetrestore --brief    # also write per-session RECOVERY.md notes
     fleetrestore --go       # actually rebuild
 
-### A pane whose window does not match its fleet
+### A pane whose window does not match where it seems to belong
 
 Allowed, and correct under full restore — but know what partial restore does.
-Example: a repo session sits in the coordinator's window while labelled with
-another project's `@fleet`, because that project's window was already crowded.
+Example: a repo session sits in the coordinator's window because its own project's
+window was already crowded. Windows are a seating plan, not a grouping; the
+`@fleet` option that tried to be both was retired on 2026-10-01 for exactly that
+reason.
 
 Established by **reading `fleetrestore`, not by running it** — a real restore
 cannot be exercised without killing the fleet:
 
-- **`fleetrestore --all`** groups by the recorded window and applies each
+- **`fleetrestore`**, bare, groups by the recorded window and applies each
   window's exact saved layout, so it reproduces the current arrangement exactly,
-  that session included. **This is the power-cycle path, and it is unaffected.**
-- **`fleetrestore <fleet>`** iterates the windows that fleet's sessions occupy
-  and renames *each* to the fleet name. When a fleet spans two
-  windows, a partial restore yields **two windows both named after it**, one
-  holding only the stray session, laid out `tiled` rather than to the saved layout.
+  that session included. **This is the power-cycle path.**
+- **`fleetrestore NAME...`** rebuilds only the named sessions, `tiled` rather
+  than to the saved layout — an exact layout needs every pane that was in the
+  window, so applying one to a subset would not fit. The same holds for a bare
+  run where some sessions are already live: fewer sessions than the manifest
+  holds means tiled, and the tool decides that from what it is actually
+  rebuilding rather than from a flag.
 
-Every session still comes up with the right cwd, `--resume` and labels, so this
-is cosmetic. **Prefer `--all` after a power cycle** — which is the documented
-normal path anyway. Reach for a partial restore only to rebuild one fleet while
-the rest is alive, and expect the window split.
+  Before 2026-10-01 a partial restore also *renamed* each window it touched after
+  the fleet, so a group spanning two windows produced two windows with the same
+  name. Both the renaming and the group are gone; window names are restored from
+  the manifest in every mode.
+
+Every session comes up with the right cwd, `--resume` and label either way.
+**Prefer the bare command after a power cycle.** Name sessions only to rebuild a
+few while the rest is alive.
 
 ## 7. Restoring
 
@@ -253,11 +261,11 @@ is obvious in that view and invisible in every other one.
 
 ### Repairing it without a second restore
 
-Do **not** re-run `fleetrestore` on a half-built fleet — the `@repo` liveness
+Do **not** re-run `fleetrestore` on a half-built fleet — the `@agent` liveness
 check in `fleetrestore` reads the shifted tags and skips the wrong sessions.
 The panes are already right, so repair in place: `kill` the misplaced claude pids
 **by number** (record them first; never a `pkill` pattern), wait for the panes to
-fall back to a shell, then re-set `@repo`/`@fleet` and `send-keys` the correct
+fall back to a shell, then re-set `@agent` and `send-keys` the correct
 `claude --name X --resume UUID` into the pane whose cwd matches. Preflight every
 pane's cwd against the manifest and abort on the first mismatch rather than
 launching into a guess.

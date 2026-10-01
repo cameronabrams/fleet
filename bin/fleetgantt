@@ -13,9 +13,9 @@ one track per transcript, its active stretches, and fleet events.
 Read-only apart from the page it writes. Everything is derived from transcripts
 and configuration:
 
-  roles    live sessions from the last fleetsnap manifest (lane group = @fleet),
-           plus [parked] and [retired] in fleet.toml (group = their `group`, else
-           "parked"/"retired")
+  roles    live sessions from the last fleetsnap manifest (one lane group: there
+           is one fleet), plus [parked] and [retired] in fleet.toml (group =
+           their `group`, else "parked"/"retired")
   identity fleet.identity: a transcript's own last name, else what the rename
            table says a retired name became, else its directory's owner -- the
            last two are inferences and drawn as such
@@ -52,7 +52,12 @@ def roles_from_config():
     for s in sessions:
         if s.get("label") and s["label"] not in seen:
             seen.add(s["label"])
-            out.append((s["label"], s.get("fleet") or "fleet", "live", s.get("cwd") or ""))
+            # One lane group for everything running. The manifest used to carry a
+            # per-session `@fleet` and this grouped by it; there is one fleet, so
+            # the grouping named a subdivision that was never real. A stopped role
+            # still keeps whatever `group` fleet.toml declares for it, because that
+            # one is declared rather than inferred.
+            out.append((s["label"], "live", "live", s.get("cwd") or ""))
     for name, rec in sorted(fc.stopped(CFG).items()):
         if name not in seen:
             seen.add(name)

@@ -15,8 +15,8 @@ class SnapshotDirectory(unittest.TestCase):
 
     def manifest(self, proc_cwd="/home/u/work", repo="alpha", title="title",
                  agents=None, transcript_name=None):
-        # twelve fields: @agent, @repo and @fleet are three separate labels now
-        row = ["fleet", "1", "win", "0", "%1", repo, repo, "grp", title,
+        # eleven fields: @agent and @repo, the grouping having been retired
+        row = ["fleet", "1", "win", "0", "%1", repo, repo, title,
                "/home/u/somewhere-else", "100", "80x40"]
         proc = {"pid": 200, "version": "2.1.276", "resume_uuid": None, "started": "",
                 "argv": ["claude", "--name", "alpha"]}
@@ -68,15 +68,16 @@ class UnlabelledPane(SnapshotDirectory):
         self.assertEqual(s["label"], "literature")
         self.assertIn("transcript", s["label_note"])
 
-    def test_no_name_is_not_invented(self):
-        s = self.session(agents=[], transcript_name=None)
-        self.assertIsNone(s["label"])
-        problems = s["membership_problems"]
-        self.assertEqual([p["kind"] for p in problems], ["name"])
-        self.assertIn("pane %1", problems[0]["problem"])
-        self.assertIn("@repo", problems[0]["fix"])
-        self.assertNotIn("unlabeled", json.dumps(s))
-        self.assertNotIn("brief", json.dumps(problems))     # no brief asked for under a fiction
+    def test_a_pane_nothing_can_name_is_somebody_else_s_window(self):
+        """No label, and neither `claude agents` nor the transcript names it. That
+        is the shape of the owner's own window -- the personal session excluded on
+        2026-09-30 had no CCP_AGENT and so no agents entry -- and it is no longer
+        recorded as a nameless session of ours. It is still REPORTED: the snapshot
+        says which panes it left out and why."""
+        m = self.manifest(repo="", agents=[], transcript_name=None)
+        self.assertEqual(m["sessions"], [],
+                         "a pane nothing can name must not get a manifest entry")
+        self.assertNotIn("unlabeled", json.dumps(m))
 
 
 class CorrectedLabel(unittest.TestCase):
@@ -365,21 +366,22 @@ class FormatMatchesItsUnpack(unittest.TestCase):
         self.assertEqual(int(m.group(2)), fields,
                          "the r[:N] slice must match the field count")
 
-    def test_the_grouping_comes_from_fleet_not_from_the_agent_name(self):
-        """The actual defect: with agent and repo both holding the name, the fleet
-        must still come from `@fleet`."""
-        row = ["0", "1", "win", "0", "%1", "alpha", "alpha", "records",
+    def test_the_row_unpacks_to_the_fields_the_format_asks_for(self):
+        """The defect this class exists for, in its post-retirement form: a row
+        must unpack so that the NAME comes from the label fields and nothing
+        downstream reads a neighbouring column by accident."""
+        row = ["0", "1", "win", "0", "%1", "alpha", "alpha",
                "title", "/w", "123", "80x24"]
         (sess, win, winname, pidx, pane,
-         agent, repo, fleet, title, path, ppid, size) = row[:12]
+         agent, repo, title, path, ppid, size) = row[:11]
         self.assertEqual(self.s.agent_label(agent, repo), "alpha")
-        self.assertEqual(fleet or sess, "records",
-                         "the grouping must not be the agent's own name")
+        self.assertEqual((title, path, size), ("title", "/w", "80x24"),
+                         "a shifted unpack shows up here first")
 
     def test_a_pane_is_ours_under_either_label(self):
-        self.assertTrue(self.s.is_agent_pane("alpha", "", ""))
-        self.assertTrue(self.s.is_agent_pane("", "alpha", ""))
-        self.assertFalse(self.s.is_agent_pane("", "", ""))
+        self.assertTrue(self.s.is_agent_pane("alpha", ""))
+        self.assertTrue(self.s.is_agent_pane("", "alpha"))
+        self.assertFalse(self.s.is_agent_pane("", ""))
 
 
 class OutsidePanes(unittest.TestCase):
@@ -401,12 +403,14 @@ class OutsidePanes(unittest.TestCase):
         self.assertTrue(self.s.is_agent_pane("", "literature"))     # @repo, transitional
         self.assertFalse(self.s.is_agent_pane("", ""))
 
-    def test_the_session_name_fallback_only_applies_to_panes_that_are_ours(self):
+    def test_the_name_is_resolved_before_membership_is_decided(self):
+        """Order matters: `claude agents` is what tells an unlabelled pane of OURS
+        from somebody else's window, so resolve_label has to run first. Reversed,
+        a session named only by the platform would be dropped from recovery."""
         src = open(os.path.join(APP, "bin", "fleetsnap")).read()
-        i = src.index("if not is_agent_pane(agent, repo, fleet):")
-        j = src.index('fleet = fleet or sess or "default"')
-        self.assertLess(i, j, "the membership check must run BEFORE the fallback "
-                              "that names a fleet after its tmux session")
+        i = src.index("repo, label_note = resolve_label(")
+        j = src.index("if not is_agent_pane(agent, repo):")
+        self.assertLess(i, j, "resolve_label must run before the membership check")
 
 
 if __name__ == "__main__":

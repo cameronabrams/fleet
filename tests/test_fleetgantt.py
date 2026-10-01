@@ -53,9 +53,14 @@ class Gantt(unittest.TestCase):
         self.transcript("-home-u-a", "alpha"); self.transcript("-home-u-b", "beta")
         self.transcript("-home-u-old", "old-role", day=4)
         d = self.build()
+        # One lane group for everything live: there is one fleet, and the
+        # per-session `@fleet` that used to split them is retired. A stopped role
+        # keeps whatever `group` fleet.toml declares for it, which is why
+        # old-role is still its own group and still comes after the live ones.
         self.assertEqual([(l["group"], l["role"], l["state"]) for l in d["lanes"]],
-                         [("alpha", "alpha", "live"), ("alpha", "old-role", "retired"),
-                          ("beta", "beta", "live"), ("beta", "runs-1", "live"), ("beta", "runs-2", "live")])
+                         [("live", "alpha", "live"), ("live", "beta", "live"),
+                          ("live", "runs-1", "live"), ("live", "runs-2", "live"),
+                          ("alpha", "old-role", "retired")])
         self.assertEqual(self.lane(d, "alpha")["color"], "red")
         self.assertEqual(self.lane(d, "old-role")["color"], "gray")
 

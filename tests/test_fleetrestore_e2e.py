@@ -1,6 +1,6 @@
 """Build a real fleet on a throwaway tmux server and check where it landed.
 
-This is the test that was missing when `fleetrestore --all --go` put every session
+This is the test that was missing when `fleetrestore --go` put every session
 one pane to the LEFT after the 2026-09-30 reboot: five never started and seven
 launched in another session's working directory. Everything else about the tool was
 tested; nothing built one and looked.
@@ -65,17 +65,16 @@ class RestoreLandsWhereTheManifestSays(unittest.TestCase):
             os.makedirs(cwd)
             self.dirs[label] = cwd
             sessions.append({
-                "label": label, "fleet": "f", "cwd": cwd,
-                "tmux": {"session": "0", "window": win, "window_name": "f",
+                "label": label, "cwd": cwd,
+                "tmux": {"session": "0", "window": win, "window_name": "w",
                          "pane_index": pane, "pane_id": "%%%d" % (win * 10 + pane),
                          "size": "80x24"},
                 "resume_uuid": "u-" + label,
                 "resume_uuid_source": "verified: test", "durable_files": []})
-        man = {"captured": "now", "installed_claude": "x", "fleet": "f",
+        man = {"captured": "now", "installed_claude": "x",
                "coordinator": "coord", "sessions": sessions}
-        for name in ("manifest", "f"):
-            with open(os.path.join(self.cfg.state, name + ".json"), "w") as f:
-                json.dump(man, f)
+        with open(os.path.join(self.cfg.state, "manifest.json"), "w") as f:
+            json.dump(man, f)
         self.man = man
 
     def tearDown(self):
@@ -100,7 +99,7 @@ class RestoreLandsWhereTheManifestSays(unittest.TestCase):
         self.assertNotEqual(self.tmux("has-session", "-t", "0").returncode, 0,
                             "no server should be running: that is the case that broke")
 
-        r = subprocess.run([TOOL, "--all", "--go", "--socket", SOCKET, "--stagger", "0"],
+        r = subprocess.run([TOOL, "--go", "--socket", SOCKET, "--stagger", "0"],
                            capture_output=True, text=True, env=self.env())
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
 
@@ -109,7 +108,7 @@ class RestoreLandsWhereTheManifestSays(unittest.TestCase):
         self.assertEqual(base, "1", "the test config did not take effect")
 
         listing = self.tmux("list-panes", "-a", "-F",
-                            "#{@repo}\t#{pane_current_path}").stdout
+                            "#{@agent}\t#{pane_current_path}").stdout
         have = {}
         for line in listing.splitlines():
             label, _, path = line.partition("\t")
@@ -124,7 +123,7 @@ class RestoreLandsWhereTheManifestSays(unittest.TestCase):
         self.assertIn("verified:", r.stdout)
 
     def test_each_session_is_resumed_with_its_own_transcript(self):
-        subprocess.run([TOOL, "--all", "--go", "--socket", SOCKET, "--stagger", "0"],
+        subprocess.run([TOOL, "--go", "--socket", SOCKET, "--stagger", "0"],
                        capture_output=True, text=True, env=self.env())
         for _ in range(50):                      # the shells run it asynchronously
             if os.path.exists(self.log):
@@ -144,7 +143,7 @@ class RestoreLandsWhereTheManifestSays(unittest.TestCase):
         """`$TMUX` is set inside any pane, so a restore run from one used to build
         the fleet on whatever server that pane belonged to."""
         env = dict(self.env(), TMUX="/some/other/socket,123,0")
-        r = subprocess.run([TOOL, "--all", "--go", "--socket", SOCKET, "--stagger", "0"],
+        r = subprocess.run([TOOL, "--go", "--socket", SOCKET, "--stagger", "0"],
                            capture_output=True, text=True, env=env)
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
         self.assertEqual(len(self.tmux("list-panes", "-a").stdout.splitlines()), 3)

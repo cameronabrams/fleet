@@ -72,8 +72,8 @@ def panes():
 
     `tmux list-panes -a` crosses tmux sessions, so it returns the human's own
     windows too. This tool compacts sessions, so acting on one of those would be
-    acting on somebody's unrelated work. Membership is the `@repo`/`@fleet` label
-    fleetspawn stamps; see fleet.panes.in_fleet."""
+    acting on somebody's unrelated work. Membership is the `@agent` label
+    fleetspawn stamps; see fleet.panes.is_agent_pane."""
     fmt = "\t".join(["#{pane_id}", "#{pane_pid}", "#{@agent}", "#{@repo}", "#{session_name}"])
     rc, out, _ = tmux("list-panes", "-a", "-F", fmt)
     found, outside = {}, []
@@ -381,7 +381,7 @@ def main():
             # Reported, never acted on. A fleet pane that lost its labels would
             # otherwise vanish from this list with no warning.
             print("\n   not this fleet's, so not listed above and never compacted")
-            print("   (no @repo/@fleet label; `tmux list-panes -a` crosses tmux sessions):")
+            print("   (no @agent label; `tmux list-panes -a` crosses tmux sessions):")
             for o in outside:
                 print("   %-5s in tmux session %r" % (o["pane"], o["tmux_session"]))
         return

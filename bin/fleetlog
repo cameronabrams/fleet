@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..
 from fleet import config as fc
 from fleet import version_flag
 from fleet import identity
+from fleet.panes import LABELS, agent_label
 from fleet.transcripts import project_slug
 CFG = fc.load()
 from collections import defaultdict, Counter
@@ -297,13 +298,13 @@ def live_dirs():
     try:
         import subprocess
         out = subprocess.run(["tmux", "list-panes", "-a", "-F",
-                              "#{@repo}\t#{pane_current_path}"],
+                              LABELS + "\t#{pane_current_path}"],
                              capture_output=True, text=True, timeout=5).stdout
         for row in out.strip().splitlines():
             parts = row.split("\t")
-            if len(parts) < 2 or not parts[0]:
+            if len(parts) < 3 or not agent_label(parts[0], parts[1]):
                 continue
-            _DIRS[project_slug(parts[1])].append(canon(parts[0]))
+            _DIRS[project_slug(parts[2])].append(canon(agent_label(parts[0], parts[1])))
     except Exception:
         pass
     return _DIRS
@@ -318,13 +319,13 @@ def live_map():
     try:
         import subprocess
         panes = subprocess.run(["tmux", "list-panes", "-a", "-F",
-                                "#{pane_id}\t#{@repo}\t#{pane_pid}"],
+                                "#{pane_id}\t" + LABELS + "\t#{pane_pid}"],
                                capture_output=True, text=True, timeout=5).stdout
         for row in panes.strip().splitlines():
             parts = row.split("\t")
-            if len(parts) < 3 or not parts[1]:
+            if len(parts) < 4 or not agent_label(parts[1], parts[2]):
                 continue
-            name, ppid = canon(parts[1]), parts[2]
+            name, ppid = canon(agent_label(parts[1], parts[2])), parts[3]
             kids = subprocess.run(["pgrep", "-P", ppid], capture_output=True,
                                   text=True).stdout.split()
             for pid in [ppid] + kids:

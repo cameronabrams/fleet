@@ -237,8 +237,13 @@ class Act(Base):
         self.assertIn(("kill-pane", "-t", "%7"), self.calls)
         self.assertIn("[parked.alpha]", out)
         self.assertIn(f'uuid  = "{UUID}"', out)
-        self.assertIn('group = "f"', out)                         # keeps its chart lane
+        # No `group`: it was filled in from the pane's `@fleet`, and that is
+        # retired. fleetgantt lanes a stopped role under its state when the
+        # configuration declares no group, so leaving it out is a lane, not a gap.
+        self.assertNotIn("group =", out)
         self.assertIn(f'cwd   = "{self.cwd}"', out)
+        # and the recipe must not embed a flag fleetspawn no longer takes
+        self.assertNotIn("--fleet", text)
 
     def test_retire_moves_ledger(self):
         os.makedirs(os.path.dirname(self.ledger()))

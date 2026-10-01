@@ -80,8 +80,8 @@ def panes():
     without the label check a session whose --name happened to match a fleet
     member's -- the name collision fleet-bootstrap warns about -- could take a
     line meant for somebody else. Membership is the label fleetspawn stamps; see
-    fleet.panes.in_fleet. A pane with no mapping simply is not typeable, which is
-    the refusal this tool already handles."""
+    fleet.panes.is_agent_pane. A pane with no mapping simply is not typeable,
+    which is the refusal this tool already handles."""
     rc, out, _ = tmux("list-panes", "-a", "-F",
                       "#{pane_id}\t#{pane_pid}\t#{@agent}\t#{@repo}")
     found = {}

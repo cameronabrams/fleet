@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
+from fleet.panes import LABELS, agent_label
 from fleet.transcripts import project_slug
 
 PROJECTS = os.path.expanduser("~/.claude/projects")
@@ -54,12 +55,14 @@ def sh(*a):
 def live_sessions():
     """pane label -> transcript path, for sessions running right now."""
     out = {}
-    fmt = "#{@repo}\t#{pane_pid}\t#{pane_current_path}"
+    fmt = LABELS + "\t#{pane_pid}\t#{pane_current_path}"
     for row in sh("tmux", "list-panes", "-a", "-F", fmt).strip().splitlines():
         p = row.split("\t")
-        if len(p) < 3 or not p[0]:
+        if len(p) < 4:
             continue
-        label, ppid, cwd = p
+        label, ppid, cwd = agent_label(p[0], p[1]), p[2], p[3]
+        if not label:
+            continue
         pids = [ppid] + sh("pgrep", "-P", ppid).split()
         uuid = None
         for pid in pids:
@@ -155,7 +158,7 @@ def main():
     if not fc.load(required=False).get("human", {}).get("name"):
         print("  (no [human] name in fleet.toml: matching only 'the human' / 'the user')")
     if not sess:
-        sys.exit("no live sessions found (is tmux running, and are panes labelled with @repo?)")
+        sys.exit("no live sessions found (is tmux running, and are panes labelled with @agent?)")
     rows = []
     for label, path in sorted(sess.items()):
         line, ts, resolved = scan(path)

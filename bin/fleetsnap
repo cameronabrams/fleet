@@ -39,7 +39,14 @@ def manifest_is_held(path, held):
     return None
 
 def retire_stale(current):
-    """Move aside per-fleet manifests for fleets that no longer exist.
+    """Move aside per-fleet manifests. Nothing writes them any more.
+
+    Kept as the migration: the next snapshot moves every leftover `<fleet>.json`
+    aside, including the fourteen a positional bug wrote on 2026-10-01. A manifest
+    whose sessions are parked is still kept -- that manifest is how they come back
+    -- and so is one that cannot be read.
+
+    Originally: move aside per-fleet manifests for fleets that no longer exist.
 
     `fleetsnap` wrote `<fleet>.json` per snapshot and never removed one, so the
     residue accumulated and `fleetrestore` offered to rebuild fleets that had not
@@ -159,7 +166,7 @@ def window_layouts(meta):
 def pane_rows():
     fmt = "\t".join(["#{session_name}", "#{window_index}", "#{window_name}",
                      "#{pane_index}", "#{pane_id}",
-                     "#{@agent}", "#{@repo}", "#{@fleet}", "#{pane_title}",
+                     "#{@agent}", "#{@repo}", "#{pane_title}",
                      "#{pane_current_path}", "#{pane_pid}", "#{pane_width}x#{pane_height}"])
     return [r.split("\t") for r in sh("tmux", "list-panes", "-a", "-F", fmt).strip().splitlines()]
 
@@ -336,41 +343,47 @@ def main():
     for r in pane_rows():
         # Must match the unpack below. It said 11 while the unpack took 12: a row
         # of exactly 11 would pass this and raise in the next statement.
-        if len(r) < 12:
+        if len(r) < 11:
             continue
-        # Three labels now, not two. `@agent` is the name, `@repo` is what it used
-        # to be called and is still on live panes, `@fleet` is the grouping.
-        # 2026-10-01: this unpack was left at two while the format moved to
-        # `@agent`,`@repo` -- so the variable named `fleet` held the AGENT NAME and
+        # Two labels: `@agent` is the name, `@repo` is what it used to be called
+        # and is still on live panes. 2026-10-01: this unpack was left behind while
+        # the format moved -- so the variable named `fleet` held the AGENT NAME and
         # one snapshot recorded fourteen sessions in fourteen fleets. A positional
         # format and its consumer are one thing; changing either alone is the bug.
         (sess, win, winname, pidx, pane,
-         agent, repo, fleet, title, pane_path, ppid, size) = r[:12]
+         agent, repo, title, pane_path, ppid, size) = r[:11]
         repo = agent_label(agent, repo)
         proc = claude_proc(ppid)
         if not proc:
             continue
-        if not is_agent_pane(agent, repo, fleet):
-            # `tmux list-panes -a` crosses tmux SESSIONS, so this sees the owner's
-            # own windows too. Without this check a personal session was snapshotted
-            # AS A FLEET -- `fleet = fleet or sess` named it after its tmux session,
-            # and `<that>.json` then sat in the state directory offering to restore
-            # something that was never ours. Observed 2026-09-30.
-            #
-            # Reported, never dropped in silence: a fleet pane that lost its labels
-            # would otherwise vanish from the snapshot, and a session missing from
-            # the manifest is a session missing from recovery.
-            outside.append((pane, sess, title or "(no title)"))
-            continue
-        fleet = fleet or sess or "default"
         # The session's own cwd. pane_current_path follows whatever the pane runs,
         # so a `cd` in one of the session's shell calls would be snapshotted as its
         # directory and rebuilt there (fleet.procs.proc_cwd).
         cwd = proc_cwd(proc["pid"]) or pane_path
         repo, label_note = resolve_label(repo, title, proc, cwd, agents)
+        if not is_agent_pane(agent, repo):
+            # Two things are being told apart here, and the LABEL alone cannot do
+            # it. `tmux list-panes -a` crosses tmux sessions, so this sees the
+            # owner's own windows: one was snapshotted as a fleet of its own on
+            # 2026-09-30. But a pane launched as a bare `claude` and named later
+            # carries no label either, and that one IS ours -- fleetupgrade
+            # resolved it fine while fleetsnap invented "(unlabeled %1)" for it
+            # (2026-09-18).
+            #
+            # resolve_label has already asked `claude agents` and the transcript,
+            # which is the discriminator: a session the platform names is ours and
+            # keeps its place in the manifest, with a membership problem saying it
+            # needs a label. A pane nothing can name is somebody else's window --
+            # that is exactly why the personal session was excluded, it had no
+            # CCP_AGENT and so no agents entry.
+            #
+            # Reported either way, never dropped in silence: a session missing from
+            # the manifest is a session missing from recovery.
+            if not repo:
+                outside.append((pane, sess, title or "(no title)"))
+                continue
         snap["sessions"].append({
             "label": repo,
-            "fleet": fleet,
             "label_note": label_note,
             "tmux": {"session": sess, "window": int(win),
                      "window_name": meta.get(f"{sess}:{win}", {}).get("name", winname),
@@ -417,40 +430,34 @@ def main():
         json.dump(snap, f, indent=2)
 
     if outside:
-        print("  not this fleet's, so not snapshotted (no @repo/@fleet label; "
+        print("  not an agent's pane, so not snapshotted (no @agent label; "
               "`tmux list-panes -a` crosses tmux sessions):")
         for pane, tsess, title in outside:
             print(f"    {pane} in tmux session {tsess!r}  {title}")
         print("    If one of these SHOULD be in the fleet it is missing its label, "
               "and it is missing from recovery too:")
-        print("      tmux set -p -t <pane> @fleet <name>; tmux set -p -t <pane> @repo <name>")
+        print("      tmux set -p -t <pane> @agent <name>")
 
-    fleets = {}
-    for sess in snap["sessions"]:
-        fleets.setdefault(sess["fleet"], []).append(sess)
-    coord = next((x["label"] for x in snap["sessions"] if x["fleet"] == "coord"), None)
-    for name, members in fleets.items():
-        sub = dict(snap)
-        sub["fleet"] = name
-        sub["sessions"] = members
-        sub["coordinator"] = coord
-        sub["window_layouts"] = {k: v for k, v in layouts.items()
-                                 if any(f"{m['tmux']['session']}:{m['tmux']['window']}" == k
-                                        for m in members)}
-        with open(f"{STATE}/{name}.json", "w") as f:
-            json.dump(sub, f, indent=2)
-    retire_stale(set(fleets))
-    idx = [f"# Fleets on {snap['host']} — {snap['captured']}\n",
-           "One manifest per fleet. `fleetrestore <fleet>` rebuilds one; "
-           "`fleetrestore --all` rebuilds everything with exact geometry.\n",
-           "| fleet | sessions | file |", "|---|---|---|"]
-    for name, members in sorted(fleets.items()):
-        idx.append(f"| **{name}** | {', '.join(shown(m) for m in members)} | "
-                   f"`{name}.json` |")
-    idx.append(f"\nCoordinator: **{coord or '_none_'}** — restore once, not per fleet.\n")
-    idx.append("Fleet membership comes from the tmux pane option `@fleet` "
-               "(falling back to the tmux session name). Change it with "
-               "`tmux set -p -t <pane> @fleet <name>` and re-run `fleetsnap`.")
+    # No per-fleet manifests. There is one fleet, so there is one manifest; the
+    # grouping they split by agreed with the window name only by accident and could
+    # not be made to agree at all for a group bigger than a window. Retiring it
+    # takes the residue with it: `retire_stale` keeps manifest.json and anything
+    # whose sessions are parked, and moves the rest aside on the next snapshot.
+    coord = next((x["label"] for x in snap["sessions"]
+                  if (x.get("kind") or "") == "coordinator"), None) \
+        or next((x["label"] for x in snap["sessions"] if x["label"] == "coord"), None)
+    retire_stale(set())
+    idx = [f"# Sessions on {snap['host']} — {snap['captured']}\n",
+           "One manifest: `manifest.json`. `fleetrestore` rebuilds everything with "
+           "exact geometry; `fleetrestore <session> ...` rebuilds named ones.\n",
+           "| session | window.pane | cwd |", "|---|---|---|"]
+    for m in sorted(snap["sessions"], key=lambda x: x["label"] or ""):
+        t = m["tmux"]
+        idx.append(f"| **{shown(m)}** | {t['window']}.{t['pane_index']} | `{m['cwd']}` |")
+    idx.append(f"\nCoordinator: **{coord or '_none_'}**.\n")
+    idx.append("A pane belongs to an agent when it carries the tmux pane option "
+               "`@agent`. Set it with `tmux set -p -t <pane> @agent <name>` and "
+               "re-run `fleetsnap`.")
     with open(f"{STATE}/index.md", "w") as f:
         f.write("\n".join(idx) + "\n")
 
@@ -462,13 +469,13 @@ def main():
     L.append("```\ntmux new-session -d -s 0\n"
              "# then per session below:\n"
              "#   tmux new-window / split-window -c <cwd>\n"
-             "#   tmux set -p @repo <label>\n"
+             "#   tmux set -p @agent <label>\n"
              "#   claude --resume <uuid>\n```\n")
-    L.append("| fleet | label | window.pane | cwd | resume uuid | version |")
-    L.append("|---|---|---|---|---|---|")
+    L.append("| session | window.pane | cwd | resume uuid | version |")
+    L.append("|---|---|---|---|---|")
     for s in snap["sessions"]:
         t = s["tmux"]
-        L.append(f"| {s['fleet']} | {shown(s)} | {t['window']}.{t['pane_index']} | `{s['cwd']}` | "
+        L.append(f"| {shown(s)} | {t['window']}.{t['pane_index']} | `{s['cwd']}` | "
                  f"`{s['resume_uuid']}` | {s['version']} |")
     L.append("\n## Durable state each session should re-read\n")
     for s in snap["sessions"]:
@@ -514,9 +521,10 @@ def main():
     stale = [x for x in snap["sessions"] if x.get("label_note")]
     for x in stale:
         print(f"    ! {shown(x)}: {x['label_note']}")
-    print(f"captured {len(snap['sessions'])} sessions in {len(fleets)} fleets -> {STATE}/")
-    for name, members in sorted(fleets.items()):
-        print(f"    {name:<12} {len(members)}  {', '.join(shown(m) for m in members)}")
+    print(f"captured {len(snap['sessions'])} sessions -> {STATE}/manifest.json")
+    for m in sorted(snap["sessions"], key=lambda x: x["label"] or ""):
+        t = m["tmux"]
+        print(f"    {shown(m):<22} {t['window']}.{t['pane_index']:<3} {m['cwd']}")
     incomplete = [s for s in snap["sessions"] if s["membership_problems"]]
     if incomplete:
         print(f"\n!! {len(incomplete)} of {len(snap['sessions'])} sessions incomplete "

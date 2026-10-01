@@ -93,14 +93,22 @@ path is a pointer to be checked, not a quotation. That is also why mail from
 another fleet arrives as a file plus one line rather than as the message itself
 (:doc:`tools/fleetmail`).
 
-**What counts as the fleet** is the pair of tmux pane options ``@repo`` and
-``@fleet`` that :doc:`tools/fleetspawn` stamps on every pane it creates.
+**What counts as the fleet** is the tmux pane option ``@agent``, the session's
+name, which :doc:`tools/fleetspawn` stamps on every pane it creates.
 ``tmux list-panes -a`` crosses tmux *sessions* and returns every pane on the
-server, so a tool that does not check the labels will happily include a window
+server, so a tool that does not check the label will happily include a window
 that has nothing to do with the fleet — and then act on it. Tools report the panes
-they exclude rather than dropping them silently: a fleet pane that lost its labels
+they exclude rather than dropping them silently: a fleet pane that lost its label
 must not disappear from a roll without a word. Relabel one with
-``tmux set -p -t <pane> @fleet <name>``.
+``tmux set -p -t <pane> @agent <name>``.
+
+Until 2026-10-01 membership was a *pair*: ``@repo``, the name, and ``@fleet``, a
+group. Both are gone as the primary. ``@repo`` named a session after a repository,
+which is wrong for every session that owns none, and tools still read it as a
+fallback while live panes carry it. ``@fleet`` named a subdivision that did not
+exist: there is one fleet, and the groups agreed with the tmux window they
+appeared to name only by accident — seven of fourteen panes disagreed, six because
+one group had outgrown any single window.
 
 Three layers, kept apart on purpose
 -----------------------------------
