@@ -32,6 +32,24 @@ entries and makes you confirm the bump against this list.
 
 ### Changed
 
+- **`@repo` is unset on every pane.** The rename is finished: one option,
+  `@agent`, set by `fleetspawn` and `fleetrestore` and read by everything.
+
+  Two things outside this repository read the old option and had to move first,
+  neither reachable from here. `~/.tmux.conf`'s `pane-border-format` fell back to
+  `pane_title` without it, which is the Claude *topic* title and drifts — fourteen
+  stable pane labels would have become fourteen changing ones. And
+  `~/.config/fleet/bin/fleet-gather` used it as its membership test and dies `no
+  agent panes found` when nothing carries it, so gather and scatter would both
+  have stopped working. Checked by searching outside the repository rather than by
+  reasoning about what might use it, which is the only way either would have been
+  found.
+
+  Verified after the unset, not before: every tool run against a fleet where the
+  option does not exist, and each pane border rendered by asking tmux to evaluate
+  the format in that pane's own context rather than reading the config and
+  assuming.
+
 - **The `@repo` fallback is gone. `@agent` is the only pane label read.** Every
   format string lost a field and every consumer moved with it — nine tools, each
   a format-and-unpack pair, which is the shape that produced three separate bugs
