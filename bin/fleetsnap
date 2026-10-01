@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..
 from fleet import config as fc
 from fleet import version_flag
 from fleet.agents import list_agents
-from fleet.panes import in_fleet
+from fleet.panes import is_agent_pane
 from fleet.procs import proc_cwd
 from fleet.transcripts import agent_color, newest_transcript, resume_handle, session_name
 CFG = fc.load()
@@ -158,7 +158,7 @@ def window_layouts(meta):
 
 def pane_rows():
     fmt = "\t".join(["#{session_name}", "#{window_index}", "#{window_name}",
-                     "#{pane_index}", "#{pane_id}", "#{@repo}", "#{@fleet}", "#{pane_title}",
+                     "#{pane_index}", "#{pane_id}", "#{@agent}", "#{@repo}", "#{pane_title}",
                      "#{pane_current_path}", "#{pane_pid}", "#{pane_width}x#{pane_height}"])
     return [r.split("\t") for r in sh("tmux", "list-panes", "-a", "-F", fmt).strip().splitlines()]
 
@@ -339,7 +339,7 @@ def main():
         proc = claude_proc(ppid)
         if not proc:
             continue
-        if not in_fleet(repo, fleet):
+        if not is_agent_pane(repo, fleet):
             # `tmux list-panes -a` crosses tmux SESSIONS, so this sees the owner's
             # own windows too. Without this check a personal session was snapshotted
             # AS A FLEET -- `fleet = fleet or sess` named it after its tmux session,

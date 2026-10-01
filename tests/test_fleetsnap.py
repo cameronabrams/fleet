@@ -332,13 +332,15 @@ class OutsidePanes(unittest.TestCase):
         self.cfg.close()
 
     def test_membership_is_the_label_not_the_tmux_session_name(self):
-        self.assertTrue(self.s.in_fleet("coord", "coord"))
-        self.assertTrue(self.s.in_fleet("literature", ""))   # relabelled by hand
-        self.assertFalse(self.s.in_fleet("", ""))
+        # `@agent` is the name now; `@repo` is still on every live pane and is
+        # read as a fallback until they have been re-stamped.
+        self.assertTrue(self.s.is_agent_pane("coord", ""))          # @agent
+        self.assertTrue(self.s.is_agent_pane("", "literature"))     # @repo, transitional
+        self.assertFalse(self.s.is_agent_pane("", ""))
 
     def test_the_session_name_fallback_only_applies_to_panes_that_are_ours(self):
         src = open(os.path.join(APP, "bin", "fleetsnap")).read()
-        i = src.index("if not in_fleet(repo, fleet):")
+        i = src.index("if not is_agent_pane(repo, fleet):")
         j = src.index('fleet = fleet or sess or "default"')
         self.assertLess(i, j, "the membership check must run BEFORE the fallback "
                               "that names a fleet after its tmux session")

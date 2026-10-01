@@ -117,6 +117,49 @@ class TypeLine(unittest.TestCase):
         self.assertIn(("send-keys", "-t", "%1", "C-u"), calls)
 
 
+class AgentLabel(unittest.TestCase):
+    """`@repo` is becoming `@agent`. The label lives in tmux runtime state, not in
+    this repository, so the two cannot change at the same instant: the moment the
+    code stops reading `@repo`, every pane still carrying it stops being
+    recognised -- the whole fleet at once, with fleetsnap then snapshotting
+    nothing over a good manifest.
+
+    So both are read, `@agent` wins, and the fallback goes only after the panes
+    have been re-stamped."""
+
+    def test_agent_wins_when_both_are_set(self):
+        self.assertEqual(panes.agent_label("coord", "old-name"), "coord")
+
+    def test_repo_is_the_transitional_fallback(self):
+        self.assertEqual(panes.agent_label("", "literature"), "literature")
+        self.assertEqual(panes.agent_label(None, "literature"), "literature")
+
+    def test_neither_is_not_an_agent_pane(self):
+        self.assertEqual(panes.agent_label("", ""), "")
+        self.assertFalse(panes.is_agent_pane("", ""))
+        self.assertFalse(panes.is_agent_pane("  ", "\t"))
+
+    def test_either_label_makes_it_ours(self):
+        self.assertTrue(panes.is_agent_pane("coord", ""))
+        self.assertTrue(panes.is_agent_pane("", "coord"))
+
+    def test_the_format_string_asks_for_both_new_first(self):
+        """A tool that pastes LABELS into `list-panes -F` gets the two fields in
+        the order `agent_label` expects."""
+        self.assertEqual(panes.LABELS, "#{@agent}\t#{@repo}")
+
+    def test_every_membership_check_uses_the_shared_helper(self):
+        """Five tools decide whether a pane is ours. If one keeps its own copy of
+        the rule, the rename strands that tool's view of the fleet."""
+        import os
+        from tests.support import APP
+        for tool in ("fleetnudge", "fleetwatch", "fleetcontext",
+                     "fleetupgrade", "fleetsnap"):
+            src = open(os.path.join(APP, "bin", tool)).read()
+            self.assertIn("is_agent_pane", src, tool)
+            self.assertIn("#{@agent}", src, tool + " must ask tmux for the new label")
+
+
 class InFleet(unittest.TestCase):
     """`tmux list-panes -a` crosses tmux SESSIONS. On 2026-09-26 that put one of
     the human's own windows into fleetupgrade's count and produced a restart plan

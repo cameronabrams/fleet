@@ -21,7 +21,7 @@ from fleet import config as fc
 from fleet import version_flag
 from fleet.agents import by_session_prefix, list_agents
 from fleet.procs import proc_cwd
-from fleet.panes import in_fleet
+from fleet.panes import is_agent_pane
 from fleet.transcripts import cleared_successor, project_slug, uuid_from_descendants
 CFG = fc.load()
 
@@ -330,7 +330,7 @@ OUTSIDE = []          # panes running claude that carry no fleet label
 
 def sessions():
     fmt = "\t".join(["#{pane_id}", "#{pane_pid}", "#{pane_title}", "#{pane_current_path}",
-                     "#{@repo}", "#{@fleet}", "#{session_name}"])
+                     "#{@agent}", "#{@repo}", "#{session_name}"])
     rows = []
     del OUTSIDE[:]
     for row in sh("tmux", "list-panes", "-a", "-F", fmt).strip().splitlines():
@@ -339,7 +339,7 @@ def sessions():
             continue
         pane, ppid, title, pane_path = parts[0], parts[1], parts[2].lstrip("\u2733 ").strip(), parts[3]
         pid, cmd = claude_pid(ppid)
-        if pid and not in_fleet(parts[4], parts[5]):
+        if pid and not is_agent_pane(parts[4], parts[5]):
             # `list-panes -a` crosses tmux sessions. Not ours, and never restarted
             # from a plan -- but reported, because a fleet pane that lost its
             # labels must not disappear in silence.

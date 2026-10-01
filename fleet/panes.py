@@ -23,6 +23,22 @@ TYPE_WAIT = 10.0                           # seconds for typed text to reach the
 CAPTURE = ("capture-pane", "-p", "-e")     # -e keeps the attributes that mark a suggestion
 _ESC = re.compile(r"\x1b\[([0-9;:]*)([A-Za-z])|\x1b[^\[]")
 
+# The pane options that say a pane is an agent's. `@agent` is the name; `@repo`
+# is what it used to be called and is still on every live pane, so both are read
+# and `@agent` wins. Put this in a tool's `list-panes -F` and pass the two fields
+# to `agent_label`.
+#
+# The rename cannot be done in one step: the label lives in tmux runtime state,
+# not in this repository, so the moment the code stops reading `@repo` every pane
+# that still carries it stops being recognised -- the whole fleet at once, with
+# fleetsnap then snapshotting nothing over a good manifest. Read both, re-stamp
+# the panes, then drop the fallback.
+LABELS = "#{@agent}\t#{@repo}"
+
+def agent_label(agent, repo=""):
+    """A pane's agent name: `@agent`, or `@repo` while panes still carry it."""
+    return (agent or "").strip() or (repo or "").strip()
+
 def in_fleet(repo_label, fleet_label):
     """Whether a pane belongs to this fleet, from the labels `fleetspawn` stamps.
 
@@ -43,6 +59,14 @@ def in_fleet(repo_label, fleet_label):
     pane being included for one of ours being silently skipped -- the worse
     direction of the two."""
     return bool((repo_label or "").strip() or (fleet_label or "").strip())
+
+def is_agent_pane(agent, repo="", fleet=""):
+    """Whether a pane belongs to an agent, under either naming.
+
+    Succeeds `in_fleet`, which took `@repo`/`@fleet`. `@fleet` is being retired --
+    there is one fleet -- so membership is "does it carry a name", and the name is
+    `@agent` with `@repo` as the transitional fallback."""
+    return bool(agent_label(agent, repo) or (fleet or "").strip())
 
 def strip_escapes(text):
     """`text` without terminal escape sequences."""
