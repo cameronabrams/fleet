@@ -13,6 +13,21 @@ Releases are cut with `scripts/release.sh <version>`.
 
 ## [Unreleased]
 
+### Added
+
+- `fleetspawn` applies a new session's declared `[colors]` entry itself, instead
+  of printing the `/color` line for someone to type. It waits for the pane to go
+  idle first and types through `fleet.panes.type_line`, the same verified-readback
+  path `fleetnudge` uses, so the hazard the old comment cited -- keys sent into a
+  session still working its first prompt arriving corrupted or landing as prompt
+  text (2026-09-07) -- is handled rather than avoided. Success is the session's
+  own `agent-color` transcript record, the one `fleetsnap` reads, not the fact
+  that keys were sent: send-keys cannot fail, so it is not evidence. A colour
+  that will not apply is reported with the line to type by hand and does NOT fail
+  the spawn, because the session is up and only its label is wrong, and a retry
+  would respawn a live session. A session already carrying the declared colour,
+  such as a `--resume`d one, is not typed into. New: `--no-color`, `--color-wait`.
+
 ### Fixed
 
 - `fleetsnap`, `fleetupgrade` and `fleetretire` follow a PARKED session to its
