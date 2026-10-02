@@ -185,11 +185,15 @@ scratchpad) show no prompt, so a test there cannot exercise this path.
 - **Tell only the peers it will work with**, by pointer: "`<name>` now owns X; brief
   at <path>". Not a fleet-wide broadcast.
 - **Colour — required.** Declared in `[colors]` in `fleet.toml` before spawning
-  (preflight blocks without it); applied by the human typing `/color <c>` in the pane
-  once the session is idle — there is no launch flag, and keys sent into a working
-  session can be corrupted. A `/clear` drops the live colour and keeps the name;
-  `fleetsnap` and `fleetupgrade` flag the difference and print the command.
-  Duplicates are allowed if the human chooses them.
+  (preflight blocks without it). Since 2026-10-02 `fleetspawn` applies it itself once
+  the new pane is idle and confirms it from the session's own `agent-color` record;
+  when that fails it prints the manual line and the spawn still counts. For a session
+  that is already running (a relaunch, a restore, a `/clear`), nothing re-applies it:
+  the human types `/color <c>` in the pane, since a session cannot set its own and
+  keys sent into a working session can be corrupted. A restart drops the live colour
+  while the transcript still records it, so `fleetsnap`'s colour reading after a
+  restore is "last recorded" until re-applied. Duplicates are allowed if the human
+  chooses them.
 
 ## 3. After spawning: what changes for everyone else
 
