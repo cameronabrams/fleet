@@ -37,7 +37,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..
 from fleet import config as fc
 from fleet import panes
 from fleet.procs import claude_procs, named
-from fleet.transcripts import agent_color, session_name, uuid_from_descendants
+from fleet.transcripts import (agent_color, newest_transcript, session_name,
+                               uuid_from_descendants)
 CFG = fc.load()
 
 # Both still present in the prompt drawn by claude 2.1.270 (captured 2026-09-13;
@@ -155,7 +156,19 @@ def wait_idle(pane, name, timeout):
         time.sleep(2)
     return panes.state_problem(state, name, pane) or f"pane {pane} never went idle"
 
-def apply_color(pane, name, pid, color, idle_wait, confirm_wait=COLOR_CONFIRM_WAIT):
+def session_uuid(pid, cwd, name):
+    """The transcript to confirm a colour from, or None.
+
+    `uuid_from_descendants` reads the scratchpad path out of a CHILD process, so it
+    returns None exactly when a session is idle -- which is the moment the colour
+    has just been typed and there is something to confirm. OBSERVED 2026-10-02: it
+    read None for all three live sessions, and three colours that had in fact
+    applied were reported as not applied. `fleetsnap` falls back to the newest
+    transcript that self-reports the name; so does this.
+    """
+    return uuid_from_descendants(pid) or newest_transcript(cwd, name)[0]
+
+def apply_color(pane, name, pid, cwd, color, idle_wait, confirm_wait=COLOR_CONFIRM_WAIT):
     """Type `/color COLOR` into a newly spawned session. None on success, else why not.
 
     claude has no --color flag, so the colour can only be typed. Typed blind it is
@@ -168,7 +181,7 @@ def apply_color(pane, name, pid, color, idle_wait, confirm_wait=COLOR_CONFIRM_WA
     `fleetsnap` reads -- not the keystrokes going out. Sending keys always
     "succeeds"; a check that cannot fail is not evidence.
     """
-    uuid = uuid_from_descendants(pid)
+    uuid = session_uuid(pid, cwd, name)
     if uuid and agent_color(uuid) == color:
         return None                       # a resumed session carries its colour forward
     problem = wait_idle(pane, name, idle_wait)
@@ -178,7 +191,7 @@ def apply_color(pane, name, pid, color, idle_wait, confirm_wait=COLOR_CONFIRM_WA
     if problem:
         return problem
     tmux("send-keys", "-t", pane, "C-m")
-    uuid = uuid or uuid_from_descendants(pid)
+    uuid = uuid or session_uuid(pid, cwd, name)
     if not uuid:
         return f"typed it, but found no transcript for pid {pid} to confirm it from"
     t_end = time.time() + confirm_wait
@@ -300,7 +313,7 @@ def main():
         print(f"  colour: not typed (--no-color). Type  /color {color}  in pane {pane} once idle.")
     else:
         print(f"  colour: waiting for {a.name} to go idle, then typing /color {color} ...")
-        problem = apply_color(pane, a.name, pid, color, a.color_wait)
+        problem = apply_color(pane, a.name, pid, a.dir, color, a.color_wait)
         if problem:
             # The session is up and correct; only its colour is not. Spawning is
             # not failed over a label, or a retry would respawn a live session.

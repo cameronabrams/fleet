@@ -28,6 +28,13 @@ Releases are cut with `scripts/release.sh <version>`.
   would respawn a live session. A session already carrying the declared colour,
   such as a `--resume`d one, is not typed into. New: `--no-color`, `--color-wait`.
 
+  The transcript to confirm from is resolved the way `fleetsnap` resolves it, by
+  falling back to the newest transcript that self-reports the name.
+  `uuid_from_descendants` alone is not enough: it reads the scratchpad path out
+  of a CHILD process, so it finds nothing exactly when a session is idle, which
+  is the moment the colour has just been typed. Observed 2026-10-02 applying
+  colours to two running sessions: both took, both read back as not applied.
+
 ### Fixed
 
 - `fleetsnap`, `fleetupgrade` and `fleetretire` follow a PARKED session to its

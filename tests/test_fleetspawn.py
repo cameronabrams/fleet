@@ -159,6 +159,7 @@ class ApplyColor(unittest.TestCase):
         self.cfg = FakeConfig()
         self.spawn = load_tool("fleetspawn")
         self.states = ["idle"]      # one per capture; the last repeats
+        self.descendant_uuid = "u-1"
         self.held = ""              # what the input line shows
         self.sent = []
 
@@ -191,11 +192,14 @@ class ApplyColor(unittest.TestCase):
         def agent_color(_uuid):
             return recs.pop(0) if len(recs) > 1 else recs[0]
         with mock.patch.object(self.spawn, "tmux", side_effect=self.tmux), \
-             mock.patch.object(self.spawn, "uuid_from_descendants", return_value="u-1"), \
+             mock.patch.object(self.spawn, "uuid_from_descendants",
+                               return_value=self.descendant_uuid), \
+             mock.patch.object(self.spawn, "newest_transcript",
+                               return_value=("u-1", "verified: test")), \
              mock.patch.object(self.spawn, "agent_color", side_effect=agent_color), \
              mock.patch.object(self.spawn.time, "sleep"), \
              mock.patch.object(self.spawn.panes.time, "sleep"):
-            return self.spawn.apply_color("%7", "alpha", 4242, "red",
+            return self.spawn.apply_color("%7", "alpha", 4242, "/tmp/alpha", "red",
                                           idle_wait, confirm_wait)
 
     def typed(self):
@@ -241,3 +245,12 @@ class ApplyColor(unittest.TestCase):
         stray line into a conversation that is already under way."""
         self.assertIsNone(self.run_apply(["red"]))
         self.assertEqual(self.sent, [])
+
+    def test_an_idle_session_is_still_confirmable(self):
+        """`uuid_from_descendants` reads a CHILD process, so it finds nothing
+        exactly when the session is idle -- the moment the colour is typed.
+        Without the newest-transcript fallback, every applied colour at spawn
+        reported as not applied (observed 2026-10-02 on three live sessions)."""
+        self.descendant_uuid = None
+        self.assertIsNone(self.run_apply([None, "red"]))
+        self.assertEqual(self.typed(), ["/color red"])
