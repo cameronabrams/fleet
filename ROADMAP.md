@@ -44,11 +44,32 @@ carries only what no repository owns.
   channel that worked — verifiable in this fleet's nudge log, and the case that
   the delivery section of `fleetwatch` was built from.
 
-  *Message-size feedback is the weaker case.* A `PreToolUse` hook on the peer-send
-  tool that logs each send with its length and returns the size as context. It
-  should not block: a hard cap makes senders split one thought across two
-  messages, and the per-message wrapper is then charged twice, so splitting costs
-  more than sending long.
+  *Message-size feedback was the weaker case, and is no longer.* A `PreToolUse`
+  hook on the peer-send tool that logs each send with its length and returns the
+  size as context. It should not block: a hard cap makes senders split one thought
+  across two messages, and the per-message wrapper is then charged twice, so
+  splitting costs more than sending long.
+
+  **2026-10-02, measured across 1,314 peer messages in 8 days: 708 over the
+  ceiling, 54%.** Per-session rates ran from 0% to 95%. The hook's own author,
+  the coordinator, was the lowest high-volume sender at 20% — and that was not
+  discipline. The hook lived in that session's **project** settings, not in
+  `~/.claude/settings.json`, so of 1,314 messages it saw 134 and every one was its
+  own. Twelve sessions had been writing peer messages with no feedback of any kind
+  since the rule existed. The ranking was a ranking of who gets told.
+
+  That is the selection bias this item asked about, and it turned out to be
+  mechanical rather than psychological: not "the author knows it is measured" but
+  "the instrument was wired to one session." A measurement that samples only its
+  own author reports on the author, and nothing in the number says so — the same
+  family as `docs/checks-that-reassure.md`.
+
+  The same audit found compliance tracks **recency, not existence**: five days at
+  0–2% across 322 messages, immediately after the briefs were written and read,
+  then decay to 50–96% as those briefs receded. The rule did not change in that
+  window. That is the strongest evidence yet for the general finding above — a
+  rule with a local cost erodes without feedback at the moment of acting — and it
+  now comes from twelve sessions that did not build the hook.
 
   Proposed shape: a `hooks/` directory in this repository, and an `install` that
   **offers** to merge them, opt-in, merging and never replacing, with the same
@@ -56,10 +77,17 @@ carries only what no repository owns.
   that settings file is shared by everything the owner runs with Claude Code, not
   only the fleet.
 
-  What would decide the second one: its only evidence so far comes from the single
-  session that built it and knows it is being measured. That is the selection bias,
-  and it needs sessions that did not build it before it ships as anything but
-  optional. Ship the first; offer the second.
+  **The experiment is now running.** The hook moved to `~/.claude/settings.json`
+  on 2026-10-02 and reaches each session at its next restart. What would decide
+  it: whether the over-rate falls and *stays* down across sessions that did not
+  build it, past the point where this week's telling has receded. The decay curve
+  above is what a merely-remembered rule looks like, so anything still holding
+  after a quiet fortnight is the hook and not the memory of being told.
+
+  Two confounds to keep in view. Every session was told the rule again on the day
+  the hook shipped, so the first days measure both at once; and the sessions were
+  told they are being measured, which the 2026-09-13 briefs also did and which
+  decayed anyway. Ship the first; the second is now earning its place.
 
 ## Measurement
 
@@ -83,6 +111,14 @@ carries only what no repository owns.
   charged **per message**, so splitting one thought across two costs an extra
   envelope; and framing-versus-substance, where bodies ran about 950 characters
   around roughly 600 of inline-essential content.
+
+  **The 2026-10-02 audit does not close this.** It counts whole bodies against the
+  800-character ceiling, which is the count this item says is the wrong one: a
+  message that is 1,400 characters of entirely essential content and one that is
+  1,400 characters of framing around 300 are the same row in its table. The audit
+  is sound for what it measures, and it is the right instrument for whether the
+  *ceiling* is obeyed. It is not evidence about whether the **convention** is —
+  and the headline figure is quotable enough to be mistaken for both.
 
 ## fleetmail
 
