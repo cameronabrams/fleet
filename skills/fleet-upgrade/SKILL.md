@@ -397,6 +397,71 @@ live instruction.
 A ledger that mixes "re-arm X" with "the human owes a decision on Y" invites the
 same conflation from the other side; keep open decisions in a separate section.
 
+### What a ledger may assert: immutable facts only
+
+On one day in 2026-10, **five re-arm ledgers were wrong at the moment they
+mattered** — the moment a restarted session read one and acted on it. They were
+not wrong in the same way, and the difference decides what can fix them:
+
+| what went stale | example | derivable later? |
+| :--- | :--- | :--- |
+| a **fact** cited as support | a pid that had already exited; a HEAD that had moved, with "nothing unpushed" beside an unpushed commit | **yes** |
+| an **inventory** of held runtime | "nothing to re-arm" written by a session that held a watch | **yes** |
+| an **instruction** that was right when written | a standing approval to submit work that was already running — obeying it would have spent hundreds of dollars of cluster time; a reboot recipe given to a session that was merely restarting, where the correct action is the opposite | **no** |
+
+So:
+
+> **A ledger may assert immutable facts. It may not assert mutable ones.**
+
+A transcript uuid is immutable. A working directory at the moment of parking is
+immutable *if it is labelled as of that moment*. A pid, a HEAD, a runtime
+inventory and an approval are all mutable, and a mutable fact in a file read by a
+session that cannot check it is a defect however true it was when written.
+
+An instruction carrying a cost needs an **expiry or a re-confirmation step**.
+"Standing approval" is a mutable fact wearing an imperative, which is why it
+survives review: it reads as policy, and policy is not the sort of thing a reader
+thinks to re-derive.
+
+### Evidence staleness and conclusion staleness are different failures
+
+One of the five ledgers had already diagnosed itself, in a line written by its own
+author after the second occurrence:
+
+> *The two entries before this one each named a pid that had already exited,
+> because they were written from a tool run earlier in the same session instead of
+> from a fresh check. **The conclusion held both times; the evidence did not.***
+
+That ledger's conclusion — "nothing to re-arm" — was correct all three times. Only
+its supporting pid was stale. The standing-approval ledger is the opposite: its
+evidence was fine and its **conclusion** had become dangerous.
+
+They need different fixes. Stale evidence is cured by re-deriving it, so write the
+command that re-derives it beside the claim and let the reader run it. A stale
+conclusion cannot be re-derived at all — the reader does not know what question it
+answered — so it is cured only by an expiry, or by not writing it down.
+
+**Write the conclusion, stamp the evidence, and give the reader the command.**
+
+    ## Re-arm nothing.                              <- the conclusion
+    As of 2026-10-02 14:10 EDT, pid 3484200 had     <- evidence, stamped, expected
+    exactly one child: the shell running the check.    to be dead when you read it
+    Re-derive before trusting this:                 <- what makes it checkable
+        ps --ppid $(pgrep -u "$USER" -f 'claude --name <name>')
+
+### This section is prose, and prose erodes
+
+Said plainly because this repository has the measurement: a convention with a
+local cost held at 0% violation for five days after it was read, then decayed to
+over 90% as the reading receded, with no change to the rule. Nothing above acts at
+the moment a ledger is written.
+
+What would act: a check that a pid named in a ledger is live or marked dead, that a
+sha named in one is an ancestor of HEAD, and that the file carries a stamp at all.
+All three are mechanical and would have caught three of the five. The two
+instruction failures are not mechanically detectable, and no check proposed so far
+reaches them — which is the part to keep in view, because it is the expensive part.
+
 ### `/exit` can move a session to the background instead of stopping it
 
 OBSERVED 2026-09-15 on 2.1.272, on a session with Artifact comment auto-replies armed,

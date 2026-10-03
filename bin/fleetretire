@@ -246,12 +246,28 @@ def recipe(f):
             f"--beside <pane> --resume {f['uuid']} --go\n")
 
 def ledger_text(f, mode, previous):
+    """The ledger this tool writes, which is the shape the others should have.
+
+    A ledger may assert immutable facts and not mutable ones (`fleet-upgrade`
+    skill). This text complies without trying: a tool cannot help recording what
+    it observed at the moment it observed it, so the runtime claim comes out
+    stamped and in the past tense. Hand-written ledgers fail because they are
+    written in the present, and five of them were wrong at the moment a restarted
+    session read them on one day in 2026-10.
+
+    What was missing is the third part of the rule -- write the conclusion, stamp
+    the evidence, give the reader the command. A reader could not check the
+    runtime claim, and `fleetwatch` is exactly the tool that answers it from the
+    registry rather than from this file."""
     today = time.strftime("%Y-%m-%d")
     word = "PARKED" if mode == "park" else "RETIRED"
     txt = (f"# {f['name']} — {word} since {today}\n\n"
            f"Written by fleetretire at {time.strftime('%Y-%m-%d %H:%M %Z')}, before the process\n"
            f"(pid {f['pid']}) was stopped. It held no runtime: no child processes, no live\n"
            f"registered watchers, no cluster work.\n\n"
+           f"That was true when it was written and is evidence, not a current fact: the pid\n"
+           f"above is expected to be dead by the time you read this. Re-derive before acting\n"
+           f"on it:\n\n    fleetwatch {shlex.quote(f['name'])}\n\n"
            f"## Re-arm nothing. Resume with\n\n{recipe(f)}\n"
            f"Transcript uuid: {f['uuid']}\n")
     if mode == "park":

@@ -32,6 +32,36 @@ entries and makes you confirm the bump against this list.
 
 ### Changed
 
+- **A ledger may assert immutable facts, and not mutable ones.** Five hand-written
+  re-arm ledgers were wrong at the moment they mattered on one day in 2026-10 —
+  the moment a restarted session read one and acted on it. The `fleet-upgrade`
+  skill now carries the rule and the distinction the five turn on: three were
+  *facts or inventories* gone stale and are derivable later; two were
+  *instructions* that were correct when written, and no probe or check reaches
+  those. One of them would have spent hundreds of dollars of cluster time.
+
+  The second distinction, from a ledger that had already diagnosed itself: **stale
+  evidence and a stale conclusion are different failures.** Evidence is cured by
+  re-deriving it, so the command that re-derives it goes beside the claim. A stale
+  conclusion cannot be re-derived — the reader does not know what question it
+  answered — so only an expiry cures it, or not writing it down.
+
+  `fleetretire`'s generated ledger already complied with the first two parts
+  without trying: a tool cannot help recording what it observed at the moment it
+  observed it, so its runtime claim comes out stamped and past-tense. It now also
+  does the third — marks that claim as evidence rather than a current fact, says
+  the pid is expected to be dead on reading, and gives the reader `fleetwatch
+  <name>`, which answers the same question from the registry instead of from the
+  file. Hand-written ledgers fail precisely because they are written in the
+  present tense.
+
+  Said in the skill rather than left implied: this is prose, and prose erodes.
+  This repository has the measurement — a convention with a local cost held at 0%
+  violation for five days after it was read, then decayed past 90% as the reading
+  receded, with no change to the rule. Nothing in the rule acts at the moment a
+  ledger is written. What would act is named there, along with the part no
+  mechanical check reaches, which is the expensive part.
+
 - **`@repo` is unset on every pane.** The rename is finished: one option,
   `@agent`, set by `fleetspawn` and `fleetrestore` and read by everything.
 

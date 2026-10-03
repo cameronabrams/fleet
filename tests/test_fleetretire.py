@@ -245,6 +245,24 @@ class Act(Base):
         # and the recipe must not embed a flag fleetspawn no longer takes
         self.assertNotIn("--fleet", text)
 
+    def test_the_ledger_marks_its_runtime_claim_as_evidence_and_says_how_to_check(self):
+        """A ledger may assert immutable facts and not mutable ones. The runtime
+        claim is mutable, so it has to read as evidence-as-of rather than as a
+        current fact, and the reader needs the command that re-derives it.
+
+        Five hand-written ledgers were wrong at the moment a restarted session
+        read them on one day in 2026-10. This tool's own text was already stamped
+        and past-tense -- a tool cannot help recording when it looked -- but it
+        gave the reader no way to check, which is the third part of the rule."""
+        code, out = self.main("alpha", "--park", "--go")
+        self.assertEqual(code, 0, out)
+        text = open(self.ledger()).read()
+        self.assertIn("evidence, not a current fact", text)
+        self.assertIn("expected to be dead by the time you read this", text)
+        self.assertIn("fleetwatch alpha", text)        # the command, with the name
+        # and the conclusion still stands on its own, above the recipe
+        self.assertLess(text.index("Re-arm nothing"), text.index("Transcript uuid"))
+
     def test_retire_moves_ledger(self):
         os.makedirs(os.path.dirname(self.ledger()))
         open(self.ledger(), "w").write("# old\n")
