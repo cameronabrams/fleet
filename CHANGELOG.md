@@ -32,6 +32,37 @@ entries and makes you confirm the bump against this list.
 
 ### Changed
 
+- **`fleetsnap` no longer sweeps the state directory.** The cleanup that cleared
+  the per-fleet manifest residue globbed `<state>/*.json` and moved aside every
+  file not named after a live fleet. Its docstring said "per-fleet manifests"; the
+  glob said the whole namespace, and a file written by another tool is
+  indistinguishable from a dead fleet's manifest. On 2026-10-03 it renamed another
+  tool's cache. That tool rendered the missing values as *unknown*, which was
+  correct and therefore raised nothing — **a value that used to be there is a
+  different event from one that never arrived, and only the second is what
+  "unknown" is designed to say.**
+
+  Removed rather than narrowed. Nothing has written `<fleet>.json` since
+  2026-10-01, so no residue can accumulate, and a migration that cannot have work
+  left is only a blast radius. Narrowing it to files that parse as manifests would
+  have kept a permanent sweep of a shared directory to catch a case that can no
+  longer arise.
+
+  Removed with it: `manifest_is_held`, which kept a parked fleet's manifest
+  "because that manifest is how they come back". That stopped being true in the
+  same release that retired `fleetrestore <fleet>` — the tool reads only
+  `manifest.json` now, so the file it was protecting could no longer be read by
+  anything. The real path for a parked session is its `fleet.toml` uuid and the
+  resume recipe in its ledger, both of which exist. A guard outliving the thing it
+  guarded, still stating the old reason.
+
+  A tool needing its own files in the state directory should own a subdirectory,
+  as the watcher registry does with `watchers/`. A test now refuses any sweep of
+  the root — `glob`, `listdir`, f-string, concatenation or `os.path.join` — while
+  allowing a subdirectory. Its first version looked only for a `*` and so missed
+  `os.listdir(STATE)`: same blast radius, different spelling, reported clean. The
+  forms it must catch and must not catch are now themselves a test.
+
 - **A ledger may assert immutable facts, and not mutable ones.** Five hand-written
   re-arm ledgers were wrong at the moment they mattered on one day in 2026-10 —
   the moment a restarted session read one and acted on it. The `fleet-upgrade`

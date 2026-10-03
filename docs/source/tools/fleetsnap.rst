@@ -63,12 +63,27 @@ In the state directory:
    the sessions and where they sit
 
 There is one fleet, so there is one manifest. ``<fleet>.json`` files, one per
-``@fleet`` group, were written until 2026-10-01; the next snapshot moves any
-leftover aside as ``<name>.json.stale``, except one whose sessions are parked —
-that manifest is how they come back.
+``@fleet`` group, were written until 2026-10-01, and any left on disk were moved
+aside as ``<name>.json.stale`` by the snapshots that followed.
 
 ``manifest.json`` and ``manifest.md`` are copied to ``.bak-<stamp>`` before each
 write; the newest 10 are kept.
+
+.. note::
+
+   **The state directory is shared, and ``fleetsnap`` touches only its own files
+   there.** The cleanup that cleared the ``<fleet>.json`` residue did not: it
+   matched ``<state>/*.json`` and moved aside everything not named after a live
+   fleet, which is the whole namespace rather than the manifests it named. On
+   2026-10-03 it renamed another tool's cache, and that tool rendered the missing
+   values as *unknown* — correct behaviour, and therefore no alarm. A value that
+   used to be there is a different event from one that never arrived, and only the
+   second is what ``unknown`` is designed to report.
+
+   The cleanup was removed rather than narrowed, because nothing writes
+   ``<fleet>.json`` any more and a migration that cannot have work left is only a
+   blast radius. A tool that needs its own files in the state directory should own
+   a subdirectory, as the watcher registry does with ``watchers/``.
 
 See the :doc:`fleet-snapshot skill <../skills/fleet-snapshot>` for verifying a
 snapshot — a count of captured sessions is not a validation.

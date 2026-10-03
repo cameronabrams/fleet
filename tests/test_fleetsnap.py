@@ -259,77 +259,87 @@ class LiveColor(unittest.TestCase):
             self.assertEqual(self.snap.live_color(["claude", "--name", "a"], "u"), ("cyan", True))
         self.assertEqual(self.snap.live_color(["claude", "--name", "a"], None)[1], False)
 
-class StaleManifests(unittest.TestCase):
-    """fleetsnap wrote <fleet>.json per snapshot and never removed one, so
-    manifests accumulated for fleets that no longer existed and `fleetrestore`
-    offered to rebuild them. Observed 2026-09-30: `sidebar.json` -- a personal tmux
-    session that was never a fleet at all -- and `0.json`, a session filed under its
-    tmux session name from before it had an @fleet label."""
+class StateDirectoryNamespace(unittest.TestCase):
+    """No tool may claim `<state>/*.json`. The state directory is shared.
 
-    def setUp(self):
-        self.cfg = FakeConfig()
-        self.s = load_tool("fleetsnap")
+    `fleetsnap` used to end each run by moving aside every `.json` in the state
+    directory not named after a live fleet. The docstring said "per-fleet
+    manifests"; the glob said `*.json`, and a file written by a different tool is
+    indistinguishable from a dead fleet's manifest. On 2026-10-03 it renamed
+    another tool's cache and that tool went blind -- rendering the missing values
+    as unknown, which was correct behaviour and therefore raised no alarm. A value
+    that used to be there is a different event from one that never arrived, and
+    only the second is what "unknown" is designed to say.
 
-    def tearDown(self):
-        self.cfg.close()
+    The cleanup is gone rather than narrowed: nothing writes `<fleet>.json` any
+    more, so no residue can accumulate, and a migration that cannot have work left
+    is only a blast radius. This test is what stops the next one.
+    """
 
-    def put(self, *names):
-        for n in names:
-            with open(os.path.join(self.cfg.state, n + ".json"), "w") as f:
-                f.write("{}")
+    # A line is bad if it matches every entry in the state directory ROOT. A
+    # subdirectory is fine: `STATE/watchers/*.json` is owned by the watcher
+    # registry, and the tool whose cache was renamed fixed itself the same way,
+    # by moving under `STATE/cache/`. Ownership is the whole remedy -- the root
+    # is shared, so nothing may sweep it.
+    ROOT_SWEEP = [
+        r'\{STATE\}/\*',                      # f"{STATE}/*.json"
+        r'STATE\s*\+\s*f?[\'"]/\*',             # STATE + "/*.json"
+        r'join\(\s*STATE\s*,\s*f?[\'"]\*',     # os.path.join(STATE, "*.json")
+        r'listdir\(\s*STATE\s*\)',             # os.listdir(STATE)
+        r'listdir\(\s*f?[\'"]\{STATE\}[\'"]\s*\)',
+        r'(glob|listdir)\([^)]*state_dir\(\)[^)]*\)\s*$',
+    ]
 
-    def names(self, suffix=".json"):
-        return sorted(f[:-len(suffix)] for f in os.listdir(self.cfg.state)
-                      if f.endswith(suffix))
+    def test_no_tool_sweeps_the_state_directory_root(self):
+        import os, re
+        from tests.support import APP
+        bad = []
+        for tool in sorted(os.listdir(os.path.join(APP, "bin"))):
+            path = os.path.join(APP, "bin", tool)
+            if not os.path.isfile(path):
+                continue
+            try:
+                src = open(path).read()
+            except (OSError, UnicodeDecodeError):
+                continue
+            for n, line in enumerate(src.splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                if any(re.search(pat, line) for pat in self.ROOT_SWEEP):
+                    bad.append(f"{tool}:{n}: {line.strip()}")
+        self.assertEqual(bad, [],
+                         "a tool is matching every entry in the shared state "
+                         "directory root; own a subdirectory instead")
 
-    def test_a_fleet_that_no_longer_exists_is_retired(self):
-        self.put("manifest", "coord", "sidebar", "0")
-        moved = self.s.retire_stale({"coord"})
-        self.assertEqual(sorted(moved), ["0", "sidebar"])
-        self.assertEqual(self.names(), ["coord", "manifest"])
+    def test_the_check_catches_the_forms_it_claims_to(self):
+        """The guard is a source regex, which is the kind that passes because it
+        matched nothing. Its first version looked only for a `*` and so missed
+        `os.listdir(STATE)` -- same blast radius, different spelling, reported
+        clean. These are the forms it must catch and the ones it must not."""
+        import re
+        catches = ['    for p in glob.glob(f"{STATE}/*.json"):',
+                   '    for p in glob.glob(f"{STATE}/*"):',
+                   '    for p in os.listdir(STATE):',
+                   '    for p in glob.glob(STATE + "/*.json"):',
+                   '    for p in glob.glob(os.path.join(STATE, "*.json")):']
+        allows = ['    for p in glob.glob(os.path.join(STATE, "watchers", "*.json")):',
+                  '    for p in glob.glob(f"{STATE}/watchers/*.json"):',
+                  '    for p in glob.glob(WATCHDIR + "/*.json"):',
+                  '    for old in sorted(glob.glob(f"{path}.bak-*"))[:-keep]:']
+        for line in catches:
+            self.assertTrue(any(re.search(pat, line) for pat in self.ROOT_SWEEP),
+                            f"must be caught: {line.strip()}")
+        for line in allows:
+            self.assertFalse(any(re.search(pat, line) for pat in self.ROOT_SWEEP),
+                             f"must be allowed: {line.strip()}")
 
-    def test_it_is_moved_aside_not_deleted(self):
-        """`install`'s rule: what is displaced is moved, not destroyed. The
-        residue is evidence until someone has looked at it."""
-        self.put("manifest", "sidebar")
-        self.s.retire_stale(set())
-        self.assertEqual(self.names(".json.stale"), ["sidebar"])
+    def test_fleetsnap_writes_only_its_own_files(self):
+        """What it leaves behind, named. Anything else in the state directory
+        belongs to another tool and is not fleetsnap's to move."""
+        src = open(os.path.join(APP, "bin", "fleetsnap")).read()
+        self.assertNotIn("retire_stale", src.replace("`retire_stale`", ""))
+        self.assertNotIn("os.replace(path, dest)", src)
 
-    def test_the_whole_fleet_manifest_is_never_retired(self):
-        """manifest.json is what `--all` restores from; retiring it would remove
-        the recovery path in the name of tidying."""
-        self.put("manifest")
-        self.assertEqual(self.s.retire_stale(set()), [])
-        self.assertEqual(self.names(), ["manifest"])
-
-    def test_a_parked_fleet_is_kept_because_its_manifest_is_how_it_returns(self):
-        """A parked fleet has no live sessions, so it is absent from the snapshot
-        and looks exactly like one that no longer exists. Caught before shipping:
-        the first version of this cleanup would have retired a real parked fleet,
-        removing the only thing that can bring it back."""
-        import json as _j
-        with open(os.path.join(self.cfg.state, "manifest.json"), "w") as f:
-            f.write("{}")
-        with open(os.path.join(self.cfg.state, "parkedfleet.json"), "w") as f:
-            _j.dump({"sessions": [{"resume_uuid": "u-parked"}]}, f)
-        with mock.patch.object(self.s.fc, "stopped_uuids",
-                               return_value={"u-parked": ("parked", "parked")}):
-            self.assertEqual(self.s.retire_stale(set()), [])
-        self.assertIn("parkedfleet", self.names())
-
-    def test_an_unreadable_manifest_is_never_retired(self):
-        """It cannot be checked, so it cannot be shown to be disposable."""
-        with open(os.path.join(self.cfg.state, "manifest.json"), "w") as f:
-            f.write("{}")
-        with open(os.path.join(self.cfg.state, "broken.json"), "w") as f:
-            f.write("{not json")
-        with mock.patch.object(self.s.fc, "stopped_uuids", return_value={"x": ("p", "p")}):
-            self.assertEqual(self.s.retire_stale(set()), [])
-
-    def test_a_live_fleet_is_left_alone(self):
-        self.put("manifest", "coord", "records")
-        self.assertEqual(self.s.retire_stale({"coord", "records"}), [])
-        self.assertEqual(self.names(), ["coord", "manifest", "records"])
 
 
 class FormatMatchesItsUnpack(unittest.TestCase):
