@@ -45,8 +45,9 @@ carries only what no repository owns.
   the delivery section of `fleetwatch` was built from.
 
   **That reading was too kind to the push, and the full log says so.** Those three
-  pushes were delivered, and the same session hit the same class of failure again
-  on 2026-10-04. Six refusals now sit in that log. The push reaches the *human*;
+  pushes were delivered — `[notify].mute_file` then named a switch of its own that
+  did not exist, and was merged with the shared one the next day — and the same
+  session hit the same class of failure again on 2026-10-04. Six refusals now sit in that log. The push reaches the *human*;
   it never reaches the watcher that made the bad call, and the watcher is the only
   party that can fix it. So unmuting the push would not have closed this, and a
   notification hook — still worth shipping for its own reasons — is not the remedy

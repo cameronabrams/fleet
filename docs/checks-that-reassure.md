@@ -86,6 +86,24 @@ Three mechanisms produce it.
   stdout goes to a file nobody reads, so the only reader of the refusal is the
   script itself, and the script did not look.
 
+- **`git log -S'<key>'` finds when a key APPEARED, not what it was set to.** Used
+  on 2026-10-04 to date a configuration setting, then reasoned about with the
+  file's *current* value — which made three delivered phone pushes look impossible
+  against a mute switch that was "already configured". The switch had been
+  configured, at a different path, to a file that never existed; it was merged
+  with the one in use a day later. `-S` reports where an occurrence count changed.
+  It cannot tell a key being added from a value being edited, and it says nothing
+  about what the value was. `git log -p -- <file>` or `git show <rev>:<file>` says.
+
+  The general form: **reading today's value onto a historical record.** The
+  check — "was this configured then?" — came back yes and was answering a
+  neighbouring question. It fails toward *inexplicable* rather than toward calm,
+  which is the one mercy: the contradiction was at least visible, and got flagged
+  as unresolved rather than given an invented cause. A peer resolved it in one
+  look at `git show <rev>:fleet.toml`. The same day, that peer made the mirrored
+  error in the other direction — generalizing six log entries from the three a
+  tool had printed — so neither party's version of the record was the record.
+
 ## C. The check had only one possible outcome
 
 - **A path nothing is ever written to.** `ls` on a repo-source dir "proved" a page
