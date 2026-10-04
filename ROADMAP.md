@@ -44,6 +44,31 @@ carries only what no repository owns.
   channel that worked — verifiable in this fleet's nudge log, and the case that
   the delivery section of `fleetwatch` was built from.
 
+  **That reading was too kind to the push, and the full log says so.** Those three
+  pushes were delivered, and the same session hit the same class of failure again
+  on 2026-10-04. Six refusals now sit in that log. The push reaches the *human*;
+  it never reaches the watcher that made the bad call, and the watcher is the only
+  party that can fix it. So unmuting the push would not have closed this, and a
+  notification hook — still worth shipping for its own reasons — is not the remedy
+  for this particular hole.
+
+  What the remedy has to act on was found on 2026-10-04 and is sharper: **every
+  one of those refusals was correctly detected, printed and returned as exit 2,
+  and every caller discarded it.** Two independently written watchers captured the
+  return code and branched on nothing; one logged `nudge sent (rc=2)`. A detached
+  watcher's stdout goes to a file nobody reads, so the refusal's only reader is
+  the script itself. That is a property of the shape, not two mistakes, and it is
+  now in `docs/checks-that-reassure.md`.
+
+  Nothing in this repository can force a watcher to check, because watchers are
+  written per session. The options, none costed yet: ship the rule in
+  `examples/conventions.example.md`, which is where it would currently belong and
+  is prose that will erode; have `fleetnudge` mark the watcher's own
+  `fleetregister` entry on refusal, so `fleetwatch` reports it against the watcher
+  rather than only in a seven-day log section; or give watchers a wrapper that
+  cannot drop the code. The first is free and weakest, the last is a new interface
+  on the hottest path in the fleet.
+
   *Message-size feedback was the weaker case, and is no longer.* A `PreToolUse`
   hook on the peer-send tool that logs each send with its length and returns the
   size as context. It should not block: a hard cap makes senders split one thought

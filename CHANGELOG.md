@@ -191,6 +191,19 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- `docs/checks-that-reassure.md`: **an exit code captured and not branched on.**
+  Six `fleetnudge` refusals were each detected correctly, printed as `NOT
+  DELIVERED`, and returned as exit 2 — and every caller discarded all three. Two
+  independently written watchers kept the return code and branched on nothing;
+  one logged `nudge sent (rc=2)`, which reads as success to anyone who reads the
+  prose rather than the number beside it.
+
+  The ROADMAP's notification-hook item is corrected with the same evidence. It
+  cited three 2026-09-17 nudges as the case for the phone push; those pushes were
+  *delivered*, and the same session hit the same class of failure again on
+  2026-10-04. The push reaches the human and never the watcher that made the bad
+  call, so unmuting it would not have closed this hole.
+
 - **The `--json` shape of `fleetwatch` and `fleetcontext` is written down.** Both
   now have in-tree consumers — `fleetretire` and `fleetboard` read the first,
   `fleetboard` the second — so by this project's own rule their shape is part of

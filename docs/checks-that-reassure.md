@@ -76,6 +76,16 @@ Three mechanisms produce it.
   would have left the defect in place. When a guard did not fire, ask what ran
   before it, not only whether it is correct.
 
+- **An exit code captured and not branched on.** A detached watcher ran
+  `fleetnudge`, kept the return code, and logged `nudge sent (rc=2)`. The code was
+  correct, the tool had printed `NOT DELIVERED: <reason>`, and the log line says
+  *sent*. Whoever reads that line reads the prose, not the number beside it. Found
+  2026-10-04 across six refusals and **two independently written watchers** — both
+  authors reached the same root cause, and neither knew any nudge had ever failed.
+  That makes it a property of a detached watcher rather than two mistakes: its
+  stdout goes to a file nobody reads, so the only reader of the refusal is the
+  script itself, and the script did not look.
+
 ## C. The check had only one possible outcome
 
 - **A path nothing is ever written to.** `ls` on a repo-source dir "proved" a page
