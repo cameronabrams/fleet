@@ -191,6 +191,30 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- **`fleetboard`** — one screen: every session, its window, busy or idle, context
+  size, cluster work, and what is wrong. It renders state the fleet already
+  derives; it declares nothing and registers no probe, which is the line that made
+  it acceptable after that design was refused on 2026-10-03.
+
+  Written outside this repository and moved in. It reads this app's state layout
+  and calls two of its tools, and that coupling had no test across it: when
+  `fleetsnap`'s housekeeping renamed its cache on 2026-10-03 the board went blind
+  for an hour, and nothing could have caught it, because the dependency crossed a
+  repository boundary and only one side had CI.
+
+  **The move's real content was replacing three column parses with `--json`**, and
+  one of them was a live defect rather than a latent one. `fleetwatch` prints a
+  banner and exits `0` when its cluster query fails, so parsing its display table
+  found no job rows and the board recorded an **empty** job list — drawing a blank
+  work column for every session. An unreachable cluster rendered as a calm fleet,
+  with nobody needing to change a column for it to be wrong. `cluster_ok` is a
+  field in `--json`; a banner is not. A second parse was the only way a job that
+  *ended badly* reached the screen at all.
+
+  Its first run inside the repository was caught by the exhaustive label test for
+  keeping its own copy of the membership rule, which is the argument for the move
+  in miniature.
+
 - When `fleetcontext` reports that a pane and a session disagree about being busy,
   it now prints the last line it actually captured. A disagreement is not
   diagnosable without the screen that produced it, and a capture taken by hand

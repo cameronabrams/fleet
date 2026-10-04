@@ -51,6 +51,9 @@ version: they are released together.
    * - :doc:`fleetgantt`
      - every session's life as a Gantt chart
      - writes a page
+   * - :doc:`fleetboard`
+     - one screen: who is working, who is blocked, what is wrong
+     - writes a cache
    * - :doc:`fleetcontext`
      - context size per session; compact one, or reset its color
      - tmux, with ``--go``
@@ -79,6 +82,7 @@ Most tools read ``~/.claude/projects/`` (transcripts), ``/proc`` and
    fleetlog
    fleetcost
    fleetgantt
+   fleetboard
    fleetcontext
    fleetnudge
    fleetmail

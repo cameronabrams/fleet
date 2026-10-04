@@ -56,6 +56,7 @@ when you need it.
 | `fleetcost` | measure what inter-session messages cost in re-read tokens |
 | `fleetwaiting` | which sessions are blocked waiting on a human |
 | `fleetgantt` | every session's life as a Gantt chart (standalone HTML) |
+| `fleetboard` | one screen: who is working, who is blocked, what is wrong |
 | `fleetspawn` | bring one new session in, or a parked one back (plan by default) |
 | `fleetretire` | park or retire one session: checks, resume recipe, `/exit` (plan by default) |
 | `fleetnudge` | a detached watcher wakes its idle session with one tagged line; phone push if it cannot (plan by default) |

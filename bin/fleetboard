@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+"""fleetboard -- one screen: who is working, who is blocked, what is wrong.
+
+  fleetboard              local sources only (~0.2 s)
+  fleetboard --full       also refresh cluster work and context sizes (~6 s)
+  fleetboard --watch [N]  redraw every N seconds (default 15), refreshing the
+                          slow sources whenever the cache is over 10 min old
+
+It RENDERS state the fleet already derives. It declares nothing, registers no
+probes and keeps no status of its own -- that design was refused on 2026-10-03
+and this is not a way back to it. Sources:
+
+  tmux            9 ms   panes, windows, silence flag (monitor-silence)
+  claude agents 177 ms   name, status, pid, cwd -- the authority on names
+  fleetwatch    3.6 s    cluster work and watcher liveness  (--full)
+  fleetcontext  2.2 s    context size per session           (--full)
+
+The two slow ones are cached and shown with their AGE, never as current: a value
+on this screen is evidence as of a time. **Absence is rendered as `?`, never as a
+pass** -- a board that shows green because a source failed is worse than no board.
+
+Written outside this repository and moved in on 2026-10-04. It reads this app's
+state layout and two of its tools, and that coupling had no test across it: when
+`fleetsnap` changed its housekeeping on 2026-10-03 the board went blind, and only
+one side of the dependency had CI.
+"""
+import json, os, subprocess, sys, time
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from fleet import config as fc
+from fleet import version_flag
+from fleet.panes import LABELS, agent_label, is_agent_pane
+
+STATE = fc.state_dir()
+# A SUBDIRECTORY, deliberately. The cache lived at `<state>/board-cache.json`
+# until 2026-10-03, when `fleetsnap`'s housekeeping -- which globbed
+# `<state>/*.json` and moved aside anything not named after a live fleet --
+# renamed it, and every value here went to `?` for an hour before a human
+# noticed. That glob is gone, but the rule it taught stands: the state directory
+# root is shared, so a tool that wants files there owns a subdirectory.
+CACHE = os.path.join(STATE, "cache", "board.json")
+# Sibling tools resolved from this file, not from a symlink directory on PATH:
+# `~/bin` is one person's install, and a board that reads whatever `fleetwatch`
+# happens to be on PATH is reading a different version than it ships with.
+BIN = os.path.dirname(os.path.realpath(__file__))
+# In --watch, re-run the slow sources when the cache is older than this. Without
+# it a watched board shows one measurement forever and ages it in the footer --
+# which is how it survived its own data loss on 2026-10-03.
+REFRESH = 600
+
+C = {"dim":"\033[2m","b":"\033[1m","r":"\033[0m","red":"\033[31m","grn":"\033[32m",
+     "yel":"\033[33m","blu":"\033[34m","cyn":"\033[36m"}
+if not sys.stdout.isatty():
+    C = {k:"" for k in C}
+
+def run(cmd, timeout=20):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.stdout if p.returncode == 0 else None
+    except Exception:
+        return None
+
+def run_json(cmd, timeout=120):
+    """A peer tool's `--json`, or None if it could not be read OR did not parse.
+
+    Both failures mean the same thing to this board -- no data -- and both must
+    reach the screen as `?`. Until 2026-10-04 these two sources were read by
+    parsing their DISPLAY tables by column position, which is how the board came
+    to have the defect it exists to report: see `jobs()` below."""
+    out = run(cmd, timeout)
+    if out is None:
+        return None
+    try:
+        return json.loads(out)
+    except ValueError:
+        return None
+
+def panes():
+    out = run(["tmux","list-panes","-a","-F",
+               "\t".join(["#{window_index}","#{window_name}","#{pane_id}", LABELS,
+                          "#{?window_silence_flag,quiet,active}","#{?window_active,cur,}"])], 5)
+    rows = {}
+    if out is None:
+        return None
+    for line in out.splitlines():
+        f = line.split("\t")
+        # Membership through the shared helper, not a truthiness check on the
+        # field: `list-panes -a` crosses tmux sessions, and which option carries
+        # the name has already moved once. The test that caught this board for
+        # keeping its own copy of the rule is exhaustive over bin/, which is why
+        # it caught it on the day it arrived.
+        if len(f) >= 6 and is_agent_pane(f[3]):
+            rows[agent_label(f[3])] = {"win":f[0], "winname":f[1], "pane":f[2],
+                                       "quiet":f[4] == "quiet", "current":f[5] == "cur"}
+    return rows
+
+def agents():
+    d = run_json(["claude","agents","--json"], 30)
+    if d is None:
+        return None
+    items = d if isinstance(d, list) else d.get("agents", [])
+    return {a["name"]: a for a in items if a.get("name")}
+
+def jobs_and_notes():
+    """(jobs or None, [notes]) from `fleetwatch --json`.
+
+    `None` means *not known*, and the caller renders it `?`. That distinction is
+    the whole reason this reads JSON. The display table has no row for a failed
+    cluster query -- `fleetwatch` prints a banner and exits 0 -- so the parse that
+    used to read this by column found no rows and reported an EMPTY job list,
+    which the board drew as a blank work column for every session. An unreachable
+    cluster rendered as a calm fleet. `cluster_ok` is a field; a banner is not.
+    """
+    d = run_json([os.path.join(BIN, "fleetwatch"), "--json"])
+    if d is None:
+        return None, []
+    notes = []
+    if not d.get("cluster_ok"):
+        return None, ["cluster query failed -- live work is UNKNOWN, not none"]
+    jobs = [{"job": j.get("job"), "tasks": j.get("tasks") or 0,
+             "owner": j.get("owner"),
+             "watched": bool(j.get("watched_by"))} for j in d.get("jobs") or []]
+    if any(not j["watched"] for j in jobs):
+        notes.append("live work with no watcher")
+    if d.get("dead_watchers"):
+        notes.append("a registered watcher is dead")
+    if d.get("stale_watchers"):
+        notes.append("a watcher points at a job that is no longer live")
+    if (d.get("delivery") or {}).get("silent"):
+        notes.append("a nudge never arrived and no push went out")
+    if len((d.get("clients") or {}).get("attached") or []) > 1:
+        notes.append("more than one client is attached to the tmux server")
+    # A job that ENDED badly is the thing a board exists to surface: it is over,
+    # so it holds no watcher and appears in no live row. `_states` is computed by
+    # fleetwatch and prefixed to keep it out of the registration file's own key
+    # namespace -- it is part of the --json contract, not a private field.
+    for r in d.get("finished_watchers") or []:
+        st = r.get("_states") or ""
+        if st and st != "COMPLETED":
+            notes.append(f"{r.get('session')} job {r.get('job')} ended {st} -- not cleared")
+    return jobs, notes
+
+def context():
+    """name -> thousands of tokens, or None if unknown."""
+    d = run_json([os.path.join(BIN, "fleetcontext"), "--json"])
+    if d is None:
+        return None
+    out = {}
+    for s in d.get("sessions") or []:
+        if s.get("name") and s.get("tokens"):
+            out[s["name"]] = int(s["tokens"]) // 1000
+    return out
+
+def refresh_cache():
+    jobs, notes = jobs_and_notes()
+    c = {"at": time.time(), "jobs": jobs, "ctx": context(), "notes": notes}
+    try:
+        os.makedirs(os.path.dirname(CACHE), exist_ok=True)
+        with open(CACHE,"w") as fh: json.dump(c, fh)
+    except OSError:
+        pass
+    return c
+
+def load_cache():
+    try:
+        with open(CACHE) as fh: return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+def age(ts):
+    s = int(time.time() - ts)
+    if s < 90:  return f"{s}s"
+    if s < 5400: return f"{s//60}m"
+    return f"{s//3600}h"
+
+def draw(full=False, auto=False):
+    p, a = panes(), agents()
+    cache = load_cache() if not full else None
+    if full or (auto and (cache is None or time.time() - cache["at"] > REFRESH)):
+        cache, full = refresh_cache(), True
+    print(f"\n  {C['b']}FLEET{C['r']}  {time.strftime('%H:%M %Z')}")
+    if a is None:
+        print(f"  {C['red']}claude agents could not be read -- every status below is ?{C['r']}")
+    if p is None:
+        print(f"  {C['red']}tmux could not be read -- panes and silence unknown{C['r']}")
+
+    names = sorted(set(list((a or {}).keys()) + list((p or {}).keys())))
+    raw_jobs = (cache or {}).get("jobs")
+    jobs_known = raw_jobs is not None
+    jobs_by = {}
+    for j in raw_jobs or []:
+        jobs_by.setdefault(j["owner"], []).append(j)
+    ctx = (cache or {}).get("ctx")
+
+    print(f"  {C['dim']}{'session':<22}{'win':<14}{'state':<9}{'ctx':>6}  work{C['r']}")
+    for n in names:
+        pa, ag = (p or {}).get(n), (a or {}).get(n)
+        st = (ag or {}).get("status", "?")
+        col = C['yel'] if st == "busy" else (C['dim'] if st == "idle" else C['red'])
+        mark = "*" if pa and pa["current"] else " "
+        win = f"{pa['win']}:{pa['winname']}" if pa else "?"
+        k = f"{ctx[n]}k" if ctx and n in ctx else "?"
+        if not jobs_known:
+            work = f"{C['dim']}?{C['r']}"       # unknown, never an empty column
+        else:
+            js = jobs_by.get(n, [])
+            work = ""
+            if js:
+                bad = [j for j in js if not j["watched"]]
+                work = f"{len(js)} job(s), {sum(int(j['tasks']) for j in js)} tasks"
+                if bad: work += f"  {C['red']}{len(bad)} UNWATCHED{C['r']}"
+        print(f"  {mark}{n:<21}{win:<14}{col}{st:<9}{C['r']}{k:>6}  {work}")
+
+    if cache:
+        stamp = f"{C['dim']}cluster + context as of {age(cache['at'])} ago"
+        if not full and not auto:
+            stamp += "; fleetboard --full to refresh"
+        print("\n  " + stamp + C['r'])
+        for note in cache.get("notes", []):
+            print(f"  {C['red']}! {note}{C['r']}")
+    else:
+        print(f"\n  {C['dim']}no cluster/context data yet -- fleetboard --full{C['r']}")
+
+def main():
+    version_flag()
+    args = sys.argv[1:]
+    full = "--full" in args
+    if "--watch" in args:
+        i = args.index("--watch")
+        every = int(args[i+1]) if len(args) > i+1 and args[i+1].isdigit() else 15
+        try:
+            while True:
+                print("\033[2J\033[H", end=""); draw(full, auto=True); full = False
+                time.sleep(every)
+        except KeyboardInterrupt:
+            pass
+    else:
+        draw(full)
+
+if __name__ == "__main__":
+    main()
