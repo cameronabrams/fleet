@@ -112,3 +112,36 @@ Exit codes
      - stopped: the input line did not read back, or the session exited
    * - ``4``
      - timed out waiting for the compaction boundary or the color record
+
+.. _fleetcontext-json:
+
+``--json``
+----------
+
+Read by :doc:`fleetboard`, so the shape is a public interface and belongs in the
+versioned surface. ``--json`` reports and changes nothing; it never compacts.
+
+Top-level keys:
+
+.. list-table::
+   :widths: 24 76
+
+   * - ``context``
+     - the thresholds in force: ``compact_above``, ``clear_above``,
+       ``idle_minutes``
+   * - ``agents_read``
+     - **false when ``claude agents`` could not be read.** Every ``state`` below is
+       then a guess from the screen alone, with no second source to reconcile
+       against
+   * - ``sessions``
+     - one row per live session
+
+Each session row carries ``name``, ``pid``, ``cwd``, ``pane``, ``uuid`` and
+``uuid_source``, ``tokens``, ``turns``, ``compactions``, ``since_h``, ``idle_s``,
+``state``, ``status``, ``kind``, ``runtime``, ``save``, ``action``, ``why``,
+``background``, ``self``, ``verified``, ``dirty``, ``disagree`` and ``footer``.
+
+Two of those decide whether the rest can be trusted. ``verified`` is false when no
+transcript could be resolved, and ``tokens`` is then ``null`` — which is *unknown*,
+not zero. ``disagree`` is set when the pane and the session disagree about being
+busy, and carries the captured line that produced it.

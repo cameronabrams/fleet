@@ -121,3 +121,57 @@ counted, never dropped in silence. A **missing** log means no nudge was ever sen
 ``fleetnudge`` creates it on first use — but an unreadable one, or a line that will
 not parse, is reported as itself. "No rows" must never be something the check
 produced by failing.
+
+.. _fleetwatch-json:
+
+``--json``
+----------
+
+Two tools in this repository read this output — :doc:`fleetretire`, before it
+stops a session, and :doc:`fleetboard` — so its shape is a public interface, and
+this repository's rule makes "the shape of its ``--json``" part of the versioned
+surface. It is written down here so that rule can be applied.
+
+Top-level keys:
+
+.. list-table::
+   :widths: 24 76
+
+   * - ``cluster_ok``
+     - **false when the cluster query failed.** Everything else about live work is
+       then meaningless, not empty. Read this first.
+   * - ``jobs``
+     - live jobs: ``job``, ``tasks``, ``states``, ``workdir``, ``owner``,
+       ``reasons``, ``held``, ``watched_by`` (a list — empty means nobody)
+   * - ``stale_watchers``
+     - ``session`` / ``job`` for monitors pointing at jobs no longer live
+   * - ``dead_watchers``
+     - registrations whose process is gone while the job is not finished
+   * - ``finished_watchers``
+     - registrations whose process exited *because* the job ended — the normal end
+       of a watcher, reported separately so that a campaign ending does not train
+       everyone to ignore the dead list
+   * - ``delivery``
+     - undelivered-nudge rows; ``silent`` is the one that means a session was never
+       told and no push went out
+   * - ``clients``
+     - ``attached`` (who can type into a pane) and ``error``
+
+``cluster_ok`` is the field that is easy to skip and expensive to skip. The
+command prints a banner and **exits 0** when its ssh query fails, so a caller
+reading the display table instead finds no job rows and concludes there is no
+work. :doc:`fleetboard` did exactly that until 2026-10-04 and drew an unreachable
+cluster as a calm fleet.
+
+Why some keys begin with an underscore
+``````````````````````````````````````
+
+Rows in ``dead_watchers`` and ``finished_watchers`` are the watcher's own
+registration file, loaded verbatim, with this tool's findings added to it:
+``_why``, ``_states`` and ``_file``. The underscore keeps those out of the
+registration's key namespace, so a field this tool computes can never be mistaken
+for one the watcher wrote.
+
+**They are part of this contract, not private.** ``_states`` is the only route by
+which a job that ended badly reaches a caller — the job is over, so it holds no
+watcher and appears in no live row.

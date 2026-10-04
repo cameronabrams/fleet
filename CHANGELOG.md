@@ -191,6 +191,30 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- **The `--json` shape of `fleetwatch` and `fleetcontext` is written down.** Both
+  now have in-tree consumers — `fleetretire` and `fleetboard` read the first,
+  `fleetboard` the second — so by this project's own rule their shape is part of
+  the versioned surface. That rule could not be applied to a shape nobody had
+  recorded.
+
+  `cluster_ok` gets the emphasis it earns: the command prints a banner and **exits
+  0** when its cluster query fails, so a caller that does not read that field
+  concludes there is no work. Also documented rather than renamed: the
+  `_why`/`_states`/`_file` keys on watcher rows, whose underscore keeps this
+  tool's findings out of the registration file's own key namespace. `_states` is
+  the only route by which a job that ended badly reaches a caller.
+
+  A test binds the pages to the code in the direction that matters — a key the
+  docs name and the tool does not emit is a caller sent to read a field that is
+  not there. The reverse is deliberately not failed: forcing every incidental
+  field into prose would make the page a transcript of the dict rather than a
+  description of the contract. The check also asserts it found a real section,
+  because a regex that matches nothing passes.
+
+  Documentation of an interface is a second copy of something derivable, kept by
+  hand, and rots for the same reason a ledger does. This is the mechanism the
+  ledger rule was written without.
+
 - **`fleetboard`** — one screen: every session, its window, busy or idle, context
   size, cluster work, and what is wrong. It renders state the fleet already
   derives; it declares nothing and registers no probe, which is the line that made
