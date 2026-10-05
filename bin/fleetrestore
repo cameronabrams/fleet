@@ -10,7 +10,7 @@ and whether to rerun them is a judgement call, not a recovery step.
   fleetrestore              plan the whole fleet (default; changes nothing)
   fleetrestore NAME...      plan only these sessions
   fleetrestore --go         build it
-  fleetrestore --brief      write per-session RECOVERY.md notes, then show the plan
+  fleetrestore --brief      write each session's recovery brief, then show the plan
 """
 import json, os, subprocess, sys, argparse, time, shlex
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
@@ -139,12 +139,29 @@ def main():
     ap.add_argument("sessions", nargs="*", metavar="NAME",
                     help="restore only these sessions (default: all of them)")
     ap.add_argument("--go", action="store_true", help="actually build it")
-    ap.add_argument("--brief", action="store_true", help="write per-session RECOVERY.md")
+    ap.add_argument("--brief", action="store_true",
+                    help="write each session's recovery brief to "
+                         "<state>/recovery/<name>.md")
     ap.add_argument("--socket", metavar="NAME",
                     help="build on the tmux server at this socket (tmux -L NAME) "
                          "instead of the default one")
     ap.add_argument("--stagger", type=float, default=3.0,
                     help="seconds between launches (default 3; avoids a load spike)")
+    # `--all` was the whole-fleet path until it was retired: it stood in for
+    # "everything is being rebuilt", which the bare command now derives from the
+    # manifest instead. argparse would answer it with `unrecognized arguments`
+    # and a usage line -- correct, and no help at all to someone whose machine
+    # has just come back and who is typing the command they remember. The
+    # coordinator typed it on 2026-10-05 preparing a reboot, from a drop written
+    # before the flag was removed. Keyed on the flag, so a session LABELLED
+    # `all` is still an ordinary positional.
+    if "--all" in sys.argv[1:]:
+        sys.exit("fleetrestore: --all was retired; the bare command is the "
+                 "whole-fleet path and applies each window's exact layout.\n"
+                 "  fleetrestore          plan every session in the manifest\n"
+                 "  fleetrestore --go     build it\n"
+                 "  fleetrestore --brief --go   ... and write each session's "
+                 "recovery brief")
     a = ap.parse_args()
     global SOCKET
     SOCKET = a.socket

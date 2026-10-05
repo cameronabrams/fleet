@@ -155,5 +155,66 @@ class RecoveryBrief(unittest.TestCase):
         self.assertIn("RECOVERY_DIR", src)
 
 
+class RetiredAllFlag(unittest.TestCase):
+    """`--all` was the documented power-cycle path until fde0cda retired it, and
+    the coordinator still typed it on 2026-10-05 while preparing a reboot. The
+    flag was removed because it stood in for "everything is being rebuilt" and
+    was not the same thing; the bare command derives that instead.
+
+    argparse answers an unrecognized flag with `unrecognized arguments: --all`
+    and a usage line. That is correct and useless: it names what is wrong and not
+    what to type, to a reader whose machine has just come back. The replacement
+    is one character shorter, so there is no cost to saying it.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.tmux = tempfile.mkdtemp(prefix="ftmux", dir="/tmp")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmux); self.cfg.close()
+
+    def run_tool(self, *args):
+        env = dict(os.environ, TMUX_TMPDIR=self.tmux); env.pop("TMUX", None)
+        return subprocess.run([TOOL, *args], capture_output=True, text=True, env=env)
+
+    def test_all_names_its_replacement(self):
+        r = self.run_tool("--all")
+        self.assertNotEqual(r.returncode, 0)
+        out = r.stdout + r.stderr
+        self.assertIn("--all", out)
+        self.assertIn("fleetrestore --go", out,
+                      "the error must name the command to type instead")
+
+    def test_it_refuses_before_touching_anything(self):
+        """There is no manifest in this config, so a run that got as far as the
+        manifest check would say so. Reaching that line with --go would be worse:
+        the point is to stop at the argument, not to half-build a fleet and then
+        complain."""
+        r = self.run_tool("--all", "--go")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("no manifest at", r.stdout + r.stderr)
+
+    def test_a_session_actually_named_all_is_still_restorable(self):
+        """The guard keys on the flag, not the word. A session labelled `all` is
+        a legitimate positional and must not be hijacked by it."""
+        with open(os.path.join(APP, "bin", "fleetrestore")) as f:
+            src = f.read()
+        # assertNotIn would print the whole 20 kB file on failure, which buries
+        # the one line that matters. Report the line number instead.
+        #
+        # The exclusion is per-OCCURRENCE, not per-line. Excluding any line that
+        # also contains the legitimate `"--all" in sys.argv` looked equivalent and
+        # was not: the natural broken form puts both tests on one line
+        # (`if "all" in sys.argv or "--all" in sys.argv[1:]`), so that version
+        # passed against code it was written to reject. Caught only by re-breaking
+        # the guard after rewriting the assertion -- the rewrite is an edit to the
+        # check itself, so the earlier proof did not carry over.
+        hits = []
+        for i, l in enumerate(src.splitlines(), 1):
+            if '"all" in sys.argv' in l.replace('"--all" in sys.argv', ""):
+                hits.append(i)
+        self.assertEqual(hits, [], f"bare \'all\' matched on line(s) {hits}")
+
+
 if __name__ == "__main__":
     unittest.main()

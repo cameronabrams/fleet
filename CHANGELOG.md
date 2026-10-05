@@ -32,6 +32,33 @@ entries and makes you confirm the bump against this list.
 
 ### Changed
 
+- **`fleetrestore --all` now names its replacement instead of letting argparse
+  refuse it.** The flag was the documented power-cycle path until it was retired
+  — it stood in for "everything is being rebuilt", which the bare command derives
+  from the manifest instead. argparse answered it with `unrecognized arguments:
+  --all` and a usage line: correct, and no help at all to a reader whose machine
+  has just come back and who is typing the command they remember.
+
+  Not hypothetical. On 2026-10-05, preparing a reboot, the coordinator sent
+  nineteen sessions `fleetrestore --all --go` as the recovery path, carried
+  forward from a drop written before the flag was removed. **A conclusion that was
+  true when written, cited later without re-derivation — in the one line that had
+  to work.** The documentation was never wrong; the removal is recorded here and
+  the operative pages describe the bare form. The error message was the only place
+  the correction could still arrive, and it was the one place that said nothing.
+
+  Keyed on the flag and not the word, so a session *labelled* `all` is still an
+  ordinary positional. `--brief` is a separate flag, which the new message says
+  out loud: `--go` alone writes no briefs, and the reboot it was typed for was
+  about to find that out too.
+
+  The test for the word-versus-flag distinction was rewritten mid-change to report
+  a line number rather than dump the whole file, and the rewrite silently stopped
+  biting — it excluded any line containing the legitimate `"--all" in sys.argv`,
+  and the natural broken form puts both tests on one line. Caught only by
+  re-breaking the guard *after* editing the assertion. **An edit to a check is not
+  covered by the proof taken before it.**
+
 - **`fleetsnap` no longer sweeps the state directory.** The cleanup that cleared
   the per-fleet manifest residue globbed `<state>/*.json` and moved aside every
   file not named after a live fleet. Its docstring said "per-fleet manifests"; the
@@ -270,6 +297,15 @@ entries and makes you confirm the bump against this list.
   quietly ship without it.
 
 ### Fixed
+
+- `docs/source/tools/fleetrestore.rst` described pane addressing as using tmux's
+  `pane-base-index`. That mechanism was removed because reading it *was* the
+  2026-09-30 failure — queried before the first `new-session`, it returned nothing
+  on a machine with no server and fell back to `0` while the config sets `1`, and
+  every session came up one pane to the left. The tool has addressed panes by `%N`
+  id since, and the tests assert the reader is gone; only the documentation still
+  recommended the thing that broke. Found while correcting the `--all` message on
+  the same page.
 
 - `fleetlog` no longer states a rename it cannot know about. `fleetlog sessions` is
   a table headed *identity*, and five of its rows claimed one — including the same

@@ -25,9 +25,15 @@ Behavior
   different uuid and restores normally.
 - Sessions whose ``@agent`` label is already on a live pane are skipped.
 - Unverified resume handles are listed before the plan.
-- Windows are created in manifest order, the real window index is read back from
-  tmux, and panes are addressed using tmux's ``pane-base-index`` — both assumptions
-  once sent every session one pane too high.
+- Windows are created in manifest order and the real window index is read back
+  from tmux. Panes are addressed by the ``%N`` pane id tmux reports as each one is
+  made — **not** by a computed ``<window>.<index + pane-base-index>``. Reading that
+  setting was itself the 2026-09-30 failure: it was queried before the first
+  ``new-session``, so on a machine with no server yet running it returned nothing
+  and fell back to ``0`` while the config sets ``1``, and every session went one
+  pane to the left. A pane id cannot be off by one, and survives renumbering.
+- A pane tmux does not report an id for is never typed into, and before each
+  launch the pane's directory is checked against the manifest.
 - Each window is named and ``automatic-rename`` turned off, so the next snapshot
   records the real name. A recorded name of ``claude`` is warned about, not applied.
 - Each pane gets ``@agent`` and is sent
