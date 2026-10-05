@@ -32,6 +32,35 @@ entries and makes you confirm the bump against this list.
 
 ### Changed
 
+- **`fleetrestore` joins a window that is already open instead of opening a second
+  one with the same name.** It templated a window per manifest group and asked only
+  whether the tmux *session* existed — never whether the *window* did. So a partial
+  restore built a new window and renamed it to a name already on screen.
+
+  Found in the 2026-10-05 reboot by the coordinator: 19 of 20 panes came back, and
+  the plan for the twentieth was to create a window and name it `drexiglas` while a
+  four-pane `drexiglas` was already open. That pane was placed by hand.
+
+  **The partial restore is the common case, not the edge one.** Liveness filtering
+  turns every "one session died" into a partial restore, and the window that session
+  lived in is still there holding its neighbours — so the path most likely to be
+  used was the one that had never been built for. The whole-fleet path onto a bare
+  server, which is the case the tool was written for and tested on, is the rarer
+  one and was always correct.
+
+  A group whose name matches **two** open windows is refused and both are named,
+  rather than picking one: from the manifest both look equally right, and a wrong
+  pick puts a session beside the wrong neighbours. That ambiguous state is what this
+  bug produced, so the fix has to cope with its own wreckage.
+
+  Windows named `claude` are never matched. `automatic-rename` writes that name over
+  any window whose real name was lost, so it identifies nothing — and with the
+  exclusion removed, every group in the test fleet collapsed into one window.
+
+  A joined window is left otherwise untouched: not renamed, and not re-tiled. Its
+  layout belongs to the sessions already living in it, and this restore is not
+  responsible for them.
+
 - **`fleetrestore --all` now names its replacement instead of letting argparse
   refuse it.** The flag was the documented power-cycle path until it was retired
   — it stood in for "everything is being rebuilt", which the bare command derives

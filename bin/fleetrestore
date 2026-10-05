@@ -102,6 +102,26 @@ def run(cmd, go, capture=False):
     return None
 
 
+def windows_by_name(sess):
+    """{window_name: [window_id, ...]} for one tmux session, or {} if it has none.
+
+    A restore that creates a window per manifest group is right only when nothing
+    is there yet. After liveness filtering, the usual restore is PARTIAL -- one
+    session died and its window is still on screen holding its neighbours -- and
+    the group must be split into that window instead of templated beside it.
+    """
+    r = tmux_run(["list-windows", "-t", sess, "-F", "#{window_name}\t#{window_id}"],
+                 capture_output=True, text=True)
+    if r.returncode != 0:
+        return {}
+    out = {}
+    for line in r.stdout.splitlines():
+        name, _, wid = line.partition("\t")
+        if name and wid:
+            out.setdefault(name, []).append(wid)
+    return out
+
+
 def verify(sessions):
     """[(label, what is wrong)] comparing what tmux now HAS against the manifest.
 
@@ -273,10 +293,37 @@ def main():
     for s_ in m["sessions"]:
         by_win.setdefault(s_["tmux"]["window"], []).append(s_)
     sess = m["sessions"][0]["tmux"]["session"]
+    # Read ONCE, before anything is built, so a window this run creates is never
+    # mistaken for one that was already there.
+    on_screen = windows_by_name(sess)
     first = True
     for w in sorted(by_win):
         panes = sorted(by_win[w], key=lambda x: x["tmux"]["pane_index"])
-        if first:
+        wname = panes[0]["tmux"].get("window_name")
+        # Does a window of this name already exist? Then this group belongs IN it.
+        # Keyed on the name and not the manifest's window index, which shifts.
+        # `claude` is excluded: automatic-rename writes it over any window whose
+        # real name was lost, so it is a collision waiting to happen rather than
+        # an identity. The code below already refuses to apply it as a name.
+        here = on_screen.get(wname, []) if wname and wname != "claude" else []
+        if len(here) > 1:
+            # Two windows already carry this name -- which is what this very bug
+            # produced before it was fixed. Guessing between them would put a
+            # session beside the wrong neighbours; say so and leave it.
+            print(f"    !! {len(here)} windows are already named {wname!r} "
+                  f"({', '.join(here)}). NOT restoring "
+                  f"{', '.join(x['label'] for x in panes)} into any of them -- "
+                  f"rename or close all but one, then re-run.")
+            continue
+        joined = bool(here)
+        if joined:
+            key = here[0]
+            who = ", ".join(x["label"] for x in panes)
+            print(f"    (window {wname!r} is already open as {key} — {who} "
+                  f"{'joins' if len(panes) == 1 else 'join'} it rather than "
+                  f"opening a second window of that name)")
+            first_id = None
+        elif first:
             exists = tmux_run(["has-session", "-t", sess],
                               capture_output=True).returncode == 0
             if exists:
@@ -290,11 +337,12 @@ def main():
         else:
             got = run(["tmux", "new-window", "-P", "-F", WIN_FMT,
                        "-t", f"{sess}:", "-c", panes[0]["cwd"]], a.go, capture=True)
-        # tmux is the authority on where the window landed; the manifest index is
-        # only a fallback for the dry run, which creates nothing to ask about.
-        win_s, _, first_id = (got or "").partition(" ")
-        win = int(win_s) if win_s.isdigit() else w
-        key = f"{sess}:{win}"
+        if not joined:
+            # tmux is the authority on where the window landed; the manifest index
+            # is only a fallback for the dry run, which creates nothing to ask about.
+            win_s, _, first_id = (got or "").partition(" ")
+            win = int(win_s) if win_s.isdigit() else w
+            key = f"{sess}:{win}"
         # Pane IDS, captured as each pane is made. Targets used to be computed as
         # "<window>.<index + pane-base-index>", and pane_base_index() asked tmux for
         # that setting BEFORE the first new-session -- so with no server running it
@@ -304,8 +352,11 @@ def main():
         # exact failure after the 2026-09-09 restore, and could not hold in the one
         # case this tool is for -- a machine that just came back with no server.
         # A %N id cannot be off by one, and survives renumbering too.
-        pane_ids = [first_id.strip()]
-        for extra in panes[1:]:
+        # A created window arrives holding one pane, so the group's first session
+        # takes it; a joined window holds other people's panes, so every session
+        # in the group needs one of its own.
+        pane_ids = [] if joined else [first_id.strip()]
+        for extra in panes[len(pane_ids):]:
             pane_ids.append((run(["tmux", "split-window", "-P", "-F", "#{pane_id}",
                                   "-t", key, "-c", extra["cwd"]],
                                  a.go, capture=True) or "").strip())
@@ -315,20 +366,25 @@ def main():
         # The --all path did neither until 2026-09-09, which is how three window
         # names were lost. Restoring names is not cosmetic: it is what
         # stops the next snapshot from overwriting them with the command name.
-        wname = panes[0]["tmux"].get("window_name")
-        if wname and wname != "claude":
+        if joined:
+            # Someone else's window: it already has the right name, and its layout
+            # belongs to the sessions living in it. Re-tiling would rearrange panes
+            # this restore is not responsible for; tmux has already made room.
+            pass
+        elif wname and wname != "claude":
             run(["tmux", "rename-window", "-t", key, wname], a.go)
         elif wname == "claude":
             print(f"    ! window {w}: manifest name is 'claude' — automatic-rename "
                   f"had already eaten the real name before that snapshot. "
                   f"Rename it by hand after the restore.")
-        run(["tmux", "set", "-w", "-t", key, "automatic-rename", "off"], a.go)
-        lay = m.get("window_layouts", {}).get(f"{sess}:{w}", {})
-        partial = len(m["sessions"]) != full
-        if lay.get("layout") and not partial:
-            run(["tmux", "select-layout", "-t", key, lay["layout"]], a.go)
-        else:
-            run(["tmux", "select-layout", "-t", key, "tiled"], a.go)   # partial fleet: exact layout would not fit
+        if not joined:
+            run(["tmux", "set", "-w", "-t", key, "automatic-rename", "off"], a.go)
+            lay = m.get("window_layouts", {}).get(f"{sess}:{w}", {})
+            partial = len(m["sessions"]) != full
+            if lay.get("layout") and not partial:
+                run(["tmux", "select-layout", "-t", key, lay["layout"]], a.go)
+            else:
+                run(["tmux", "select-layout", "-t", key, "tiled"], a.go)   # partial fleet: exact layout would not fit
         for i, s_ in enumerate(panes):
             target = pane_ids[i] if a.go else f"{key}.<pane {i}>"
             if a.go and not target.startswith("%"):
