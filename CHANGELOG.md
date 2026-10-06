@@ -30,7 +30,46 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Added
+
+- **`fleetboard` shows which `claude` each session is running.** The header states
+  the installed version once; each row carries the version that session is actually
+  on, coloured when the two differ. A session keeps running the binary it started
+  with, so upgrading `claude` changes nothing for a session already up — and there
+  is no sign of that from inside the session. `fleetupgrade` plans the restart;
+  the board only says who needs one.
+
+  "Installed" is what `claude` would start now, by resolving `~/.local/bin/claude`
+  — deliberately not the newest release published upstream, which needs the network
+  against a tool whose contract is local sources (~0.2 s). A row matching the header
+  means "running what a restart would give it", not "running the newest thing that
+  exists", and the documentation says so rather than leaving the word to do it.
+
+  An unknown version prints `?` and is not coloured: colouring it would send someone
+  to upgrade a session over a source that failed. An unreadable *installed* version
+  leaves every comparison unknown rather than marking the whole fleet stale — the
+  same error as marking it current, and the board's own rule one level down.
+
 ### Changed
+
+- **`fleet/versions.py` is the one derivation of "which claude".** `fleetupgrade`
+  and `fleetsnap` each read it for themselves, and the two copies had already
+  drifted in shape: a regex for the component after `versions/`, against
+  `os.path.basename` of the resolved symlink. Both answer `2.1.292` today, because
+  that is the last component of the current layout — **they agree for a reason
+  nobody wrote down.** A layout one level deeper (`versions/2.1.292/bin/claude`)
+  leaves the regex right and makes `basename` return `"claude"`.
+
+  `fleetsnap`'s was the copy that mattered: its answer is `installed_claude` in the
+  manifest a restore is rebuilt from, where it is read as a version number and
+  nothing would question it. Adding the board as a third reader is what surfaced
+  this; the feature was the occasion, not the reason.
+
+  A test now refuses any tool in `bin/` that parses the version path itself,
+  exhaustive over the directory rather than naming the three — a list of names is
+  what let the second copy appear. Its first form convicted two innocent lines in
+  `fleetupgrade` that ask whether a process is claude at all, and was narrowed to
+  the actual signature: a capture group after `versions/`.
 
 - **`fleetrestore` joins a window that is already open instead of opening a second
   one with the same name.** It templated a window per manifest group and asked only

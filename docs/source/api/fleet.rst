@@ -14,3 +14,4 @@ Submodules
 
    fleet.config
    fleet.transcripts
+   fleet.versions

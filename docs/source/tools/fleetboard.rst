@@ -46,9 +46,43 @@ Sources, and what each costs:
    * - :doc:`fleetcontext` ``--json``
      - 2.2 s
      - context size per session
+   * - ``/proc`` + ``readlink``
+     - 0 ms
+     - which binary each session runs, and which one is installed
 
 The two slow ones are cached under ``<state>/cache/board.json`` and shown **with
 their age, never as current**: a value on this screen is evidence as of a time.
+
+The version column
+------------------
+
+The header states the **installed** version once; each row shows the version that
+session is actually running, gently coloured when the two differ.
+
+They differ more often than it looks like they should. A session keeps running the
+binary it started with, so upgrading ``claude`` changes nothing for a session
+already up — and there is no sign of that from inside the session, which is why it
+belongs on a board rather than in anyone's memory. :doc:`fleetupgrade` plans the
+restart; this only says who needs one.
+
+"Installed" is the version ``claude`` would start **now**, read by resolving
+``~/.local/bin/claude``. It is deliberately not the newest release published
+upstream: that needs the network, and this board's contract is local sources. So
+a row matching the header means "running what a restart would give it", not
+"running the newest thing that exists".
+
+Both facts come from ``fleet.versions``, which :doc:`fleetupgrade` and
+:doc:`fleetsnap` also read. They each derived it for themselves until 2026-10-06,
+and the two copies had already drifted in shape — a regex for the component after
+``versions/``, against ``basename`` of the resolved symlink. Both answer
+``2.1.292`` on today's layout, and only the first still does when the binary sits
+one level deeper. ``fleetsnap``'s copy was the one that mattered: its answer goes
+into the manifest a restore is rebuilt from.
+
+An unknown version prints ``?`` and is **not** coloured. Colouring it would send
+someone to upgrade a session over a source that failed, and an unreadable
+installed version leaves every comparison unknown rather than marking the whole
+fleet stale.
 
 Absence is rendered ``?``, never as a pass
 ------------------------------------------

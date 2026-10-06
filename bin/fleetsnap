@@ -10,6 +10,7 @@ live process arguments; once tmux dies it is unrecoverable. Writes:
 import json, os, re, shutil, subprocess, glob, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import versions
 from fleet import version_flag
 from fleet.agents import list_agents
 from fleet.panes import agent_label, is_agent_pane
@@ -260,8 +261,11 @@ def main():
     winnotes = []
     snap = {"captured": time.strftime("%Y-%m-%d %H:%M:%S %Z"),
             "host": os.uname().nodename,
-            "installed_claude": os.path.basename(os.path.realpath(
-                os.path.expanduser("~/.local/bin/claude"))),
+            # Not basename(realpath(...)): that read the last path component,
+            # which is the version only while the binary sits directly in
+            # `versions/<v>`. This value goes into the manifest a restore is
+            # rebuilt from and is read there as a version number.
+            "installed_claude": versions.installed(),
             "sessions": [], "user_units": linger_units(),
             "window_layouts": layouts, "window_name_notes": winnotes,
             "tmux_conf": {"path": os.path.expanduser("~/.tmux.conf"),

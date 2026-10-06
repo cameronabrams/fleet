@@ -147,3 +147,86 @@ class ItDeclaresNothing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheVersionColumn(unittest.TestCase):
+    """Which binary each session runs, against the one installed.
+
+    A session keeps running the binary it started with; upgrading `claude`
+    changes nothing for a session already up. There is no outward sign of that
+    from inside the session, which is why it belongs on a board rather than in
+    anyone's memory.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.b = load_tool("fleetboard")
+        # Named colours, so an assertion says WHICH colour rather than matching
+        # an escape code. The real table is empty off a tty, which would make
+        # every colour assertion below pass against uncoloured output.
+        self.b.C = dict.fromkeys(self.b.C, "")
+        self.b.C.update({"yel": "<STALE>", "dim": "<DIM>", "r": "<->", "b": "",
+                         "red": "<RED>"})
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def board(self, agents, installed, per_pid):
+        """Draw with every slow source absent; only versions are under test."""
+        panes = {n: {"win": "1", "winname": "w", "pane": "%1",
+                     "quiet": False, "current": False} for n in agents}
+        import io, contextlib
+        with mock.patch.object(self.b, "panes", lambda: panes), \
+             mock.patch.object(self.b, "agents", lambda: agents), \
+             mock.patch.object(self.b, "load_cache", lambda: None), \
+             mock.patch.object(self.b.versions, "installed", lambda *a: installed), \
+             mock.patch.object(self.b.versions, "of_pid", lambda pid: per_pid.get(pid)):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.b.draw()
+            return buf.getvalue()
+
+    @staticmethod
+    def plain(text):
+        """The output with the colour markers removed -- what a reader sees.
+
+        Asserting on the raw string tests byte adjacency instead: the header
+        renders `claude <->2.1.292<DIM> installed<->`, so a literal
+        `"2.1.292 installed"` is absent from output that displays exactly that.
+        """
+        import re as _re
+        return _re.sub(r"<[A-Za-z>-]*>", "", text)
+
+    AGENTS = {"alpha": {"status": "idle", "pid": 11},
+              "beta":  {"status": "idle", "pid": 22}}
+
+    def test_the_installed_version_is_stated_once_at_the_top(self):
+        out = self.plain(self.board(self.AGENTS, "2.1.292",
+                                    {11: "2.1.292", 22: "2.1.292"}))
+        self.assertIn("2.1.292 installed", out)
+        self.assertEqual(out.count("installed"), 1,
+                         "the installed version is stated once, not per row")
+
+    def test_a_session_behind_the_installed_binary_is_coloured(self):
+        out = self.board(self.AGENTS, "2.1.292", {11: "2.1.291", 22: "2.1.292"})
+        stale = [l for l in out.splitlines() if l.strip().startswith("alpha")][0]
+        fresh = [l for l in out.splitlines() if l.strip().startswith("beta")][0]
+        self.assertIn("<STALE>2.1.291", stale)
+        self.assertNotIn("<STALE>", fresh)
+        self.assertIn("2.1.292", fresh)
+
+    def test_an_unknown_version_is_a_question_mark_and_not_an_alarm(self):
+        """Absence is `?`, the board's rule. It is also not coloured as stale:
+        colouring it would send someone to upgrade a session over a source that
+        failed, and the palette's red is reserved for a source that failed."""
+        out = self.board(self.AGENTS, "2.1.292", {11: None, 22: "2.1.292"})
+        row = [l for l in out.splitlines() if l.strip().startswith("alpha")][0]
+        self.assertIn("?", row)
+        self.assertNotIn("<STALE>", row)
+
+    def test_an_unreadable_installed_version_colours_nothing_stale(self):
+        """If the installed version cannot be read, every comparison is unknown.
+        Marking the whole fleet stale on a failed readlink is the same class of
+        error as marking it current -- a board acting on a source it did not get."""
+        out = self.board(self.AGENTS, None, {11: "2.1.291", 22: "2.1.292"})
+        self.assertNotIn("<STALE>", out)
+        self.assertIn("? installed", self.plain(out))

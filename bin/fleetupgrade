@@ -19,6 +19,7 @@ import json, os, re, subprocess, sys, glob
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
+from fleet import versions
 from fleet.agents import by_session_prefix, list_agents
 from fleet.procs import proc_cwd
 from fleet.panes import is_agent_pane
@@ -42,20 +43,16 @@ def sh(*a):
     except OSError:
         return ""
 
+# Both now live in fleet/versions.py, which fleetsnap and fleetboard read too.
+# They were duplicated per tool, and fleetsnap's copy took the basename of the
+# resolved path rather than the component after `versions/` -- same answer on
+# today's layout, different answers on a layout one level deeper.
 def installed_version():
-    tgt = os.path.realpath(CLAUDE)
-    m = re.search(r"versions/([0-9][0-9A-Za-z.\-]*)", tgt)
-    return m.group(1) if m else None
+    return versions.installed(CLAUDE)
 
 slug = project_slug
 
-def proc_version(pid):
-    try:
-        exe = os.readlink("/proc/%s/exe" % pid)
-    except OSError:
-        return None
-    m = re.search(r"versions/([0-9][0-9A-Za-z.\-]*)", exe)
-    return m.group(1) if m else None
+proc_version = versions.of_pid
 
 def uuid_from_scratchpad(cwd):
     """Newest scratchpad dir for this project. A session's scratchpad is named

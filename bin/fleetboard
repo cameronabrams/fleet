@@ -12,6 +12,7 @@ and this is not a way back to it. Sources:
 
   tmux            9 ms   panes, windows, silence flag (monitor-silence)
   claude agents 177 ms   name, status, pid, cwd -- the authority on names
+  /proc + readlink 0 ms  which binary each session runs, and which is installed
   fleetwatch    3.6 s    cluster work and watcher liveness  (--full)
   fleetcontext  2.2 s    context size per session           (--full)
 
@@ -29,6 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..
 from fleet import config as fc
 from fleet import version_flag
 from fleet.panes import LABELS, agent_label, is_agent_pane
+from fleet import versions
 
 STATE = fc.state_dir()
 # A SUBDIRECTORY, deliberately. The cache lived at `<state>/board-cache.json`
@@ -177,7 +179,14 @@ def draw(full=False, auto=False):
     cache = load_cache() if not full else None
     if full or (auto and (cache is None or time.time() - cache["at"] > REFRESH)):
         cache, full = refresh_cache(), True
-    print(f"\n  {C['b']}FLEET{C['r']}  {time.strftime('%H:%M %Z')}")
+    inst = versions.installed()
+    head = f"\n  {C['b']}FLEET{C['r']}  {time.strftime('%H:%M %Z')}"
+    # The installed version is what every session gets on its next restart, so it
+    # is the thing the per-session column is read against. Unknown prints as `?`
+    # like any other unreadable source; it is not omitted, because a missing line
+    # reads as "nothing to say about versions" rather than "could not tell".
+    head += f"   {C['dim']}claude {C['r']}{inst or '?'}{C['dim']} installed{C['r']}"
+    print(head)
     if a is None:
         print(f"  {C['red']}claude agents could not be read -- every status below is ?{C['r']}")
     if p is None:
@@ -191,7 +200,8 @@ def draw(full=False, auto=False):
         jobs_by.setdefault(j["owner"], []).append(j)
     ctx = (cache or {}).get("ctx")
 
-    print(f"  {C['dim']}{'session':<22}{'win':<14}{'state':<9}{'ctx':>6}  work{C['r']}")
+    print(f"  {C['dim']}{'session':<22}{'win':<14}{'state':<9}{'ver':<9}"
+          f"{'ctx':>6}  work{C['r']}")
     for n in names:
         pa, ag = (p or {}).get(n), (a or {}).get(n)
         st = (ag or {}).get("status", "?")
@@ -199,6 +209,17 @@ def draw(full=False, auto=False):
         mark = "*" if pa and pa["current"] else " "
         win = f"{pa['win']}:{pa['winname']}" if pa else "?"
         k = f"{ctx[n]}k" if ctx and n in ctx else "?"
+        # The binary this session is RUNNING, which is not what is installed and
+        # not what it was launched with. `claude agents` is the only source for
+        # the pid, so a session it could not report has an unknown version --
+        # rendered `?`, never silently as current.
+        sv = versions.of_pid((ag or {}).get("pid"))
+        stale = versions.is_stale(sv, inst)
+        # Gentle on purpose: a session one release behind is a thing to do later,
+        # not a fault. Current versions are dimmed so they recede and only the
+        # ones worth acting on carry colour; unknown stays dim too, because the
+        # red in this palette is reserved for a source that failed.
+        vcol = C['yel'] if stale else C['dim']
         if not jobs_known:
             work = f"{C['dim']}?{C['r']}"       # unknown, never an empty column
         else:
@@ -208,7 +229,8 @@ def draw(full=False, auto=False):
                 bad = [j for j in js if not j["watched"]]
                 work = f"{len(js)} job(s), {sum(int(j['tasks']) for j in js)} tasks"
                 if bad: work += f"  {C['red']}{len(bad)} UNWATCHED{C['r']}"
-        print(f"  {mark}{n:<21}{win:<14}{col}{st:<9}{C['r']}{k:>6}  {work}")
+        print(f"  {mark}{n:<21}{win:<14}{col}{st:<9}{C['r']}"
+              f"{vcol}{(sv or '?'):<9}{C['r']}{k:>6}  {work}")
 
     if cache:
         stamp = f"{C['dim']}cluster + context as of {age(cache['at'])} ago"
