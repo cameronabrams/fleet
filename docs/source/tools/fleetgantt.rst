@@ -41,6 +41,12 @@ working directory.
 Identity
 --------
 
+One row per **transcript uuid**: a uuid is a session, so a transcript found under
+two project directories is drawn once. That happens when a working directory is
+renamed — Claude Code opens a project directory for the new path and the old one
+keeps its copy — and the surviving row is the one under a directory a role owns.
+Before 2026-10-07, ``--all`` drew three such sessions twice.
+
 Roles are the sessions in the last :doc:`fleetsnap` manifest plus ``[parked]`` and
 ``[retired]`` entries (:doc:`../configuration`). Each transcript is assigned by
 ``fleet.identity``, the rules :doc:`fleetlog` also uses:

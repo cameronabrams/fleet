@@ -32,6 +32,24 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **`fleetgantt --all` drew three sessions twice.** A transcript uuid is a
+  session — `fleet/identity.py` says so in those words — so two rows for one uuid
+  draw one session living two lives side by side. `--all` produced 100 segments
+  from 97 uuids; the default view produced 89 from 89 and hid it, because a project
+  directory no role owns is dropped before anything is drawn.
+
+  The cause is a **renamed working directory**: Claude Code opens a project
+  directory for the new path and the old one keeps its copy of the transcript, so
+  both are scanned. `~/Sync/mendeley` became `~/Sync/library`, and three
+  transcripts existed under both slugs — byte-identical, identical mtimes,
+  different inodes.
+
+  Rows are now collapsed by uuid, keeping the copy under a directory a role owns,
+  which is the live one and the one that attributes correctly. The remaining
+  tie-breaks are for determinism rather than judgement, because a chart that
+  redraws differently on each run is its own bug. Found while answering a report
+  about something else, and narrowed to `--all` by its reporter.
+
 - **`fleetgantt`'s unplaced lane no longer claims its occupants never held a
   role.** The heading read `NOT A ROLE`. Reported 2026-10-07: four transcripts
   named `literature` and two named `notebook` sit there, and those are the earlier

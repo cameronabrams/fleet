@@ -75,6 +75,33 @@ def directory_owners(roles):
     owners = {d: rs[0] for d, rs in by_dir.items() if len(rs) == 1}
     return owners, by_dir
 
+def dedupe_by_transcript(rows, owners):
+    """One row per transcript uuid. A uuid IS a session -- `fleet.identity` says so
+    in those words -- so two rows for one uuid draw a single session living two
+    lives, side by side on the chart.
+
+    They arise when a working directory is RENAMED. Claude Code opens a project
+    directory for the new path, the old one stays with its copy of the transcript,
+    and both are scanned. On 2026-10-07 `~/Sync/mendeley` had become
+    `~/Sync/library` and three transcripts existed under both slugs, byte-identical
+    and with identical mtimes: `--all` drew 100 segments from 97 uuids. The default
+    view drew 89 from 89 and hid it, because a project directory no role owns is
+    dropped before anything is drawn.
+
+    Both copies carry the same events, so the choice decides only ATTRIBUTION:
+    prefer the copy under a directory a role owns, which is the live one. The
+    remaining tie-breaks are for determinism, not judgement -- a richer record
+    first, then the project name -- because a chart that redraws differently on
+    each run is its own bug.
+    """
+    best = {}
+    for r in rows:
+        k = r["uuid"]
+        rank = (r["project"] in owners, len(r["bins"]), r["project"])
+        if k not in best or rank > best[k][0]:
+            best[k] = (rank, r)
+    return [r for _, r in best.values()]
+
 def parse_when(s, tz, end=False):
     for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d"):
         try:
@@ -137,7 +164,7 @@ def build(a):
     role_names = {r for r, _, _, _ in roles}
     owners, by_dir = directory_owners(roles)
     colors = fc.colors(CFG)
-    rows = scan_all()
+    rows = dedupe_by_transcript(scan_all(), owners)
 
     def seq(r):
         out = []

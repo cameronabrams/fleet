@@ -109,6 +109,38 @@ class Gantt(unittest.TestCase):
         self.assertNotIn("NOT A ROLE", html)
         self.assertIn("NOT PLACED IN A LANE", html)
 
+    def test_one_transcript_in_two_project_dirs_is_drawn_once(self):
+        """A transcript uuid IS a session -- `fleet/identity.py` says so in those
+        words -- so drawing one twice shows one session living two lives.
+
+        It happens when a working directory is RENAMED: Claude Code starts a
+        project dir for the new path and the old one stays, holding a copy of the
+        same transcript. Found 2026-10-07 on the live fleet, where `~/Sync/mendeley`
+        became `~/Sync/library`: `--all` drew 100 segments from 97 uuids, three of
+        them doubled, while the default view drew 89 from 89. The default hides it
+        because a project dir no role owns is dropped before it can be drawn --
+        which is why this needs `all=True` to reproduce.
+        """
+        self.transcript("-home-u-b", "beta")          # the surviving project dir
+        self.n -= 1                                   # same uuid, old project dir
+        self.transcript("-home-u-b-old", "beta")
+        d = self.build("all", True)
+        segs = [s for L in d["lanes"] for s in L["segs"]]
+        uuids = [s["uuid"] for s in segs]
+        self.assertEqual(len(uuids), len(set(uuids)),
+                         "a session was drawn more than once: %s" % uuids)
+
+    def test_the_surviving_copy_is_the_one_a_role_owns(self):
+        """Both copies carry the same events, so the choice only decides
+        ATTRIBUTION. Keeping the copy under a directory a role owns is what makes
+        the session land in its lane instead of the unplaced one."""
+        self.transcript("-home-u-b", "unnamed-thing")
+        self.n -= 1
+        self.transcript("-home-u-nowhere", "unnamed-thing")
+        d = self.build("all", True)
+        seg = next(s for L in d["lanes"] for s in L["segs"])
+        self.assertEqual(seg["dir"], "-home-u-b")
+
     def test_shared_directory_does_not_place_unnamed_transcripts(self):
         self.transcript("-home-u-shared")
         d = self.build()
