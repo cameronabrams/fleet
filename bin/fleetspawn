@@ -25,18 +25,20 @@ an agent read, edit and execute there; that is the human's decision, and on
 2026-09-12 the coordinator answered it for a new session before reading that it
 should not. If the prompt appears, this stops and says which pane to look at.
 """
-import argparse, os, shlex, subprocess, sys, time
+import argparse, json, os, shlex, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
-from fleet.panes import LABELS, agent_label
+from fleet.panes import LABELS, agent_label, TRUST_MARKERS
 from fleet.procs import claude_procs, named
 from fleet.transcripts import session_name
 CFG = fc.load()
 
-# Both still present in the prompt drawn by claude 2.1.270 (captured 2026-09-13;
-# the full screen is a fixture in tests/test_fleetspawn.py).
-TRUST_MARKERS = ("trust this folder", "Is this a project you created")
+# Imported, not restated. This file kept its own identical copy of the tuple, and
+# a marker with two homes is a marker that drifts: the two in fleet/panes.py
+# already carry different last-checked versions because each was re-checked
+# separately after moving. The full captured prompt is a fixture in
+# tests/test_fleetspawn.py (claude 2.1.270, 2026-09-13).
 # A large resumed session asks whether to resume from a summary (lossy) or in
 # full (costly). That choice is the human's (fleet-upgrade skill, section 3).
 RESUME_MARKER = "Resume from summary"
@@ -50,6 +52,26 @@ def screen_state(screen):
     if RESUME_MARKER in screen:
         return "resume"
     return "banner" if "Claude Code v" in screen else "unknown"
+
+def running_agents():
+    """{name: cwd} from `claude agents --json`, or None if it could not be read.
+
+    The structured source, and the authority on which sessions are actually up --
+    the same one `fleet.panes.reconcile` trusts over a parse of a moving TUI. None
+    means "could not ask", which is not "nothing is running": the caller falls
+    back to the banner rather than concluding anything from it.
+    """
+    try:
+        r = subprocess.run(["claude", "agents", "--json"],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return None
+        items = json.loads(r.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    if isinstance(items, dict):
+        items = items.get("agents", [])
+    return {a["name"]: a.get("cwd") for a in items if a.get("name")}
 
 def tmux(*a):
     r = subprocess.run(["tmux", *a], capture_output=True, text=True)
@@ -117,10 +139,30 @@ def wait_for(pane, name, directory, timeout):
         state = screen_state(screen)
         if state in ("trust", "resume"):
             return state, None
+        # Asked only once the screen-only states are ruled out: those are the two
+        # things `claude agents` cannot see, and they end the wait either way.
+        agents = running_agents()
         # The process exists BEFORE the trust prompt renders, and the echoed launch
-        # line already contains the name -- so neither is evidence of startup. The
-        # version banner is drawn only once the session is actually running.
-        if state == "banner":
+        # line already contains the name -- so neither is evidence of startup.
+        # Two things are:
+        #
+        #   the banner   drawn only once a session is running -- but drawn ONCE,
+        #                and scrolled away by the session's own first output. It
+        #                was the only signal until 2026-10-07, which made every
+        #                `--resume` time out: replaying a conversation fills the
+        #                pane before the first poll. A signal destroyed by the
+        #                event it reports cannot be waited for.
+        #   claude agents  the structured source, which keeps saying so.
+        #
+        # Either will do. The banner is kept because it still means what it meant,
+        # and because it is the fallback when `claude agents` cannot be read --
+        # dropping it would trade one unreachable readiness state for another.
+        # Membership only. The DIRECTORY is decided by the process loop below, and
+        # checking it here as well was redundant -- no case could distinguish the
+        # two, which is how it was caught. It was also the unsafe redundancy: an
+        # extra condition can only withhold readiness, and withholding readiness
+        # from a session that is up is the failure this whole change is about.
+        if state == "banner" or (agents is not None and name in agents):
             for p, c, v in claude_procs():
                 if named(v, name) and os.path.realpath(c) == os.path.realpath(directory):
                     return "live", p
@@ -227,6 +269,17 @@ def main():
         sys.exit(5)
     if state == "timeout":
         print(f"\n  TIMED OUT: no live claude named {a.name!r} in {a.dir} after {a.wait}s.")
+        # What was actually checked, so a false timeout is legible as one. This
+        # message fired on seven successful resumes before 2026-10-07 and said
+        # only that nothing was found, which reads as "it did not start".
+        ag = running_agents()
+        if ag is None:
+            print("  (`claude agents` could not be read, so only the startup banner")
+            print("   was available as evidence, and that scrolls away.)")
+        elif a.name in ag:
+            print(f"  BUT `claude agents` lists {a.name!r} in {ag[a.name]} -- if that is")
+            print(f"  the directory you asked for, it IS up and this message is wrong.")
+            print(f"  Confirm with:  fleetspawn --check {shlex.quote(a.name)} {shlex.quote(a.dir)}")
         print(f"  Look at pane {pane}; do not relaunch until you know why.\n")
         sys.exit(4)
     print(f"  live: pid {pid} in {a.dir}")

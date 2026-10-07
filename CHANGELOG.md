@@ -32,6 +32,50 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **`fleetspawn --go` reported `TIMED OUT` on sessions that had started
+  correctly.** Readiness was gated on the version banner being on the pane. The
+  banner is drawn **once**, and the session's own first output scrolls it away — so
+  the signal is destroyed by the very event it reports, and a session that comes up
+  and gets to work *faster* is more likely to be reported as never having come up.
+
+  A fresh spawn usually wins that race, sitting idle while its first prompt is
+  read. A `--resume` always loses it: replaying the conversation fills the pane
+  before the first poll. Reported 2026-10-07 — five unparks in one day plus two the
+  day before, every one reported timed out, every one actually up, correct and
+  labelled. **Raising `--wait` could not help; 180 s failed where 60 s had
+  succeeded**, which is the tell that duration was never the variable.
+
+  The reported cause was `[spawn].first_prompt` firing on a resume. It is not:
+  `launch_cmd` returns early for `--resume` and sends no prompt. The symptom
+  pointed the right way and the mechanism did not.
+
+  A session listed by `claude agents` now also counts as up — the structured
+  source, which keeps saying so, and the one `fleet.panes.reconcile` already
+  prefers over a parse of a moving TUI. The banner is kept: it still means what it
+  meant, and it is the fallback when `claude agents` cannot be read, so the fix
+  does not trade one unreachable readiness state for another. The folder-trust and
+  resume-mode prompts are still checked first, because they are what the structured
+  source cannot see.
+
+  A timeout that happens anyway now says whether `claude agents` lists the name,
+  so a false timeout is legible as one. **This mattered more than the alarm**: the
+  natural responses to it — relaunch, or retire and retry — are the damaging ones.
+
+  The test for the directory check passed against a deliberately broken version,
+  because it drove the case through an empty process list that rejected it anyway.
+  Narrowing it found that the directory was being checked twice; the `claude
+  agents` copy was removed, since an extra condition can only withhold readiness,
+  which is the failure being fixed.
+
+### Changed
+
+- **`fleetspawn` imports `TRUST_MARKERS` instead of keeping its own copy.** The
+  tuple was duplicated verbatim from `fleet/panes.py`. A marker with two homes is
+  one that drifts — the two markers already in `panes.py` carry different
+  last-checked versions because each was re-checked separately after moving — and
+  the roadmap item about markers having no second source is about exactly this
+  class.
+
 - **A watcher part way through a set is no longer reported as a fault.** One
   watcher may poll several jobs, which the registry already models correctly as
   several rows sharing a pid. The stale check did not: it asked only "is this job
