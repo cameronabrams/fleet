@@ -231,17 +231,112 @@ def _ancestors():
     return out
 
 def immortal(cmdline):
-    """True when a child that is its own session leader will not end on its own.
+    """True when the command shows a POLL LOOP: a monitor sleeps between polls.
 
-    Requires positive evidence of a POLL LOOP: a monitor sleeps between polls, a
-    transient command does not. That bar is not fussiness. EVERY Claude Code Bash
-    command runs in its own process session, so the bare `Ss` signature is the
-    normal state of any session that happens to be running a command -- measured
-    2026-09-23, when a one-minute-old `timeout 900 ssh picotte ...` and this
-    tool's own shell both read as session leaders. Flagging on `Ss` alone would
-    cry wolf on every busy session, which is the same failure fleetwatch had to
-    fix when it reported anyone who merely LOOKED at a job as its watcher."""
+    This is EVIDENCE ABOUT SHAPE and nothing more. It was once the whole test for
+    "this will block the roll", and it was wrong in both directions at once:
+
+    * It missed anything hung that does not sleep. On 2026-10-07 a 22-hour-old
+      `eza` -- an aliased `ls` that never returned -- held `/exit` open with no
+      sleep in it, and was not reported; `library` hit the same hang the day
+      before. A poll loop is ONE WAY to block an exit, not the definition.
+    * It fired on work that was going perfectly. The fleet's documented way of
+      waiting for a detached job is `until ! kill -0 $J; do sleep 30; done`, so
+      the single thing this matched was also the house style for waiting
+      correctly. Two sessions were recommended for `kill` mid-task.
+
+    "Contains a sleep" is a syntactic proxy for a temporal property, and the two
+    are unrelated. It is kept, reported beside each blocker, because a changing
+    `sleep` leaf IS useful evidence to a human deciding -- it just cannot decide.
+    """
     return bool(re.search(r"\bsleep\s+\d", cmdline))
+
+def blocks_exit(cmdline):
+    """True when a session-leader child will hold `/exit` open: always.
+
+    "Exit and stop tasks" signals the session's own process group, and a child in
+    its own process session never receives it -- whatever that child is doing. The
+    structural fact is the whole condition; the command text adds nothing to it.
+
+    A separate name from `immortal` on purpose. The question "will this block the
+    roll" and the question "is this a poll loop" were one function, and answering
+    the first with the second is what produced both failures.
+    """
+    return True
+
+_HZ = os.sysconf("SC_CLK_TCK")
+
+def proc_age(pid):
+    """Seconds since the process started, or None if it cannot be read.
+
+    Age is the discriminator the signature cannot provide. It is not a verdict
+    either -- a legitimate waiter on an overnight job is old on purpose -- which
+    is why this is printed rather than thresholded.
+    """
+    try:
+        with open("/proc/uptime") as f:
+            up = float(f.read().split()[0])
+        with open("/proc/%s/stat" % pid) as f:
+            started = int(f.read().split(") ", 1)[1].split()[19])
+        return round(up - started / _HZ, 1)
+    except Exception:
+        return None
+
+def human_age(sec):
+    if sec is None:
+        return "?"
+    if sec < 90:
+        return "%ds" % sec
+    if sec < 5400:
+        return "%dm" % (sec // 60)
+    return "%.1fh" % (sec / 3600)
+
+_PREAMBLE = re.compile(r"^.*?\beval\s+(?=\S)", re.S)
+
+def spoken_cmd(cmdline):
+    """The part of a Claude Code Bash command a human can actually read.
+
+    Every one of them arrives wrapped in the same preamble -- sourcing a shell
+    snapshot, unsetting extglob, clearing an alias -- and the command itself is
+    the argument to the final `eval`. Truncating the raw cmdline for display
+    showed the boilerplate and cut off before the command, while the text beside
+    it said "read each command before killing anything". Advice that the output
+    makes impossible to follow is how a warning becomes something people click
+    past.
+
+    The whole string is returned unchanged when there is no preamble to strip,
+    which is the case for a hung leaf such as the 2026-10-07 `eza`.
+    """
+    out = _PREAMBLE.sub("", cmdline, count=1).strip()
+    # The quoted command is followed by a suffix the harness adds
+    # (`< /dev/null && pwd -P >| ...`), so the closing quote is NOT at the end of
+    # the string. An end-anchored check silently did nothing and left a stray
+    # leading quote on every line -- which is what the real shape looks like, and
+    # what the first version of this was tested against a fixture that lacked.
+    q = out[:1]
+    if q in ("'", '"'):
+        end = out.rfind(q)
+        out = out[1:end] if end > 0 else out[1:]
+    return " ".join(out.split()) or " ".join(cmdline.split())
+
+def blockers(ss, inst):
+    """Sessions with exit-blocking children that this roll is actually going to
+    `/exit`, oldest blocker first.
+
+    Two filters, both reported missing on 2026-10-07. A session already on the
+    installed version is not in the plan, so a blocker in it blocks nothing -- it
+    was warned about anyway, which is noise at the one moment attention is
+    scarce. And the oldest blocker is the one worth looking at, so it must not
+    sort below a one-minute waiter.
+    """
+    out = [x for x in ss if x.get("leaders") and x.get("version") != inst]
+    def oldest(x):
+        ages = [c.get("age_s") for c in x["leaders"] if c.get("age_s") is not None]
+        return -max(ages) if ages else 0
+    out.sort(key=oldest)
+    for x in out:
+        x["leaders"].sort(key=lambda c: -(c.get("age_s") or 0))
+    return out
 
 def leaders(pid):
     """Descendants of `pid` that are in their OWN process session AND poll.
@@ -280,8 +375,9 @@ def leaders(pid):
                 cmd = f.read().replace(b"\0", b" ").decode(errors="replace")
         except OSError:
             continue
-        if immortal(cmd):
-            out.append({"pid": k, "cmd": " ".join(cmd.split())[:160]})
+        if blocks_exit(cmd):
+            out.append({"pid": k, "cmd": spoken_cmd(cmd)[:160],
+                        "age_s": proc_age(k), "polls": immortal(cmd)})
     return out
 
 def claude_pid(pane_pid):
@@ -306,6 +402,14 @@ def claude_pid(pane_pid):
     live = [x for x in cands if x[2] != "T"]
     pick = max(live or cands, key=lambda x: int(x[0]))
     return pick[0], pick[1]
+
+def by_name(name):
+    """The `claude agents` record for a session, or None. Status is the one thing
+    here that says whether a child is work in flight rather than a leftover."""
+    for a in agents() or []:
+        if a.get("name") == name:
+            return a
+    return None
 
 _AGENTS = []
 def agents():
@@ -493,17 +597,26 @@ def main():
         print("     tr '\\0' ' ' < /proc/<pid>/cmdline")
         print("   or close the other session and re-run.")
 
-    stuck = [x for x in ss if x.get("leaders")]
+    stuck = blockers(ss, inst)
     if stuck:
-        print("\n!! THIS ROLL WILL FAIL, NOT WAIT -- a polling child is in its OWN process")
-        print("   session, so \"Exit and stop tasks\" does not reach it and /exit never")
-        print("   completes. Not a busy session: a stuck one. Kill it BY PID first, then exit.")
+        print("\n!! /exit WILL NOT COMPLETE while these run -- each is a child in its OWN")
+        print("   process session, so \"Exit and stop tasks\" never reaches it. True of")
+        print("   every Claude Code Bash command, so this says the roll will WAIT --")
+        print("   it does NOT say the session is stuck, and this tool cannot tell.")
+        print("   Read each command and its age before killing anything:")
         for x in stuck:
-            print("   %s %s:" % (x["pane"], x["name"]))
+            st = (by_name(x["name"]) or {}).get("status") or "?"
+            print("   %s %s  (claude agents: %s)" % (x["pane"], x["name"], st))
             for c in x["leaders"]:
-                print("      kill %s      # %s" % (c["pid"], c["cmd"][:110]))
-        print("   Never by pattern: a pattern matches the killer's own command line, and")
-        print("   these loops are usually a pgrep self-match already (checks-that-reassure).")
+                print("      %-9s pid %-8s %s" % (human_age(c.get("age_s")), c["pid"],
+                                                  "polls" if c.get("polls") else "no sleep"))
+                print("        %s" % c["cmd"][:104])
+        print("   Old and not polling is the hang (2026-10-07: a 22h `eza`, an aliased")
+        print("   `ls` that never returned). Minutes old, polling, session busy is work")
+        print("   in progress -- `until ! kill -0 $J; do sleep 30; done` is the house")
+        print("   style for waiting, and killing it destroys the task it waits on.")
+        print("   If you do kill: BY PID, never by pattern -- a pattern matches the")
+        print("   killer's own command line (checks-that-reassure).")
 
     bg = [x for x in ss if x.get("background")]
     if bg:

@@ -164,11 +164,28 @@ already.
 **The signature alone does not mean stuck.** Every Claude Code Bash command runs
 in its own process session, so a session doing ordinary work shows a session
 leader too: measured 2026-09-23, a one-minute-old `timeout 900 ssh picotte …` and
-the checking tool's own shell both read as `Ss`. What makes one immortal is the
-**poll loop**, not the session. Read the command before killing anything, or you
-will stop live work that was about to finish on its own. `fleetupgrade` applies
-that same bar and flags only children that poll, under **THIS ROLL WILL FAIL, NOT
-WAIT**, with the `kill` line for each.
+the checking tool's own shell both read as `Ss`. Read the command before killing
+anything, or you will stop live work that was about to finish on its own.
+
+**A poll loop is not the test either, and that was this skill's own answer until
+2026-10-07.** It is wrong in both directions, measured in one roll:
+
+- It fires on work that is going perfectly. The documented way to wait for a
+  detached job is `until ! kill -0 $J; do sleep 30; done`, so the one thing a
+  sleep-based test matches is also the house style for waiting correctly. Two
+  sessions were recommended for `kill` while mid-task; killing them would have
+  destroyed the work.
+- It misses anything hung that does not sleep. A 22-hour-old `eza` — an aliased
+  `ls` that never returned — held one session's `/exit` open and was not reported.
+  Another session hit the identical hang the day before.
+
+"Contains a sleep" is a syntactic proxy for a temporal property. What actually
+separates them is **age, and whether the session is mid-turn**: minutes old,
+polling, `busy` in `claude agents` is work in progress; hours old and not polling
+is a hang. `fleetupgrade` now reports every exit-blocking child with its age, its
+real command and the session's status, under **/exit WILL NOT COMPLETE**, and
+leaves the judgement where it belongs — it no longer claims the session is stuck,
+and it no longer leads with a `kill` line.
 
 After option 1, confirm the work actually stopped; after option 2, confirm it
 survived and note its new parent:

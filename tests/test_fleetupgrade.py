@@ -155,10 +155,19 @@ class SessionLeaders(unittest.TestCase):
     def tearDown(self):
         self.cfg.close()
 
-    def test_a_poll_loop_is_immortal_but_a_running_command_is_not(self):
-        # Every Claude Code Bash command is a session leader, so the Ss signature
-        # alone says only "this session is running something". Measured 2026-09-23:
-        # both of these read as Ss, and only the first one blocks an exit.
+    def test_polling_is_evidence_about_shape_not_about_being_stuck(self):
+        """`immortal` still recognises a poll loop, and that is now all it claims.
+
+        It used to be the whole test for "this will block the roll", and the line
+        this test replaces asserted that of these two, "only the first one blocks
+        an exit". **Both block an exit.** `timeout 900 ssh` holds it for up to
+        fifteen minutes, and on 2026-10-07 a 22-hour `eza` held one indefinitely
+        with no sleep anywhere in it.
+
+        Worse in the other direction: the loop below is the fleet's own documented
+        way of waiting for a detached job correctly. Flagging it as stuck told a
+        human to kill work that was proceeding exactly as instructed.
+        """
         loop = ("/bin/bash -c eval 'until ! pgrep -f \"sqm -O\" >/dev/null; "
                 "do sleep 30; done'")
         running = ("/bin/bash -c eval 'timeout 900 ssh picotte "
@@ -167,6 +176,85 @@ class SessionLeaders(unittest.TestCase):
         self.assertFalse(self.u.immortal(running))
         self.assertFalse(self.u.immortal("/bin/bash -c eval 'make -j8'"))
         self.assertTrue(self.u.immortal("bash -c while true; do sleep 5; done"))
+
+    def test_a_hung_command_with_no_sleep_is_still_a_blocker(self):
+        """The false negative. `/exit` fails because a child is in its own process
+        session, which a poll loop is one way to reach and not the definition.
+
+        On 2026-10-07 `htpolynet-study` was not flagged while a 22-hour-old `eza`
+        -- an aliased `ls` that never returned -- held its exit. `library` hit the
+        identical hang the day before. Neither contains a sleep.
+        """
+        self.assertFalse(self.u.immortal("eza --group-directories-first"))
+        self.assertTrue(self.u.blocks_exit("eza --group-directories-first"))
+        self.assertTrue(self.u.blocks_exit("/bin/bash -c eval 'make -j8'"))
+
+    def test_a_blocker_carries_its_age_and_whether_it_polls(self):
+        """What a human needs to tell a 3-minute waiter from a 22-hour hang, in
+        one look. The signature cannot distinguish them and neither can this tool;
+        it reports the evidence instead of asserting a conclusion."""
+        import subprocess, sys as _sys
+        # Its own session leader AND still our child -- the exact shape the check
+        # looks for, made on purpose rather than hoped for. The first version of
+        # this test walked whatever happened to be running and asserted inside a
+        # `for`, so an empty result passed it: removing both fields from the
+        # record left it green. An empty iteration is not a satisfied assertion.
+        kid = subprocess.Popen([_sys.executable, "-c", "import time; time.sleep(30)"],
+                               start_new_session=True)
+        self.addCleanup(lambda: (kid.kill(), kid.wait()))
+        found = self.u.leaders(os.getpid())
+        self.assertTrue(found, "the planted child was not seen at all")
+        c = next(x for x in found if x["pid"] == str(kid.pid))
+        self.assertIsNotNone(c["age_s"])
+        self.assertLess(c["age_s"], 60)
+        self.assertFalse(c["polls"], "a bare sleep(30) in python is not a poll loop")
+
+    def test_only_sessions_that_will_be_rolled_are_warned_about(self):
+        """A blocker in a session nobody is about to `/exit` is noise at the one
+        moment attention is scarce. Reported 2026-10-07: a session already on the
+        new version, absent from the stale list, flagged anyway."""
+        ss = [{"name": "stale-one", "version": "2.1.292", "pane": "%1",
+               "leaders": [{"pid": "9", "cmd": "x", "age_s": 5, "polls": True}]},
+              {"name": "already-new", "version": "2.1.293", "pane": "%2",
+               "leaders": [{"pid": "8", "cmd": "y", "age_s": 5, "polls": True}]}]
+        got = [x["name"] for x in self.u.blockers(ss, "2.1.293")]
+        self.assertEqual(got, ["stale-one"])
+
+    def test_blockers_are_ordered_oldest_first(self):
+        """The 22-hour one is the one worth looking at, and it must not sort below
+        a one-minute waiter."""
+        ss = [{"name": "young", "version": "0", "pane": "%1",
+               "leaders": [{"pid": "9", "cmd": "x", "age_s": 60, "polls": True}]},
+              {"name": "old", "version": "0", "pane": "%2",
+               "leaders": [{"pid": "8", "cmd": "y", "age_s": 80000, "polls": False}]}]
+        self.assertEqual([x["name"] for x in self.u.blockers(ss, "9")],
+                         ["old", "young"])
+
+    def test_the_command_shown_is_the_one_a_human_can_read(self):
+        """The output said "read each command before killing anything" and then
+        printed the shell-snapshot preamble, truncating before the command. Advice
+        the output makes impossible to follow is how a warning gets clicked past."""
+        raw = ("/bin/bash -c source /home/u/.claude/shell-snapshots/snap-123.sh "
+               "2>/dev/null || true && shopt -u extglob 2>/dev/null || true && "
+               "{ \\builtin unalias -- 'unsetenv'; } >/dev/null 2>&1 || true && "
+               "eval 'cd ~/devtests && J=$(cat run.pid); "
+               "until ! kill -0 $J 2>/dev/null; do sleep 30; done'")
+        # The harness appends this AFTER the closing quote, so a check anchored at
+        # the end of the string never fires. Captured from a live pane 2026-10-07.
+        raw += " < /dev/null && pwd -P >| /tmp/claude-2de3-cwd"
+        got = self.u.spoken_cmd(raw)
+        self.assertTrue(got.startswith("cd ~/devtests"), got)
+        self.assertIn("until ! kill -0", got)
+        self.assertNotIn("shell-snapshots", got)
+        self.assertNotIn("pwd -P", got)
+        self.assertFalse(got.endswith("'"), got)
+
+    def test_a_command_with_no_preamble_is_left_alone(self):
+        """The hung leaf case: `eza --group-directories-first` has no `eval` to
+        strip, and returning an empty string would hide the one thing worth
+        reading."""
+        self.assertEqual(self.u.spoken_cmd("eza --group-directories-first"),
+                         "eza --group-directories-first")
 
     def test_the_tools_own_shell_is_never_reported(self):
         """This tool runs inside a Bash shell that IS a session leader and DOES

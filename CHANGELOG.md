@@ -32,6 +32,49 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **`fleetupgrade`'s stuck-session detector told a human to kill working
+  sessions, and missed the one session that was actually stuck.** Both in a single
+  roll on 2026-10-07, in opposite directions, from one cause.
+
+  The structural test — a child in its own process session, which `/exit` cannot
+  signal — is correct and is true of **every** Claude Code Bash command, so it
+  discriminates nothing. The entire discriminator was `immortal()`: does the
+  command contain a `sleep`. That is a syntactic proxy for a temporal property,
+  and the two are unrelated.
+
+  - **False positive.** The fleet's documented way of waiting for a detached job
+    is `until ! kill -0 $J; do sleep 30; done`. The one thing a sleep test matches
+    is therefore the house style for waiting correctly. Two sessions mid-task were
+    printed with `kill` lines under *"Not a busy session: a stuck one."* Both were
+    `busy`, their shells minutes old, their leaf a live `sleep`. One went idle
+    shortly after and its flagged child simply vanished — a stuck loop does not do
+    that. The same false positive was reproducible here while writing the fix.
+  - **False negative.** A 22-hour-old `eza` — an aliased `ls` that never returned —
+    held `htpolynet-study`'s `/exit` open and was never flagged, because it has no
+    sleep in it. Another session hit the identical hang the day before. A poll loop
+    is one way to block an exit, not the definition.
+
+  `blocks_exit()` now names the structural fact and `immortal()` is demoted to
+  what it can honestly report: the shape of the command. Every exit-blocking child
+  is listed with its **age**, the session's `claude agents` **status**, and whether
+  it polls — the three things that separate a three-minute waiter from a
+  twenty-two-hour hang, none of which the signature carries.
+
+  The headline no longer asserts a conclusion the tool cannot reach. It says
+  `/exit WILL NOT COMPLETE while these run`, which is true, instead of
+  *"Not a busy session: a stuck one"*, which was not — and it no longer leads with
+  a `kill` command.
+
+  Blockers are now filtered to sessions the roll will actually `/exit` and sorted
+  oldest first. A session already on the installed version was being warned about
+  although nothing was going to touch it.
+
+  The displayed command is the one a human can read. Every Claude Code Bash
+  command arrives wrapped in a shell-snapshot preamble, so truncating the raw
+  cmdline printed boilerplate and cut off before the command — under text saying
+  "read each command before killing anything". Advice the output makes impossible
+  to follow is how a warning becomes something people click past.
+
 - **`fleetspawn --go` reported `TIMED OUT` on sessions that had started
   correctly.** Readiness was gated on the version banner being on the pane. The
   banner is drawn **once**, and the session's own first output scrolls it away — so
