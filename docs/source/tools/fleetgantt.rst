@@ -57,6 +57,18 @@ Roles are the sessions in the last :doc:`fleetsnap` manifest plus ``[parked]`` a
 A transcript that recorded a name which is not a role — a remote session's title, a
 one-off — is not placed by directory: it has said who it is.
 
+Rule 2 needs **this** transcript to have recorded both names. A rename known only
+from another transcript places nothing here, because a lane states an identity and
+that evidence cannot tell a real rename from two sessions that shared a name
+(2026-09-22). :doc:`fleetlog` keeps such a mapping, labelled *from another
+transcript*, because a message graph has no lane to mislabel.
+
+So the unattached lane holds transcripts this chart **declined to place**, which
+is not the same as transcripts that never held a role: a session's earlier name
+lands here whenever no single transcript records the change. The lane is headed
+*NOT PLACED IN A LANE* for that reason — it previously read *NOT A ROLE*, which
+was false about six transcripts that had held two of them (reported 2026-10-07).
+
 A parked or retired role keeps its lane in the right group, and its unnamed
 transcripts in place, only if its entry has ``group`` and ``cwd``;
 :doc:`fleetretire` prints both.

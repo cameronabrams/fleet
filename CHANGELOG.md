@@ -32,6 +32,40 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **`fleetgantt`'s unplaced lane no longer claims its occupants never held a
+  role.** The heading read `NOT A ROLE`. Reported 2026-10-07: four transcripts
+  named `literature` and two named `notebook` sit there, and those are the earlier
+  names of `library` and `abrams-group-website`. **Every placement decision under
+  that heading was right; the heading was the only thing making a claim, and the
+  claim was false.**
+
+  The lane holds transcripts the chart *declined to place*, which is not the same
+  as transcripts that held no role. A session's earlier name lands there whenever
+  no single transcript records the change — rule 2 requires *this* transcript to
+  have recorded both names, because a lane states an identity and cross-transcript
+  evidence cannot tell a real rename from two sessions that shared a name
+  (2026-09-22). `fleetlog` keeps such a mapping, labelled *from another
+  transcript*, because a message graph has no lane to mislabel.
+
+  The reported cause — `rename_map` called with an empty `dir_owner` where
+  `fleetlog` passes the real one — is a real asymmetry, and **measured against the
+  live fleet it moves nothing**: zero segments change lane, and all six keep the
+  identical `how`. A corroborated rename is already learned from lineage, and an
+  uncorroborated one is refused downstream, so the argument only fills a table
+  nothing then acts on. The operative gate is `place_named=False`, two steps
+  further on.
+
+  Two attempts to label these honestly were built and abandoned, each killed by a
+  test. Taking the candidate from the rename table maps *every* non-current name
+  in a role's directory to that role, so a genuine one-off is labelled that role's
+  earlier name — the 2026-09-22 guess wearing a label instead of a lane. Taking it
+  from the directory is no better: a transcript's project directory is where its
+  *file* sits, not where it ran, and one of the six records
+  `~/Git/mendeley-mirror` while its transcript lives under
+  `-home-cfa-Git-offprint`. Neither is sound, so the chart says nothing about
+  these beyond declining to place them — and now says that, instead of the
+  opposite.
+
 - **`fleetupgrade`'s stuck-session detector told a human to kill working
   sessions, and missed the one session that was actually stuck.** Both in a single
   roll on 2026-10-07, in opposite directions, from one cause.

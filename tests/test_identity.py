@@ -80,3 +80,27 @@ class Attribute(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheChartStillRefusesToPlace(unittest.TestCase):
+    """Reporting a candidate must not become placing one.
+
+    The whole point of `place_named=False` is that a lane states an identity, and
+    an uncorroborated rename is a guess. Adding the candidate is for the label,
+    not the lane.
+    """
+    def test_an_uncorroborated_rename_is_still_not_placed(self):
+        who, how, inferred = ident.attribute(
+            "literature", "mendeley-mirror", {"library"},
+            {"literature": "library"}, {"mendeley-mirror": "library"},
+            place_named=False, own_seq=["literature"])
+        self.assertEqual(who, "literature")
+        self.assertNotEqual(who, "library")
+
+    def test_a_corroborated_rename_is_placed_even_for_a_chart(self):
+        who, how, inferred = ident.attribute(
+            "literature", "mendeley-mirror", {"library"},
+            {"literature": "library"}, {"mendeley-mirror": "library"},
+            place_named=False, own_seq=["literature", "library"])
+        self.assertEqual(who, "library")
+        self.assertIn("renamed", how)

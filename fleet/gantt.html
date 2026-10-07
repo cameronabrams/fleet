@@ -204,7 +204,7 @@ code { font-family: var(--mono); color: var(--ink); }
     if (p.group) {
       el("line", { x1: 0, x2: W, y1: p.y + GROUPH - 4, y2: p.y + GROUPH - 4, stroke: "var(--rule-strong)" }, gLanes);
       el("text", { x: 0, y: p.y + GROUPH - 10, fill: "var(--ink-3)", "font-size": 10.5, "letter-spacing": ".08em" }, gLanes)
-        .textContent = p.group === "unattached" ? "NOT A ROLE" : p.group.toUpperCase();
+        .textContent = p.group === "unattached" ? "NOT PLACED IN A LANE" : p.group.toUpperCase();
       return;
     }
     const l = p.lane;

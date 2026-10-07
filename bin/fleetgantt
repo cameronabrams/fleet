@@ -149,6 +149,20 @@ def build(a):
     # Lineage only (a name a transcript later changed to a role's). The table's
     # directory fallback would put a transcript that named itself something else
     # into that directory's lane, which is the guess the chart keeps apart.
+    #
+    # Passing `owners` here was proposed on 2026-10-07 to attach six transcripts
+    # holding roles' earlier names. Measured: it moves NOTHING -- a corroborated
+    # rename is already learned by the lineage branch, and an uncorroborated one is
+    # refused by `place_named=False` below, so the argument only populates a table
+    # nothing then acts on. What it does change is what the directory branch would
+    # let the chart SAY: it maps every non-current name in a role's directory to
+    # that role, so a genuine one-off would be labelled that role's earlier name.
+    # Caught by a test. Labelling from the directory instead is no better: a
+    # transcript's project dir is where its FILE sits, which is not where it ran
+    # once a session has moved -- one of the six records cwd ~/Git/mendeley-mirror
+    # while its transcript lives under `-home-cfa-Git-offprint`. Neither label is
+    # sound, so the chart says nothing about these beyond declining to place them,
+    # and the lane heading was changed to say that rather than "NOT A ROLE".
     renames = identity.rename_map([(r["project"], seq(r)) for r in newest_first], role_names, {})
 
     segs, others = [], []

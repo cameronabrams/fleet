@@ -1,6 +1,6 @@
 import json, os, tempfile, unittest
 from unittest import mock
-from tests.support import BASE_TOML, FakeConfig, load_tool
+from tests.support import APP, BASE_TOML, FakeConfig, load_tool
 from fleet import history
 
 UUID = "cccccccc-0000-4000-8000-00000000000{}"
@@ -82,6 +82,32 @@ class Gantt(unittest.TestCase):
         d = self.build()
         self.assertEqual(self.lane(d, "beta")["segs"], [])
         self.assertEqual([s["name"] for s in self.lane(d, "unattached")["segs"]], ["remote title"])
+
+    def test_a_retired_role_name_is_not_placed_and_not_denied(self):
+        """A transcript whose recorded name is a role's EARLIER name stays out of
+        that role's lane -- nothing in it proves the rename, and placing it would
+        be the 2026-09-22 guess.
+
+        Reported 2026-10-07: six such transcripts grouped under a heading reading
+        NOT A ROLE, which is false about every one of them. **The placement was
+        right and the heading was wrong**, so the heading is what changed. The
+        proposed fix -- passing the directory map to `rename_map` -- was measured
+        against the real fleet and moves nothing: a corroborated rename is already
+        learned from lineage, and an uncorroborated one is refused here.
+        """
+        self.transcript("-home-u-b", "oldname")
+        self.transcript("-home-u-b", "beta")
+        d = self.build()
+        self.assertIn("oldname", [s["name"] for s in self.lane(d, "unattached")["segs"]])
+        self.assertNotIn("oldname", [s["name"] for s in self.lane(d, "beta")["segs"]])
+
+    def test_the_unplaced_lane_does_not_claim_the_transcripts_held_no_role(self):
+        """The lane heading is the only thing here that made a claim, and it made
+        a false one. It says what the chart did -- declined to place these -- not
+        what they were."""
+        html = open(os.path.join(APP, "fleet", "gantt.html")).read()
+        self.assertNotIn("NOT A ROLE", html)
+        self.assertIn("NOT PLACED IN A LANE", html)
 
     def test_shared_directory_does_not_place_unnamed_transcripts(self):
         self.transcript("-home-u-shared")
