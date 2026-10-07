@@ -107,9 +107,93 @@ class Registered(Base):
         self.reg(session="alpha", job="111111", pid=me, starttime=starttime(me))
         self.reg(session="beta", job="222222", pid=me, starttime="1")         # reused pid
         self.reg(session="gamma", job="333333", pid=me)                       # no starttime
-        live, dead = self.w.registered()
+        live, dead, _ = self.w.registered()
         self.assertEqual(live, {"alpha": {"111111"}})
         self.assertEqual(sorted(r["session"] for r in dead), ["beta", "gamma"])
+
+
+class AWatcherPartWayThroughItsSet(Base):
+    """One watcher, several jobs. The first to finish must not read as a fault.
+
+    A registration is one file per (session, job, pid), so a watcher polling three
+    jobs is three rows sharing a pid -- the registry models this correctly. The
+    stale check did not: it asked only "is this job in squeue", so the first job of
+    a set to finish produced
+
+        !! WATCHER ON WORK THAT IS NO LONGER LIVE -- the monitor will not exit
+           if its completion test cannot close. Check it.
+
+    while the watcher was alive and legitimately polling the other two. The
+    diagnosis is wrong in both halves: the monitor WILL exit, and there is nothing
+    to check. Observed 2026-10-06 on pestifer-sweep, pid 645241 over
+    26433958/59/60, after 26433960 completed.
+
+    The advice is worse than the alarm. `fleetregister --clear` refuses while the
+    pid is alive -- correctly -- and says "stop the watcher first", which here
+    would forfeit the nudge for the two jobs still running. The one remedy named
+    is the one thing nobody should do.
+    """
+    def reg(self, **r):
+        d = os.path.join(self.cfg.state, "watchers"); os.makedirs(d, exist_ok=True)
+        json.dump(r, open(os.path.join(
+            d, f"{r['session']}-{r['job']}-{r['pid']}.json"), "w"))
+
+    def setUp(self):
+        super().setUp()
+        me = os.getpid()
+        for j in ("111111", "222222", "333333"):
+            self.reg(session="sweep", job=j, pid=me, starttime=starttime(me))
+        self.me = me
+
+    def test_the_pid_behind_each_registration_is_available(self):
+        """The stale check could not have known: `registered()` returned
+        session -> {jobs} and dropped the pid, so "same watcher" was not a
+        question it was able to ask."""
+        live, dead, by_job = self.w.registered()
+        self.assertEqual(live, {"sweep": {"111111", "222222", "333333"}})
+        self.assertEqual(by_job[("sweep", "111111")], self.me)
+        self.assertEqual(by_job[("sweep", "333333")], self.me)
+
+    def test_a_finished_job_whose_watcher_still_has_live_work_is_not_stale(self):
+        live, dead, by_job = self.w.registered()
+        jobs = {"111111": {}, "222222": {}}          # 333333 has completed
+        stale, partway = self.w.split_stale(live, by_job, jobs)
+        self.assertEqual(stale, [], "a watcher mid-set is not a fault")
+        self.assertEqual(len(partway), 1)
+        self.assertEqual(partway[0]["job"], "333333")
+        self.assertEqual(sorted(partway[0]["still_watching"]), ["111111", "222222"])
+
+    def test_the_last_job_of_the_set_is_stale_again(self):
+        """When nothing the watcher covers is live any more, the original alarm is
+        the right one: that is a monitor whose completion test may not close."""
+        live, dead, by_job = self.w.registered()
+        stale, partway = self.w.split_stale(live, by_job, {})
+        self.assertEqual(partway, [])
+        self.assertEqual(sorted(x["job"] for x in stale),
+                         ["111111", "222222", "333333"])
+
+    def test_two_watchers_of_one_session_do_not_cover_for_each_other(self):
+        """`still_watching` is keyed on the PID, not the session. A session with a
+        healthy watcher on job B and a dead-ended one on job A would otherwise
+        have its real problem hidden by the healthy one.
+
+        The second watcher must be genuinely LIVE on a LIVE job. The first version
+        of this test registered it against a dead pid, which `registered()` drops
+        before `split_stale` ever sees it -- so the session-wide-vouching bug it
+        was written to catch passed it. It asserted the right thing about a case
+        that could not produce the bug.
+        """
+        import subprocess, sys as _sys
+        other = subprocess.Popen([_sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(lambda: (other.kill(), other.wait()))
+        self.reg(session="sweep", job="444444", pid=other.pid,
+                 starttime=starttime(other.pid))
+        live, dead, by_job = self.w.registered()
+        self.assertEqual(by_job[("sweep", "444444")], other.pid,
+                         "the second watcher must be live, or this proves nothing")
+        stale, partway = self.w.split_stale(live, by_job, {"444444": {}})
+        self.assertEqual(partway, [], "a different pid is a different watcher")
+        self.assertEqual(len(stale), 3)
 
 
 class Watchers(Base):

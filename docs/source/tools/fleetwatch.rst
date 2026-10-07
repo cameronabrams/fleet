@@ -144,7 +144,16 @@ Top-level keys:
      - live jobs: ``job``, ``tasks``, ``states``, ``workdir``, ``owner``,
        ``reasons``, ``held``, ``watched_by`` (a list — empty means nobody)
    * - ``stale_watchers``
-     - ``session`` / ``job`` for monitors pointing at jobs no longer live
+     - ``session`` / ``job`` / ``pid`` for monitors pointing at jobs no longer
+       live **and with nothing live left to watch**. A watcher part way through a
+       set is not here; see ``watchers_partway``.
+   * - ``watchers_partway``
+     - ``session`` / ``job`` / ``pid`` / ``still_watching`` — a job that has
+       finished whose watcher is the same process as one still polling live jobs.
+       Not a fault, and not actionable: the registration goes when the watcher
+       exits. Separated from ``stale_watchers`` on 2026-10-06, so a caller that
+       treats that key as an alarm is not woken by a campaign finishing one job at
+       a time.
    * - ``dead_watchers``
      - registrations whose process is gone while the job is not finished
    * - ``finished_watchers``

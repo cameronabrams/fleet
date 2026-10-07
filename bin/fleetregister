@@ -54,7 +54,24 @@ if [ "${1:-}" = "--clear" ]; then
       # pid happened to sort first. It bit exactly the re-armed case (dead old pid
       # beside live new pid), which is what every restart produces; four in three
       # days, 2026-09-30.
-      echo "fleetregister: pid $P is still alive -- stop the watcher first; not clearing $f" >&2
+      # How many OTHER jobs this same pid is registered for. A watcher polling a
+      # set is several rows sharing a pid, so the first job to finish brings
+      # someone here holding a clear command -- and "stop the watcher first" is
+      # then the one thing they must not do: it forfeits the jobs still running.
+      # This counts registrations; it does not ask squeue which are still live,
+      # so it says "other job(s)" and not "live job(s)".
+      others=0
+      for g in "$D/$S-"*"-$P.json"; do
+        [ -e "$g" ] || continue
+        [ "$g" = "$f" ] || others=$((others+1))
+      done
+      if [ "$others" -gt 0 ]; then
+        echo "fleetregister: pid $P is still alive and is registered for $others other job(s)." >&2
+        echo "  It is one watcher over a set; this row clears itself when it exits." >&2
+        echo "  Do NOT stop it to clear this -- that forfeits the others. Not clearing $f" >&2
+      else
+        echo "fleetregister: pid $P is still alive -- stop the watcher first; not clearing $f" >&2
+      fi
       skipped=$((skipped+1))
       continue
     fi

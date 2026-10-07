@@ -30,6 +30,51 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A watcher part way through a set is no longer reported as a fault.** One
+  watcher may poll several jobs, which the registry already models correctly as
+  several rows sharing a pid. The stale check did not: it asked only "is this job
+  in squeue", so the first job of a set to finish produced
+
+      !! WATCHER ON WORK THAT IS NO LONGER LIVE -- the monitor will not exit
+         if its completion test cannot close. Check it.
+
+  while the watcher was alive and correctly polling the rest. **Both halves of the
+  diagnosis were wrong**: the monitor will exit, and there is nothing to check.
+  Reported 2026-10-06 from `pestifer-sweep`, pid 645241 over 26433958/59/60.
+
+  The advice was worse than the alarm. `fleetregister --clear` refuses while the
+  pid is alive — correctly — and said *"stop the watcher first"*, which here would
+  forfeit the nudge for the two jobs still running. The one remedy named was the
+  one thing nobody should do, and it cost a round trip to find that out.
+
+  `registered()` could not have known: it returned `session -> {jobs}` and dropped
+  the pid, so "is this the same watcher" was not a question it was able to ask. It
+  now also returns `(session, job) -> pid`, and `split_stale` separates the two
+  cases. Keyed on the **pid**, not the session: two watchers in one session are two
+  watchers, and letting a healthy one vouch for a dead-ended one would hide exactly
+  the case the check exists for.
+
+  `fleetregister`'s refusal now counts the other registrations held by that pid and
+  says the row clears itself when the watcher exits. Behaviour is unchanged — still
+  refused, still exit 3; only the advice is different, and only when there is a set
+  to forfeit.
+
+  The test for the pid-keying passed against the bug on its first writing, because
+  the second watcher it registered used a dead pid — which `registered()` drops
+  before `split_stale` ever sees it. It asserted the right thing about a case that
+  could not produce the failure.
+
+### Changed
+
+- **`fleetwatch --json` gains `watchers_partway`, and `stale_watchers` narrows to
+  match.** A registration whose job has finished while the same pid still watches
+  live work moves out of `stale_watchers` into the new key, and both carry `pid`.
+  Callers treating `stale_watchers` as an alarm — `fleetboard` draws a note from
+  it — are no longer woken by a campaign finishing one job at a time. A caller that
+  wants the old union reads both keys.
+
 ### Added
 
 - **`fleetboard` shows which `claude` each session is running.** The header states

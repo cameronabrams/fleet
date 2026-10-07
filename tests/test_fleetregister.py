@@ -153,3 +153,62 @@ class ClearWithALiveSibling(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RefusingAWatcherThatIsMidSet(unittest.TestCase):
+    """The refusal is right; the advice attached to it was not.
+
+    One watcher may poll several jobs, which the registry models as several rows
+    sharing a pid. When the first of them finishes, `fleetwatch` sends someone
+    here with a clear command -- and the refusal said "stop the watcher first",
+    which would forfeit the jobs still running. Reported 2026-10-06 from
+    pestifer-sweep, pid 645241 over three jobs with one completed.
+
+    Behaviour is unchanged: still refused, still exit 3. Only what it tells you
+    to do is different, and only when this pid holds other registrations.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.watch = os.path.join(self.cfg.state, "watchers")
+        self.proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+
+    def tearDown(self):
+        if self.proc.poll() is None:
+            self.proc.kill()
+        self.proc.wait()
+        self.cfg.close()
+
+    def run_tool(self, *args):
+        return subprocess.run([TOOL, *map(str, args)], capture_output=True, text=True,
+                              env=dict(os.environ))
+
+    def test_a_set_is_named_and_stopping_the_watcher_is_warned_against(self):
+        for j in ("111111", "222222", "333333"):
+            self.assertEqual(self.run_tool("sweep", j, self.proc.pid).returncode, 0)
+        r = self.run_tool("--clear", "sweep", "333333")
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn("2 other job(s)", r.stderr)
+        self.assertIn("clears itself when it exits", r.stderr)
+        self.assertIn("Do NOT stop it", r.stderr)
+        self.assertNotIn("stop the watcher first", r.stderr)
+        self.assertTrue(glob.glob(self.watch + "/sweep-333333-*.json"),
+                        "the registration must survive the refusal")
+
+    def test_a_lone_watcher_still_gets_the_plain_advice(self):
+        """With no set to forfeit, stopping the watcher IS the way to clear it.
+        The new wording must not reach the case the old wording was right for."""
+        self.assertEqual(self.run_tool("solo", "444444", self.proc.pid).returncode, 0)
+        r = self.run_tool("--clear", "solo", "444444")
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn("stop the watcher first", r.stderr)
+        self.assertNotIn("other job(s)", r.stderr)
+
+    def test_another_session_sharing_the_pid_is_not_this_watcher_s_set(self):
+        """The count is per session AND pid. A pid registered under a different
+        session name is a different watcher as far as this tool can tell, and
+        counting it would overstate what stopping the process costs."""
+        self.assertEqual(self.run_tool("sweep", "111111", self.proc.pid).returncode, 0)
+        self.assertEqual(self.run_tool("other", "222222", self.proc.pid).returncode, 0)
+        r = self.run_tool("--clear", "sweep", "111111")
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn("stop the watcher first", r.stderr)

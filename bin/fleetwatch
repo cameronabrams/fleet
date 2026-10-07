@@ -154,10 +154,17 @@ def registered():
     the moment the watcher dies. Contrast a ledger, which claims "I am watching X"
     in prose that nothing can check.
 
-    Returns (live, dead): live maps session -> {job ids}; dead lists registrations
-    whose pid is gone -- a watcher that DIED, which no other check here detects.
+    Returns (live, dead, by_job): live maps session -> {job ids}; dead lists
+    registrations whose pid is gone -- a watcher that DIED, which no other check
+    here detects; by_job maps (session, job) -> pid.
+
+    `by_job` exists because one watcher may poll several jobs, which the registry
+    already models as several rows sharing a pid. Without it the only question
+    that could be asked of a registration was "is this job still in squeue", and
+    the first job of a set to finish read as a fault while its watcher was alive
+    and correctly polling the rest.
     """
-    live, dead = {}, []
+    live, dead, by_job = {}, [], {}
     for f in glob.glob(WATCHDIR + "/*.json"):
         try:
             r = json.load(open(f))
@@ -167,9 +174,44 @@ def registered():
         # Read it as DEAD rather than trusting it: fail toward alarm.
         if r.get("starttime") and alive(r.get("pid"), r["starttime"]):
             live.setdefault(r["session"], set()).add(str(r["job"]))
+            by_job[(r["session"], str(r["job"]))] = r.get("pid")
         else:
             r["_file"] = f; dead.append(r)
-    return live, dead
+    return live, dead, by_job
+
+
+def split_stale(live, by_job, jobs):
+    """(stale, partway) for registrations whose job is no longer in squeue.
+
+    A registration is PARTWAY, not stale, when the same PID still watches a job
+    that is live: the watcher is working through a set and will exit when the set
+    is done, and the registration goes with it.
+
+    Keyed on the pid rather than the session on purpose. Two watchers in one
+    session are two watchers; letting a healthy one vouch for a dead-ended one
+    would hide exactly the case this check exists for.
+
+    A pid that is None (an old registration without one) can vouch for nothing --
+    it is not an identity, and matching Nones to each other would let any two such
+    rows cover for one another. Those stay stale, which is the alarming direction.
+    """
+    stale, partway = [], []
+    for sess, ids in live.items():
+        for j in ids:
+            if j in jobs:
+                continue
+            pid = by_job.get((sess, j))
+            siblings = sorted(
+                j2 for (s2, j2), p2 in by_job.items()
+                if s2 == sess and j2 in jobs and pid is not None and p2 == pid)
+            if siblings:
+                partway.append({"session": sess, "job": j, "pid": pid,
+                                "still_watching": siblings})
+            else:
+                stale.append({"session": sess, "job": j, "pid": pid})
+    stale.sort(key=lambda r: (r["session"], r["job"]))
+    partway.sort(key=lambda r: (r["session"], r["job"]))
+    return stale, partway
 
 def watchers():
     """session name -> set of job ids its live child processes reference."""
@@ -529,7 +571,7 @@ def main():
     version_flag()
     only, want_json = parse_args(sys.argv[1:], known_sessions())
     jobs, cluster_ok = live_jobs()
-    reg, dead_reg = registered()
+    reg, dead_reg, by_job = registered()
     # A registered watcher whose pid is gone is either DEAD (its job is still live:
     # alarm) or FINISHED (it exited because its job ended: the normal end of every
     # watcher). Crying DEAD after every campaign trains everyone to ignore it, so
@@ -579,12 +621,13 @@ def main():
                      "workdir": j["workdir"], "owner": j["owner"],
                      "reasons": j["reasons"], "held": j["held"],
                      "watched_by": by})
-    # monitors pointing at jobs that are no longer live
-    stale = ([{"session": s, "job": j} for s, ids in w.items() for j in ids if j not in jobs]
-             if cluster_ok else [])
+    # monitors pointing at jobs that are no longer live -- minus the ones whose
+    # watcher is simply part way through a set it is still polling
+    stale, partway = (split_stale(w, by_job, jobs) if cluster_ok else ([], []))
 
     if want_json:
         print(json.dumps({"cluster_ok": cluster_ok, "jobs": rows, "stale_watchers": stale,
+                          "watchers_partway": partway,
                           "dead_watchers": dead_reg, "finished_watchers": finished,
                           "delivery": holes,
                           "clients": {"attached": attached, "error": attach_err}},
@@ -622,6 +665,16 @@ def main():
         print("   if its completion test cannot close. Check it.")
         for s in stale:
             print("   %s watches %s, which is not in squeue" % (s["session"], s["job"]))
+
+    if partway:
+        print("\n   part way through a set (not a fault, and nothing to do): the")
+        print("   watcher has finished one job and is still polling others. The")
+        print("   registration clears itself when the watcher exits.")
+        for s in partway:
+            print("   %s / %s done; pid %s still watches %s" %
+                  (s["session"], s["job"], s["pid"], ", ".join(s["still_watching"])))
+        print("   Do NOT `fleetregister --clear` these: it refuses while the pid is")
+        print("   alive, and stopping the watcher would forfeit the jobs above.")
 
     unreg = sorted({(sess, j) for sess, ids in inferred.items() for j in ids
                     if j not in reg.get(sess, set()) and j in jobs})
