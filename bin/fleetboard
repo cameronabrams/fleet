@@ -25,14 +25,15 @@ state layout and two of its tools, and that coupling had no test across it: when
 `fleetsnap` changed its housekeeping on 2026-10-03 the board went blind, and only
 one side of the dependency had CI.
 """
-import json, os, subprocess, sys, time
+import json, os, shutil, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
 from fleet.panes import LABELS, agent_label, is_agent_pane
 from fleet import versions
 
-STATE = fc.state_dir()
+CFG = fc.load()
+STATE = fc.state_dir(CFG)
 # A SUBDIRECTORY, deliberately. The cache lived at `<state>/board-cache.json`
 # until 2026-10-03, when `fleetsnap`'s housekeeping -- which globbed
 # `<state>/*.json` and moved aside anything not named after a live fleet --
@@ -168,6 +169,48 @@ def load_cache():
     except (OSError, ValueError):
         return None
 
+HOME = os.path.expanduser("~")
+
+def short_path(path, width):
+    """`path` with $HOME as `~`, cut from the LEFT to fit `width`.
+
+    Paths are distinctive at the END -- two sessions under ~/drexiglas-project
+    differ in their last component and agree in the first three -- so a right-hand
+    truncation would make the column widest exactly where it stops telling them
+    apart.
+    """
+    if not path:
+        return ""
+    p = path.replace(HOME, "~", 1) if path.startswith(HOME) else path
+    return p if len(p) <= width else "…" + p[-(width - 1):]
+
+def cwd_width(fixed, lo=14, hi=42):
+    """How much room the cwd column gets, from the real terminal.
+
+    Clamped at both ends: a column narrower than `lo` shows nothing a reader can
+    use, and one wider than `hi` is paid for by every other row. `get_terminal_size`
+    falls back to 80 columns when stdout is not a terminal -- a pipe or this tool's
+    own tests -- which is the conservative direction.
+    """
+    return max(lo, min(hi, shutil.get_terminal_size((80, 24)).columns - fixed))
+
+def parked():
+    """name -> {cwd, since} for sessions DECLARED parked, or None if unreadable.
+
+    Parked is a declaration, not an observation: it comes from `[parked.<name>]`
+    in the configuration, which is the whole reason it can be shown for a session
+    with no process and no pane. Retired sessions are deliberately absent -- they
+    are not coming back, and a board is about what might.
+
+    None, not {}, when the configuration cannot be read, so the caller can say so
+    rather than draw an empty list that reads as "nothing is parked".
+    """
+    try:
+        return {k: {"cwd": v.get("cwd", ""), "since": v.get("since", "")}
+                for k, v in fc.stopped(CFG).items() if v.get("state") == "parked"}
+    except Exception:
+        return None
+
 def age(ts):
     s = int(time.time() - ts)
     if s < 90:  return f"{s}s"
@@ -200,8 +243,12 @@ def draw(full=False, auto=False):
         jobs_by.setdefault(j["owner"], []).append(j)
     ctx = (cache or {}).get("ctx")
 
+    # 2 (mark) + 21 + 14 + 9 + 9 + 6 + 2 fixed, then cwd, then the variable work
+    # column. cwd sits before `work` and not after it: `work` has no fixed width,
+    # and a column that follows a ragged one cannot be scanned down.
+    cw = cwd_width(63 + 12)
     print(f"  {C['dim']}{'session':<22}{'win':<14}{'state':<9}{'ver':<9}"
-          f"{'ctx':>6}  work{C['r']}")
+          f"{'ctx':>6}  {'cwd':<{cw}}  work{C['r']}")
     for n in names:
         pa, ag = (p or {}).get(n), (a or {}).get(n)
         st = (ag or {}).get("status", "?")
@@ -229,8 +276,38 @@ def draw(full=False, auto=False):
                 bad = [j for j in js if not j["watched"]]
                 work = f"{len(js)} job(s), {sum(int(j['tasks']) for j in js)} tasks"
                 if bad: work += f"  {C['red']}{len(bad)} UNWATCHED{C['r']}"
-        print(f"  {mark}{n:<21}{win:<14}{col}{st:<9}{C['r']}"
-              f"{vcol}{(sv or '?'):<9}{C['r']}{k:>6}  {work}")
+        # From `claude agents`, the only source here that knows it. A session it
+        # could not report has no cwd to show -- blank, not `?`: `?` is this
+        # board's word for a value a source failed to give, and an agent that is
+        # not in the listing at all has already been reported as `?` in `state`.
+        d = short_path((ag or {}).get("cwd", ""), cw)
+        # rstrip: `work` is empty for most sessions, and the cwd column is padded
+        # to its full width before it, so every quiet row would otherwise end in
+        # a run of spaces -- which `git diff`, `grep` and a copy-paste all keep.
+        print((f"  {mark}{n:<21}{win:<14}{col}{st:<9}{C['r']}"
+               f"{vcol}{(sv or '?'):<9}{C['r']}{k:>6}  "
+               f"{C['dim']}{d:<{cw}}{C['r']}  {work}").rstrip())
+
+    pk = parked()
+    if pk is None:
+        print(f"\n  {C['red']}parked sessions could not be read from the "
+              f"configuration{C['r']}")
+    elif pk:
+        # A rule, not a blank line: the rows below are a different KIND of thing
+        # -- declared, not observed -- and the two must not read as one list that
+        # happens to have quiet entries at the bottom.
+        print(f"  {C['dim']}{'─' * (63 + cw)}{C['r']}")
+        print(f"  {C['dim']}parked ({len(pk)}){C['r']}")
+        # Its own narrow layout, not the live table's. A parked session has no
+        # state, version, context or work -- those are runtime -- and borrowing
+        # the columns to leave them blank draws a row of absences where there is
+        # nothing absent. Printing `?` in them would be worse: `?` is this board's
+        # word for a source that failed, and nothing failed here.
+        pw = cwd_width(34, hi=46)   # the longest real parked path fits at 46
+        for n in sorted(pk):
+            also = f"  {C['red']}ALSO RUNNING{C['r']}" if n in names else ""
+            print((f"   {C['dim']}{n:<21}{short_path(pk[n]['cwd'], pw):<{pw}}  "
+                   f"since {pk[n]['since']}{C['r']}{also}").rstrip())
 
     if cache:
         stamp = f"{C['dim']}cluster + context as of {age(cache['at'])} ago"

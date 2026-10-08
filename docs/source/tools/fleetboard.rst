@@ -53,6 +53,30 @@ Sources, and what each costs:
 The two slow ones are cached under ``<state>/cache/board.json`` and shown **with
 their age, never as current**: a value on this screen is evidence as of a time.
 
+The directory column, and parked sessions
+-----------------------------------------
+
+Each row carries the session's working directory, from ``claude agents`` — the only
+source here that knows it. ``$HOME`` shows as ``~``, and a path too long for the
+column is cut from the **left**: paths are distinctive at the end, so a right-hand
+cut would make the column widest exactly where it stops telling two sessions apart.
+The width follows the terminal, between 14 and 42 characters.
+
+Below the table, under a rule, are the sessions declared **parked** in
+``[parked.<name>]`` (:doc:`../configuration`), with their directory and the date
+they were parked. Parked is a *declaration*, not an observation, which is why it can
+be shown for a session with no process and no pane — and why those rows sit under a
+rule rather than at the bottom of the same list: they are a different kind of thing.
+
+A parked row carries no state, version, context or work. Those are runtime and it
+has none; printing ``?`` in them would say they were unknown, which is this page's
+rule about ``?`` read backwards. **Retired** sessions are not listed at all — they
+are not coming back, and a board is about what might.
+
+A name that is both running and declared parked is marked ``ALSO RUNNING``. That is
+two sources disagreeing, and drawing it in both places without a word would let an
+undeclared unpark look like an ordinary board.
+
 The version column
 ------------------
 

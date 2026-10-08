@@ -30,6 +30,38 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Added
+
+- **`fleetboard` shows each session's working directory, and lists parked sessions
+  under a rule below the table.** Requested 2026-10-08.
+
+  The directory comes from `claude agents`, the only source on this board that
+  knows it. `$HOME` renders as `~`, and an over-long path is cut from the **left**,
+  because paths are distinctive at their end — two sessions under one project
+  directory agree in the first components and differ in the last, so a right-hand
+  cut would make the column widest exactly where it stops telling them apart. The
+  width follows the terminal between 14 and 42 characters, falling back to 80
+  columns when stdout is not a terminal.
+
+  Parked sessions come from `[parked.<name>]` in the configuration. Parked is a
+  *declaration*, not an observation, which is why it can be shown for a session
+  with no process and no pane — and why those rows sit under a rule instead of at
+  the foot of the same list: they are a different kind of row, and without the rule
+  they read as live sessions that happen to be quiet.
+
+  A parked row carries no state, version, context or work. It has none, and
+  printing `?` there would say they were unknown — this board's rule about `?`
+  read backwards, since nothing failed. For the same reason the row gets its own
+  narrow layout rather than borrowing the table's columns to leave them blank.
+  **Retired** sessions are not listed: they are not coming back, and a board is
+  about what might.
+
+  A name both running and declared parked is marked `ALSO RUNNING`. That is two
+  sources disagreeing, and drawing it in both places silently would let an
+  undeclared unpark look like an ordinary board. A configuration that cannot be
+  read says so rather than drawing an empty list, which would read as "nothing is
+  parked".
+
 ### Fixed
 
 - **`fleetgantt --all` drew three sessions twice.** A transcript uuid is a

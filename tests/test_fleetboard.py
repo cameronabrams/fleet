@@ -11,7 +11,7 @@ two places on arrival.
 """
 import json, os, time, unittest
 from unittest import mock
-from tests.support import APP, FakeConfig, load_tool
+from tests.support import APP, BASE_TOML, FakeConfig, load_tool
 
 
 class SourceFailureIsNeverAPass(unittest.TestCase):
@@ -230,3 +230,133 @@ class TheVersionColumn(unittest.TestCase):
         out = self.board(self.AGENTS, None, {11: "2.1.291", 22: "2.1.292"})
         self.assertNotIn("<STALE>", out)
         self.assertIn("? installed", self.plain(out))
+
+
+PARKED_TOML = BASE_TOML + '''
+[parked.old-talk]
+uuid  = "aaaaaaaa-1111-4111-8111-111111111111"
+since = "2026-09-22"
+cwd   = "/home/u/Git/talks/old"
+
+[retired.gone-for-good]
+uuid  = "bbbbbbbb-2222-4222-8222-222222222222"
+since = "2026-09-01"
+cwd   = "/home/u/Git/gone"
+'''
+
+
+class CwdAndParked(unittest.TestCase):
+    """A directory column, and the parked sessions under a rule below the table.
+
+    Parked is a DECLARATION -- `[parked.<name>]` in the configuration -- which is
+    why it can be shown for a session with no process and no pane. That also makes
+    it a different kind of row from everything above the rule, and the two must
+    not read as one list whose last entries happen to be quiet.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig(toml=PARKED_TOML)
+        self.b = load_tool("fleetboard")
+        self.b.C = dict.fromkeys(self.b.C, "")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def board(self, agents, cols=170):
+        panes = {n: {"win": "1", "winname": "w", "pane": "%1",
+                     "quiet": False, "current": False} for n in agents}
+        import io, contextlib
+        with mock.patch.object(self.b, "panes", lambda: panes), \
+             mock.patch.object(self.b, "agents", lambda: agents), \
+             mock.patch.object(self.b, "load_cache", lambda: None), \
+             mock.patch.object(self.b.shutil, "get_terminal_size",
+                               lambda d=None: os.terminal_size((cols, 24))), \
+             mock.patch.object(self.b.versions, "installed", lambda *a: "2.1.0"), \
+             mock.patch.object(self.b.versions, "of_pid", lambda pid: "2.1.0"):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.b.draw()
+            return buf.getvalue()
+
+    LIVE = {"alpha": {"status": "idle", "pid": 11, "cwd": "/home/u/Git/alpha"}}
+
+    def test_the_cwd_column_shows_each_agents_directory(self):
+        out = self.board(self.LIVE)
+        self.assertIn("cwd", out.splitlines()[2])
+        row = next(l for l in out.splitlines() if l.strip().startswith("alpha"))
+        self.assertIn("/home/u/Git/alpha", row)
+
+    def test_a_home_directory_is_abbreviated(self):
+        with mock.patch.object(self.b, "HOME", "/home/u"):
+            out = self.board({"alpha": {"status": "idle", "pid": 11,
+                                        "cwd": "/home/u/Git/alpha"}})
+        row = next(l for l in out.splitlines() if l.strip().startswith("alpha"))
+        self.assertIn("~/Git/alpha", row)
+
+    def test_a_long_path_is_cut_from_the_left(self):
+        """Paths are distinctive at the end. Two sessions under one project dir
+        agree in the first components and differ in the last, so a right-hand cut
+        makes the column widest exactly where it stops telling them apart."""
+        got = self.b.short_path("/mnt/storage1/cfa/research/cyanate-esters", 20)
+        self.assertEqual(len(got), 20)
+        self.assertTrue(got.endswith("cyanate-esters"), got)
+        self.assertTrue(got.startswith("…"), got)
+
+    def test_an_agent_with_no_reported_cwd_is_blank_not_a_question_mark(self):
+        """`?` is this board's word for a source that failed, and that has already
+        been said in `state` for an agent the listing does not hold. Repeating it
+        here would claim a second failure."""
+        out = self.board({"alpha": {"status": "idle", "pid": 11}})
+        row = next(l for l in out.splitlines() if l.strip().startswith("alpha"))
+        # The cwd FIELD, not the whole row: `ctx` and `work` legitimately print
+        # `?` here, because no cache was loaded. Asserting over the whole row
+        # caught those and said the cwd column was at fault.
+        head = next(l for l in out.splitlines() if l.lstrip().startswith("session"))
+        start = head.index("cwd")
+        self.assertEqual(row[start:start + 42].strip(), "", repr(row))
+
+    def test_parked_sessions_appear_under_a_rule(self):
+        out = self.board(self.LIVE)
+        lines = out.splitlines()
+        rule = next(i for i, l in enumerate(lines) if set(l.strip()) == {"─"})
+        head = next(i for i, l in enumerate(lines) if l.strip().startswith("parked ("))
+        live = next(i for i, l in enumerate(lines) if l.strip().startswith("alpha"))
+        park = next(i for i, l in enumerate(lines) if l.strip().startswith("old-talk"))
+        self.assertLess(live, rule, "the rule must come after the live table")
+        self.assertLess(rule, head)
+        self.assertLess(head, park)
+        self.assertIn("/home/u/Git/talks/old", lines[park])
+        self.assertIn("2026-09-22", lines[park])
+
+    def test_a_parked_row_claims_no_runtime(self):
+        """It has none, and `?` would say it was unknown rather than absent."""
+        out = self.board(self.LIVE)
+        row = next(l for l in out.splitlines() if l.strip().startswith("old-talk"))
+        for word in ("?", "idle", "busy", "2.1.0"):
+            self.assertNotIn(word, row, f"{word!r} in {row!r}")
+        # A context figure, matched as one. The first version of this looked for
+        # the substring "k " and found it in "talks/old" -- a test that fails on
+        # the data rather than on the behaviour.
+        import re as _re
+        self.assertIsNone(_re.search(r"\b\d+k\b", row), row)
+
+    def test_a_retired_session_is_not_listed(self):
+        """Retired is not coming back; a board is about what might."""
+        out = self.board(self.LIVE)
+        self.assertNotIn("gone-for-good", out)
+        self.assertIn("parked (1)", out)
+
+    def test_a_session_both_running_and_declared_parked_is_flagged(self):
+        """Two sources disagreeing. Drawing it in both places without a word would
+        let an undeclared unpark look like an ordinary board."""
+        out = self.board({"old-talk": {"status": "idle", "pid": 11,
+                                       "cwd": "/home/u/Git/talks/old"}})
+        self.assertIn("ALSO RUNNING", out)
+
+    def test_an_unreadable_configuration_says_so(self):
+        """Not an empty list. `{}` would draw as "nothing is parked", which is the
+        board's own rule about a failed source read backwards."""
+        with mock.patch.object(self.b.fc, "stopped",
+                               mock.Mock(side_effect=OSError("boom"))):
+            out = self.board(self.LIVE)
+        self.assertIn("could not be read", out)
+        self.assertNotIn("parked (", out)
