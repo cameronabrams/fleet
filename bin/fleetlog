@@ -15,6 +15,7 @@ import json, os, re, sys, glob, argparse, hashlib
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
+from fleet import transcripts
 from fleet import identity
 from fleet.panes import LABELS, agent_label
 from fleet.transcripts import project_slug
@@ -352,7 +353,13 @@ def alias_sets():
 
 def load_all():
     sessions, edges = {}, []
-    for path in sorted(glob.glob(f"{PROJECTS}/*/*.jsonl")):
+    # Deduped by session, not just sorted. EDGES survived this already -- two
+    # identical copies yield identical edges and `dedupe(edges)` collapses them,
+    # which is why the graph was right -- but `sessions` is keyed by PATH, so the
+    # table listed the same transcript once per project directory. Three rows of
+    # `library`'s appeared twice until 2026-10-08. Safe by a route that would not
+    # have survived the two copies differing is not the same as safe.
+    for path in transcripts.dedupe_paths(glob.glob(f"{PROJECTS}/*/*.jsonl")):
         try:
             ident, how, events = parse_transcript(path)
         except Exception as e:

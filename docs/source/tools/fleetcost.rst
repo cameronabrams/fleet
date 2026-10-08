@@ -12,6 +12,15 @@ Usage
    fleetcost --senders   per-sender volume
    fleetcost --worst     the most expensive individual messages
 
+Transcripts are deduplicated by session before anything is summed
+(``fleet.transcripts.dedupe_paths``). A renamed working directory leaves one
+session's transcript in two project directories, and summing per *file* counted
+three sessions twice until 2026-10-08: 101 transcripts where there were 98, and
+2,528 peer messages where there were 2,353. The amplification ratio barely moved
+(367x to 365x) because its two sums inflate together; **the counts are the fragile
+figures here, not the ratio.** Figures measured before 2026-10-02 predate the
+duplicates and are unaffected.
+
 For every cross-session message in every transcript over 10 kB, it counts the
 assistant turns the message then sits through in the receiver's context, capped at a
 ~200k-token window. Cost is size times turns. The headline number is the

@@ -47,6 +47,42 @@ def uuid_from_descendants(claude_pid):
             return m.group(1)
     return None
 
+def dedupe_paths(paths):
+    """Transcript paths with each session appearing once, newest-complete copy kept.
+
+    One session can have its transcript in two project directories at once. It
+    happens when a working directory is RENAMED: Claude Code opens a project
+    directory for the new path and the old one keeps its copy. On 2026-10-02
+    `~/Sync/mendeley` became `~/Sync/library`, and three transcripts have existed
+    under both slugs since -- byte-identical, same sha256, different inodes.
+
+    A file name is `<session uuid>.jsonl` and a uuid is unique to a session, so the
+    basename is the identity and two paths sharing one are two copies of one thing.
+    Anything that globs the project directories and sums per FILE counts those
+    sessions twice: `fleetcost` read 101 transcripts where there are 98, and
+    reported 2,528 peer messages where there are 2,353.
+
+    The larger copy wins, because a session that continued under the new path left
+    the old copy short; equal sizes fall back to the path so the answer does not
+    depend on directory order. `fleetgantt` makes the same choice over rows and
+    prefers a role's directory, which it can see and this cannot.
+
+    Not every reader needs this. `fleetlog` dedupes EDGES, which absorbs identical
+    copies on the way past -- safe, but by a route that would not survive the two
+    copies differing.
+    """
+    best = {}
+    for p in paths:
+        k = os.path.basename(p)
+        try:
+            size = os.path.getsize(p)
+        except OSError:
+            size = -1
+        rank = (size, p)
+        if k not in best or rank > best[k][0]:
+            best[k] = (rank, p)
+    return sorted(v for _, v in best.values())
+
 def _norm(x):
     return (x or "").replace("-", " ").strip().lower()
 

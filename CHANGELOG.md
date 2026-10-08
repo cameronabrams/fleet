@@ -30,6 +30,54 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`fleetcost` counted three sessions twice, and every figure it prints was
+  inflated.** A working directory rename leaves one session's transcript in two
+  project directories — `~/Sync/mendeley` became `~/Sync/library` on 2026-10-02 —
+  and `scan()` globbed and summed per file. Reported 2026-10-08 by a session
+  recounting a published figure.
+
+  Measured on this fleet, before and after:
+
+  | | before | after |
+  | :--- | ---: | ---: |
+  | transcripts | 101 | 98 |
+  | assistant turns | 94,028 | 89,398 |
+  | tokens read | 33.66 G | 31.66 G |
+  | peer messages | 2,528 | 2,353 |
+  | amplification | 367x | **365x** |
+
+  **The counts move ~7%; the ratio moves 2x.** Amplification is a quotient whose
+  numerator and denominator inflate together, so it is the robust figure here and
+  the message counts are not — the opposite of what "a ratio of two affected sums"
+  suggests, and worth stating because the ratio is the quoted number.
+
+  Figures measured before 2026-10-02 are unaffected: the duplicates did not exist.
+  A deck quoting 355x from 30 September is sound, and the drift from 355x to 365x
+  is real growth rather than this artifact.
+
+- **`fleetlog sessions` listed a duplicated transcript once per project
+  directory** — 81 rows where there are 79, two of them `library`'s. Its *edges*
+  were already right, because two identical copies yield identical edges and
+  `dedupe(edges)` collapses them; measured invariant at 3,007 either way. **Safe by
+  a route that would not survive the two copies differing is not the same as
+  safe**, so the scan now dedupes rather than relying on it.
+
+- `fleet.transcripts.dedupe_paths` is the one place that collapses them. A file is
+  named `<session uuid>.jsonl` and a uuid is unique to a session, so the basename
+  is the identity. The larger copy wins — a session that continued under the new
+  path left the old one short — and an equal-size tie falls back to the path, so
+  the answer cannot depend on the order the glob happened to walk. An unreadable
+  path is kept and loses its tie: it may be the only copy, and dropping it would
+  undercount, which is the direction nobody checks.
+
+  **How it was caught is the reusable part, and it was not inspection.** A recount
+  disagreed with a figure already published for a week that had already finished.
+  A completed week whose count moves between two runs is the symptom; the earlier
+  number is the control; and deduping returning it to the published value exactly
+  is what confirmed the diagnosis.
+
 ### Added
 
 - **`fleetboard` shows each session's working directory, and lists parked sessions

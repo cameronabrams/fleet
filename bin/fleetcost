@@ -26,6 +26,7 @@ import json, glob, os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from collections import defaultdict
 from fleet import version_flag
+from fleet import transcripts
 
 # No character cap any more. One stale constant produced two wrong numbers: it
 # truncated the bill AND cut survival short. The bill comes from usage; survival
@@ -60,7 +61,14 @@ def usage_of(d):
             u.get("output_tokens", 0))
 
 def scan():
-    files = [f for f in glob.glob(PAT) if os.path.getsize(f) > 10_000]
+    # Deduped before anything is summed. One session can have its transcript in
+    # two project directories after its working directory is renamed, and this
+    # sums per FILE: it read 101 transcripts where there were 98, and reported
+    # 2,528 peer messages where there were 2,353. Every figure this tool prints
+    # was inflated by it, unequally -- the counts by ~7%, the amplification ratio
+    # by ~2x, because that ratio's two sums inflate together.
+    files = [f for f in transcripts.dedupe_paths(glob.glob(PAT))
+             if os.path.getsize(f) > 10_000]
     msgs, turns = [], 0
     bill = {"read": 0, "written": 0, "cache_read": 0, "fresh": 0}
     for f in files:

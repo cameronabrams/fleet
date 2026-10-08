@@ -18,6 +18,13 @@ Usage
    fleetlog initiative [--since YYYY-MM-DD] [--json]
                                  what triggered each message sent
 
+Transcripts are deduplicated by session before the scan
+(``fleet.transcripts.dedupe_paths``), because a renamed working directory leaves one
+in two project directories. The *edges* never needed it — two identical copies yield
+identical edges, which the edge dedupe collapses, measured invariant at 3,007 — but
+``fleetlog sessions`` is keyed by path and listed such a transcript once per
+directory until 2026-10-08.
+
 Every received message is stamped with its sender in the transcript, and every
 ``SendMessage`` call is recorded with its recipient, so the graph is derived, not
 logged. A message appears in both the sender's and the receiver's transcripts; the
