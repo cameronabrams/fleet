@@ -360,3 +360,89 @@ class CwdAndParked(unittest.TestCase):
             out = self.board(self.LIVE)
         self.assertIn("could not be read", out)
         self.assertNotIn("parked (", out)
+
+
+class TheConfigurationIsReReadEachDraw(unittest.TestCase):
+    """Parking is a human DECLARATION, and a watched board outlives it.
+
+    `fleetboard --watch` redraws every N seconds for as long as it is left up.
+    The configuration was read once, at import, so a session unparked after the
+    board started stayed in the parked list for the life of the process. Found
+    2026-10-09 on a watcher 21h50m old: `drexiglas` had been unparked, was drawn
+    correctly in the live table, and was still listed under `parked (10)`.
+
+    **The `ALSO RUNNING` flag fired on it** -- which is the flag for a session
+    running while declared parked, a disagreement between two sources. The
+    disagreement was real and both sources were the board's: a live reading of
+    tmux against a 22-hour-old reading of a file. A check that reports its own
+    staleness as the fleet's is worse than no check, because it looks like
+    evidence about something else.
+
+    The slow sources here are cached ON PURPOSE and shown with their age. A
+    configuration file is neither slow nor observed, so it gets neither treatment.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig(toml=PARKED_TOML)
+        self.b = load_tool("fleetboard")
+        self.b.C = dict.fromkeys(self.b.C, "")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def draw(self):
+        import io, contextlib
+        agents = {"old-talk": {"status": "idle", "pid": 11, "cwd": "/home/u/x"}}
+        panes = {"old-talk": {"win": "1", "winname": "w", "pane": "%1",
+                              "quiet": False, "current": False}}
+        with mock.patch.object(self.b, "panes", lambda: panes), \
+             mock.patch.object(self.b, "agents", lambda: agents), \
+             mock.patch.object(self.b, "load_cache", lambda: None), \
+             mock.patch.object(self.b.versions, "installed", lambda *a: "2.1.0"), \
+             mock.patch.object(self.b.versions, "of_pid", lambda pid: "2.1.0"):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.b.draw()
+            return buf.getvalue()
+
+    def unpark_everything(self):
+        """Rewrite fleet.toml exactly as a human unparking a session would."""
+        import textwrap
+        path = os.path.join(self.cfg.config, "fleet.toml")
+        with open(path, "w") as f:
+            f.write(textwrap.dedent(BASE_TOML).format(state=self.cfg.state))
+
+    def test_a_session_unparked_after_the_board_started_leaves_the_list(self):
+        first = self.draw()
+        self.assertIn("old-talk", first)
+        self.assertIn("parked (1)", first)
+        self.assertIn("ALSO RUNNING", first)
+
+        self.unpark_everything()
+        again = self.draw()
+        self.assertNotIn("parked (", again,
+                         "the parked list was not re-read from the configuration")
+        self.assertNotIn("ALSO RUNNING", again,
+                         "the board flagged a disagreement it had created itself")
+        self.assertIn("old-talk", again, "it must still be in the live table")
+
+    def test_a_session_parked_after_the_board_started_appears(self):
+        """The other direction, which no cache would catch either."""
+        self.unpark_everything()
+        self.assertNotIn("parked (", self.draw())
+        with open(os.path.join(self.cfg.config, "fleet.toml"), "a") as f:
+            f.write('\n[parked.late-one]\n'
+                    'uuid  = "cccccccc-3333-4333-8333-333333333333"\n'
+                    'since = "2026-10-09"\ncwd = "/home/u/late"\n')
+        out = self.draw()
+        self.assertIn("parked (1)", out)
+        self.assertIn("late-one", out)
+
+    def test_a_configuration_broken_mid_edit_does_not_crash_the_watcher(self):
+        """Re-reading means reading a file a human may be halfway through saving.
+        A watched board must survive that and say so, not exit on a parse error
+        and take the screen down with it."""
+        with open(os.path.join(self.cfg.config, "fleet.toml"), "w") as f:
+            f.write("[parked.broken\nthis is not toml")
+        out = self.draw()
+        self.assertIn("could not be read", out)
+        self.assertIn("old-talk", out, "the live table must still draw")

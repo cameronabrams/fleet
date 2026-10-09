@@ -32,6 +32,10 @@ from fleet import version_flag
 from fleet.panes import LABELS, agent_label, is_agent_pane
 from fleet import versions
 
+# Read once, for the state directory only: where the cache lives is not something
+# a human moves while a board is watching, and the path is resolved before any
+# draw. Anything a human DOES change mid-run is re-read where it is used -- see
+# `parked()`.
 CFG = fc.load()
 STATE = fc.state_dir(CFG)
 # A SUBDIRECTORY, deliberately. The cache lived at `<state>/board-cache.json`
@@ -205,10 +209,26 @@ def parked():
     None, not {}, when the configuration cannot be read, so the caller can say so
     rather than draw an empty list that reads as "nothing is parked".
     """
+    # Re-read on EVERY call, not from the module-level CFG. `--watch` redraws for
+    # as long as the board is left up, and parking is a declaration a human
+    # changes underneath it: a watcher 21h50m old was still listing `drexiglas`
+    # as parked hours after it was unparked, and flagged it ALSO RUNNING -- a
+    # disagreement between a live reading of tmux and a 22-hour-old reading of a
+    # file, both of them this board's. A check that reports its own staleness as
+    # the fleet's is worse than no check, because it looks like evidence about
+    # something else.
+    #
+    # The slow sources here are cached deliberately and shown with their age. A
+    # small TOML file is neither slow nor observed, so it gets neither treatment.
+    # Reading it costs nothing beside the `claude agents` call every draw makes.
     try:
         return {k: {"cwd": v.get("cwd", ""), "since": v.get("since", "")}
-                for k, v in fc.stopped(CFG).items() if v.get("state") == "parked"}
+                for k, v in fc.stopped(fc.load()).items()
+                if v.get("state") == "parked"}
     except Exception:
+        # Includes a file caught half-saved. A watched board must survive a human
+        # editing the configuration under it and say so, not exit on a parse error
+        # and take the screen down.
         return None
 
 def age(ts):

@@ -77,6 +77,18 @@ A name that is both running and declared parked is marked ``ALSO RUNNING``. That
 two sources disagreeing, and drawing it in both places without a word would let an
 undeclared unpark look like an ordinary board.
 
+The configuration is **re-read on every draw**, not once at startup. ``--watch``
+redraws for as long as the board is left up, and parking is a declaration a human
+changes underneath it. Until 2026-10-09 a watcher held the configuration it was
+started with: one 21h50m old still listed an unparked session under ``parked`` and
+marked it ``ALSO RUNNING`` — a disagreement between a live reading of tmux and a
+22-hour-old reading of a file, both of them the board's own. **A check that reports
+its own staleness as the fleet's is worse than no check**, because it looks like
+evidence about something else. The slow sources are cached on purpose and shown
+with their age; a small TOML file is neither slow nor observed, so it gets neither
+treatment. A configuration caught half-saved reads as unreadable and says so,
+rather than taking the screen down.
+
 The version column
 ------------------
 

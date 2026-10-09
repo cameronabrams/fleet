@@ -32,6 +32,25 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **`fleetboard --watch` held the configuration it started with, so an unparked
+  session never left the parked list.** `CFG` was read at import. A watcher left up
+  for 21h50m was still listing `drexiglas` under `parked (10)` hours after it was
+  unparked — correctly drawn in the live table at the same time, because names come
+  from tmux and `claude agents` on every draw and only the declaration was frozen.
+  Reported 2026-10-09.
+
+  **It flagged the session `ALSO RUNNING`** — the marker added the day before for a
+  session running while declared parked. The disagreement was real and both sides
+  of it were this board's: a live reading of tmux against a 22-hour-old reading of
+  a file. A check that reports its own staleness as the fleet's is worse than no
+  check, because it looks like evidence about something else.
+
+  The configuration is now re-read on every draw. The two slow sources stay cached
+  and stamped with their age, which is deliberate; a small TOML file is neither slow
+  nor observed, and reading it costs nothing beside the `claude agents` call each
+  draw already makes. A file caught half-saved reads as unreadable and says so,
+  rather than exiting on a parse error and taking a watched screen down with it.
+
 - **`fleetcost` counted three sessions twice, and every figure it prints was
   inflated.** A working directory rename leaves one session's transcript in two
   project directories — `~/Sync/mendeley` became `~/Sync/library` on 2026-10-02 —
