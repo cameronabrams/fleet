@@ -446,3 +446,55 @@ class TheConfigurationIsReReadEachDraw(unittest.TestCase):
         out = self.draw()
         self.assertIn("could not be read", out)
         self.assertIn("old-talk", out, "the live table must still draw")
+
+
+class TheStampCarriesTheDate(unittest.TestCase):
+    """A clock alone cannot say whether a watched board is still drawing.
+
+    The board is normally read on a long-lived `--watch` pane, glanced at rather
+    than run. `14:22` on such a pane reads as current at 14:22 on any day, so a
+    board that stopped redrawing looks exactly like one that just did -- and this
+    board has frozen before (f5c7201, where a 22-hour-old read was presented as a
+    live fact about the fleet).
+
+    Two things are pinned: the date is in the stamp, and the stamp is taken on the
+    draw. The second is the one that matters, and it is the same defect in a new
+    place -- a value computed at import looks right for as long as anyone tests it
+    in a fresh process.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.b = load_tool("fleetboard")
+        self.b.C = dict.fromkeys(self.b.C, "")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def draw(self):
+        import io, contextlib
+        with mock.patch.object(self.b, "panes", lambda: {}), \
+             mock.patch.object(self.b, "agents", lambda: {}), \
+             mock.patch.object(self.b, "load_cache", lambda: None), \
+             mock.patch.object(self.b.versions, "installed", lambda *a: "2.1.0"):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.b.draw()
+            return buf.getvalue()
+
+    def test_the_header_carries_the_date(self):
+        head = self.draw().splitlines()[1]
+        self.assertIn(time.strftime("%Y-%m-%d"), head, head)
+        self.assertIn(time.strftime("%H:%M"), head, head)
+
+    def test_the_stamp_is_taken_on_the_draw_not_at_import(self):
+        """A board left up overnight must say so. Held still here by moving the
+        clock between two draws of ONE already-imported module, which is what a
+        `--watch` process does and what no fresh-process test can catch."""
+        stamps = iter(["2026-10-13 14:22 EDT", "2026-10-14 14:22 EDT"])
+        with mock.patch.object(self.b.time, "strftime",
+                               lambda *a, **k: next(stamps)):
+            first, second = self.draw(), self.draw()
+        self.assertIn("2026-10-13", first)
+        self.assertIn("2026-10-14", second,
+                      "the stamp was frozen at the value of the first draw")
+        self.assertNotIn("2026-10-13", second)

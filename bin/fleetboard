@@ -243,7 +243,12 @@ def draw(full=False, auto=False):
     if full or (auto and (cache is None or time.time() - cache["at"] > REFRESH)):
         cache, full = refresh_cache(), True
     inst = versions.installed()
-    head = f"\n  {C['b']}FLEET{C['r']}  {time.strftime('%H:%M %Z')}"
+    # Date as well as time. The board is usually read on a `--watch` pane that was
+    # started some time ago and is looked at in passing, and a bare clock cannot
+    # distinguish "this redrew a minute ago" from "this froze yesterday at the same
+    # hour" -- which is a failure this board has actually had (see f5c7201). The
+    # stamp is taken HERE, per draw, for the same reason.
+    head = f"\n  {C['b']}FLEET{C['r']}  {time.strftime('%Y-%m-%d %H:%M %Z')}"
     # The installed version is what every session gets on its next restart, so it
     # is the thing the per-session column is read against. Unknown prints as `?`
     # like any other unreadable source; it is not omitted, because a missing line

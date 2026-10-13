@@ -30,6 +30,17 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Added
+
+- **`fleetboard`'s header carries the date as well as the time.** The board is
+  normally read on a long-lived `--watch` pane and glanced at in passing, where a
+  bare `10:34` is consistent both with a redraw a minute ago and with a board that
+  stopped redrawing yesterday at the same hour. The previous entry under *Fixed* is
+  the case: a watcher 21h50m old presented a 22-hour-old reading as a live fact,
+  and its clock looked right throughout. The stamp is taken on each draw, which is
+  pinned by a test, because a value computed at import looks correct for as long as
+  anyone tests it in a fresh process.
+
 ### Fixed
 
 - **`fleetboard --watch` held the configuration it started with, so an unparked

@@ -53,6 +53,20 @@ Sources, and what each costs:
 The two slow ones are cached under ``<state>/cache/board.json`` and shown **with
 their age, never as current**: a value on this screen is evidence as of a time.
 
+The header stamp
+----------------
+
+The first line carries the **date and the time**, not the time alone::
+
+   FLEET  2026-10-13 10:34 EDT   claude 2.1.296 installed
+
+The board is normally read on a ``--watch`` pane that was started some time ago
+and is glanced at in passing, and a bare clock cannot distinguish a board that
+redrew a minute ago from one that stopped redrawing yesterday at the same hour.
+That is not hypothetical here: a watcher 21h50m old presented a 22-hour-old
+reading as a live fact about the fleet, and the stamp it carried was consistent
+with both. The stamp is taken on each draw, for the same reason.
+
 The directory column, and parked sessions
 -----------------------------------------
 
