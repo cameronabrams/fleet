@@ -57,6 +57,38 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **Nothing could read a version on an npm install, and the staleness check could
+  not fail.** `npm install -g @anthropic-ai/claude-code` keeps one binary under
+  `node_modules/@anthropic-ai/claude-code/bin/` and upgrades it **in place**; the
+  native installer keeps versions side by side under `.../versions/<v>/`. Everything
+  here read the path alone, so on an npm machine `fleetsnap` recorded the installed
+  claude as `claude`, every session's version as `claude.exe`, and `fleetupgrade`
+  compared `None` against `None` for every session — a check that could not fail,
+  on the tool whose whole job is to find sessions running an old binary.
+
+  `fleet.versions` now reads both layouts: the path, else the `package.json` of the
+  package the binary sits in, checked **by name** so a stray manifest further up the
+  tree cannot pass its version off as Claude Code's. A binary that answers neither
+  way is asked directly, cached against its own size and mtime — one `stat` per
+  `fleetboard --watch` redraw instead of one process launch, and an in-place upgrade
+  still invalidates it, because it changes both.
+
+  **`installed()` searches** rather than resolving one hardcoded path: `shutil.which`
+  first, then the native default. There is no `~/.local/bin/claude` at all on an npm
+  install, and `fleetupgrade` passed that path explicitly. The first candidate that
+  **exists** decides, known or unknown — falling through would report the version of
+  a binary no new session would launch, which is a confident number in place of an
+  absent one.
+
+  **A binary replaced under a running session reads `?`.** `/proc/<pid>/exe` ends in
+  ` (deleted)` and the package beside it now describes the *new* binary, so reading
+  it would mark a straggler as already upgraded — the one error an upgrade roll must
+  not make. The native layout is unaffected and still names its version when deleted.
+
+  Found and fixed first in `pkgyasi/fleet`, a fork that hit it on its own machine;
+  this is the same defect ported onto `fleet.versions`, which did not exist when
+  they wrote it.
+
 - **`fleetcost`'s two example costs were understated ~1.9x: they read the character
   count as the whole record, and the record is not the message.** Every arrival
   carries a near-constant envelope the receiver re-reads exactly like the body — a

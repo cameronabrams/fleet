@@ -13,17 +13,31 @@ leave the regex right and make `fleetsnap` record `installed_claude: "claude"` -
 in the manifest a restore is rebuilt from, where it is read as a version number
 and nothing would question it.
 
+**There are two install layouts, and only one of them names the version in the
+path.** The native installer keeps versions side by side under
+`.../versions/<v>/...`. The npm install (`npm install -g
+@anthropic-ai/claude-code`) puts one binary under
+`node_modules/@anthropic-ai/claude-code/bin/` and upgrades it IN PLACE, so the
+path says nothing and only the `package.json` beside it does. Everything here
+read the path alone until 2026-10-13: on an npm machine `fleetsnap` recorded the
+installed claude as `claude`, every session's version as `claude.exe`, and
+`fleetupgrade`'s staleness check could not fail. Found in `pkgyasi/fleet`, a fork
+that hit it on its own machine and fixed it there first.
+
 **Unknown is returned as None, never as a guess.** A version this cannot parse is
 a layout this module has not seen, and a wrong version number is worse than no
 version number in both directions: it marks a stale session current, and it marks
 a current fleet stale.
 """
+import json
 import os
 import re
+import shutil
+import subprocess
 
-# `~/.local/bin/claude` is the installer's symlink into the versioned store. It is
-# resolved rather than executed: `claude --version` would be the obvious reading
-# and it is the wrong one here, because it runs whatever is on PATH, costs a
+# `~/.local/bin/claude` is the native installer's symlink into the versioned
+# store, and the fallback when nothing named `claude` is on PATH. It is resolved
+# rather than executed wherever the layout can answer: running the binary costs a
 # process launch per call, and cannot answer the question for a session that is
 # running a DIFFERENT binary from the one now installed -- which is the entire
 # question `fleetupgrade` exists to ask.
@@ -32,12 +46,34 @@ CLAUDE = os.path.expanduser("~/.local/bin/claude")
 # The version is the component after `versions/`, not the last component.
 _VERSION = re.compile(r"versions/([0-9][0-9A-Za-z.\-]*)")
 
+# The npm package, checked by name. The first `package.json` found decides: a
+# stray one further up the tree describes something else, and its version number
+# would be a confident wrong answer rather than an absent one.
+_PKG = "@anthropic-ai/claude-code"
+
+# `/proc/<pid>/exe` grows this when the binary has been replaced on disk since
+# the process started, which is what an npm upgrade does.
+_DELETED = " (deleted)"
+
+# `claude --version` prints the number first. Anchored, so a line of banner text
+# cannot donate a version from the middle of a sentence.
+_SPOKEN = re.compile(r"\s*(\d+\.\d+\.\d+\S*)")
+
+# `--version` costs a process launch, and `fleetboard --watch` calls `installed()`
+# every redraw -- on an npm machine, where the layout never answers, that is a
+# subprocess every 15 seconds for as long as the board is up. The answer is cached
+# against the binary's identity, so an in-place upgrade (which changes both size
+# and mtime, by construction) invalidates it and nothing else does. One `stat` per
+# draw instead of one `exec`, and a board that still notices an upgrade under it.
+_spoken_cache = {}
+
 
 def from_path(path):
     """The version named in a resolved binary path, or None.
 
-    Pure, so the tests do not need a Claude Code installation to pin the layouts
-    this understands -- and the layouts it does not.
+    Pure, and deliberately so: the tests pin the layouts this understands, and
+    the layouts it does not, without needing a Claude Code installation. It knows
+    only the native layout -- `of_binary` is the one that reads a package.
     """
     if not path:
         return None
@@ -45,18 +81,87 @@ def from_path(path):
     return m.group(1) if m else None
 
 
-def installed(claude=CLAUDE):
+def of_binary(path):
+    """The version of the binary at `path`, from either layout, or None.
+
+    The path first, then the `package.json` of the package the binary sits in --
+    and only that package's. A path that says neither is None, never its
+    basename: `claude.exe` is not a version number, and recording it as one is
+    how this went unnoticed on an npm machine for as long as it did.
+    """
+    if not path:
+        return None
+    v = from_path(path)
+    if v:
+        return v
+    d = os.path.dirname(os.path.realpath(path))
+    for _ in range(3):           # bin/ -> the package root, with one to spare
+        pj = os.path.join(d, "package.json")
+        if os.path.isfile(pj):
+            try:
+                with open(pj) as f:
+                    j = json.load(f)
+            except (OSError, ValueError):
+                return None
+            return j.get("version") if j.get("name") == _PKG else None
+        parent = os.path.dirname(d)
+        if parent == d:          # reached the root
+            break
+        d = parent
+    return None
+
+
+def _spoken(cand):
+    """Ask the binary. Cached against its size and mtime, so an upgrade in place
+    is re-read and a quiet board is not re-execed."""
+    try:
+        st = os.stat(cand)
+        key = (cand, st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+    if key in _spoken_cache:
+        return _spoken_cache[key]
+    try:
+        out = subprocess.run([cand, "--version"], capture_output=True, text=True,
+                             timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        out = ""
+    m = _SPOKEN.match(out)
+    v = m.group(1) if m else None
+    _spoken_cache.clear()        # only ever one binary; do not grow across upgrades
+    _spoken_cache[key] = v
+    return v
+
+
+def installed(claude=None):
     """The version `claude` would start now, or None if it cannot be read.
 
     This is "the most recent available version" as a session experiences it: the
     one it gets on its next restart. It is deliberately NOT the newest release
     published upstream -- that needs the network, and every caller here is either
     a recovery tool or a board whose whole contract is local sources.
+
+    With no argument it takes the `claude` a new session would actually launch --
+    `shutil.which`, then the native default. A path given explicitly is used as
+    given, which is how the tests pin a layout without installing one.
     """
-    try:
-        return from_path(os.path.realpath(claude))
-    except OSError:
-        return None
+    cands = [claude] if claude else [shutil.which("claude"), CLAUDE]
+    for cand in cands:
+        if not cand:
+            continue
+        v = of_binary(os.path.realpath(cand))
+        if v:
+            return v
+        if not os.path.exists(cand):
+            continue             # nothing there; the next candidate may be real
+        # It exists, so THIS is the binary a new session launches. The layout said
+        # nothing about it, so ask it -- and whatever it answers is the answer,
+        # including None. Falling through to the next candidate here would report
+        # the version of a binary that no new session would run, which is this
+        # module's one forbidden outcome: a confident number in place of an
+        # absent one. The list is a search for the binary, not for a version.
+        return _spoken(cand)
+    return None
 
 
 def of_pid(pid):
@@ -66,13 +171,26 @@ def of_pid(pid):
     what the session was launched with, and not what is installed now. A session
     started before an upgrade keeps running the old binary with no outward sign,
     which is the fact this whole module exists to surface.
+
+    A ` (deleted)` link means the binary was replaced on disk since this process
+    started, which is exactly what an npm upgrade does. The `package.json` beside
+    it now describes the NEW binary, so reading it would report a straggler as
+    already upgraded -- the one error an upgrade roll must not make. It reads
+    None instead. The native layout is unaffected: it keeps versions side by
+    side, so a deleted path still names the version it named before.
     """
     if not pid:
         return None
     try:
-        return from_path(os.readlink("/proc/%s/exe" % pid))
-    except OSError:
+        exe = os.readlink("/proc/%s/exe" % pid)
+    except (OSError, ValueError):
         return None
+    v = from_path(exe)
+    if v:
+        return v
+    if exe.endswith(_DELETED):
+        return None
+    return of_binary(exe)
 
 
 def is_stale(session_version, installed_version):

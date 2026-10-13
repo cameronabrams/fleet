@@ -17,7 +17,12 @@ Columns
 ``SESSION``
    the session's own last ``agent-name`` record, else the pane title
 ``VERSION`` / ``STALE``
-   the binary the process runs, against the installed ``~/.local/bin/claude``
+   the binary the process runs, against the ``claude`` a new session would launch
+   — ``shutil.which`` first, then the native ``~/.local/bin/claude``. Both install
+   layouts are read: the native one names the version in the path, the npm one
+   only in the ``package.json`` beside the binary. A binary replaced in place
+   under a running session reads ``?``, because the package then describes the
+   new binary and not the one that session is still running.
 ``LEDGER``
    whether ``<state>/rearm/<name>.md`` exists — existence only, not truth
 ``COLOR``

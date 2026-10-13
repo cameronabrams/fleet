@@ -115,11 +115,27 @@ already up — and there is no sign of that from inside the session, which is wh
 belongs on a board rather than in anyone's memory. :doc:`fleetupgrade` plans the
 restart; this only says who needs one.
 
-"Installed" is the version ``claude`` would start **now**, read by resolving
-``~/.local/bin/claude``. It is deliberately not the newest release published
-upstream: that needs the network, and this board's contract is local sources. So
-a row matching the header means "running what a restart would give it", not
-"running the newest thing that exists".
+"Installed" is the version ``claude`` would start **now** — ``shutil.which`` first,
+then the native ``~/.local/bin/claude``. It is deliberately not the newest release
+published upstream: that needs the network, and this board's contract is local
+sources. So a row matching the header means "running what a restart would give
+it", not "running the newest thing that exists".
+
+**Two install layouts, and only one names the version in a path.** The native
+installer keeps versions side by side under ``.../versions/<v>/``; the npm install
+puts one binary under ``node_modules/@anthropic-ai/claude-code/bin/`` and upgrades
+it in place, so only the ``package.json`` beside it says which version it is. Both
+are read, and a binary that answers neither way is asked directly
+(``claude --version``), cached against its own size and mtime so a watched board
+costs one ``stat`` per draw rather than one process launch. An in-place upgrade
+changes both, so the cache invalidates exactly when it must.
+
+A session whose binary was **replaced under it** reads ``?``. ``/proc/<pid>/exe``
+says ``(deleted)``, and the package beside it now describes the new binary — so
+reading it would draw a session still running the old one as already upgraded.
+That is the single error this column must not make, and ``?`` is the board's word
+for it. The native layout is unaffected: versions sit side by side, so a deleted
+path still names the version it always named.
 
 Both facts come from ``fleet.versions``, which :doc:`fleetupgrade` and
 :doc:`fleetsnap` also read. They each derived it for themselves until 2026-10-06,
