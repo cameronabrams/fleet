@@ -10,6 +10,7 @@ a later restore reads, a launch into the wrong directory).
   fleetspawn NAME DIR --beside PANE                  split beside an existing pane
   fleetspawn NAME DIR --window TITLE                 open a new tmux window
   fleetspawn ... --go                                actually do it
+  fleetspawn ... --no-color                          leave /color to be typed by hand
   fleetspawn --check NAME DIR                        verify a spawned session is live
                                                      (exit 3: still at the trust prompt)
   fleetspawn NAME DIR ... --resume UUID              bring a PARKED session back
@@ -20,6 +21,12 @@ gives its recorded uuid; afterwards the configuration owner removes the entry.
 The brief defaults to <config>/briefs/NAME.md and must exist: a session launched
 with no brief has no role, and a role reconstructed later is an inference.
 
+Once the session is live it types `/color <declared>` into its pane -- waiting for
+the pane to go idle first, and confirming the color reached the session's own
+transcript record. A color that does not apply is reported with the line to type;
+it never fails the spawn, because the session is up and only its label is wrong,
+and a retry would respawn a live session.
+
 It NEVER answers Claude Code's folder-trust prompt. Trusting a directory grants
 an agent read, edit and execute there; that is the human's decision, and on
 2026-09-12 the coordinator answered it for a new session before reading that it
@@ -29,9 +36,10 @@ import argparse, json, os, shlex, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
+from fleet import panes
 from fleet.panes import LABELS, agent_label, TRUST_MARKERS
 from fleet.procs import claude_procs, named
-from fleet.transcripts import session_name
+from fleet.transcripts import agent_color, registry_uuid, session_name, uuid_from_descendants
 CFG = fc.load()
 
 # Imported, not restated. This file kept its own identical copy of the tuple, and
@@ -42,6 +50,10 @@ CFG = fc.load()
 # A large resumed session asks whether to resume from a summary (lossy) or in
 # full (costly). That choice is the human's (fleet-upgrade skill, section 3).
 RESUME_MARKER = "Resume from summary"
+# A new session spends its first turns reading its brief, so it is live long
+# before it is typeable. These bound the two waits that follow.
+COLOR_IDLE_WAIT = 300      # for the first turn to finish and the pane to go idle
+COLOR_CONFIRM_WAIT = 20    # for the agent-color record to reach the transcript
 
 def screen_state(screen):
     """'trust' if the folder-trust prompt is showing, 'resume' if the resume-mode
@@ -169,6 +181,76 @@ def wait_for(pane, name, directory, timeout):
         time.sleep(2)
     return "timeout", None
 
+def wait_idle(pane, name, timeout):
+    """Poll until `pane` is safe to type into. None when it is, else why it is not.
+
+    `panes.screen_state` is the same reader `fleetnudge` uses, so idle means the
+    same thing to both: not mid-turn, no dialog, and an empty input line. This
+    module's own `screen_state` answers a different question (did it START) and
+    the two must not be confused -- a session can be past the banner and still
+    thirty seconds from being typeable.
+    """
+    t_end = time.time() + timeout
+    state = "no-pane"
+    while time.time() < t_end:
+        state = panes.screen_state(tmux(*panes.CAPTURE, "-t", pane)[1])
+        if state == "idle":
+            return None
+        if state == "trust":
+            break          # waiting cannot clear it; it is the human's to answer
+        time.sleep(2)
+    return panes.state_problem(state, name, pane) or f"pane {pane} never went idle"
+
+def session_uuid(pid):
+    """The transcript of the session at `pid`, from its own registry entry, else
+    from a descendant's scratchpad path.
+
+    The registry first, and the order is the whole point. `uuid_from_descendants`
+    needs a live CHILD process, which a session has only while it is mid-tool-call
+    -- precisely what we have just finished waiting for it not to be. Measured on
+    14 live sessions (2026-10-13): the registry answered for 14, the descendant
+    walk for 1, and that one was the only session doing work. The walk stays as
+    the fallback because it reads a path HANDED to the session, which is evidence
+    of a different kind, and it is what answered here before the registry was
+    known about.
+    """
+    return registry_uuid(pid) or uuid_from_descendants(pid)
+
+def apply_color(pane, name, pid, color, idle_wait, confirm_wait=COLOR_CONFIRM_WAIT):
+    """Type `/color COLOR` into a newly spawned session. None on success, else why not.
+
+    claude has no `--color` flag, so the color can only be typed, and typed blind
+    it is unsafe: keys sent while a session works its first prompt arrive
+    corrupted or land as prompt text (observed 2026-09-07). That hazard is why
+    this tool used to print the line instead of typing it. It is now solved rather
+    than avoided -- `panes.type_line` reads the input line back and confirms it
+    holds exactly the intended text before Enter, and clears it if it does not.
+
+    **Success is the session's own agent-color record**, the one `fleetsnap`
+    reads. Not the keystrokes going out: sending keys cannot fail, and a check
+    that cannot fail is not evidence of anything.
+    """
+    uuid = session_uuid(pid)
+    if uuid and agent_color(uuid) == color:
+        return None                   # a resumed session carries its color forward
+    problem = wait_idle(pane, name, idle_wait)
+    if problem:
+        return problem
+    problem = panes.type_line(tmux, pane, f"/color {color}")
+    if problem:
+        return problem
+    tmux("send-keys", "-t", pane, "C-m")
+    uuid = uuid or session_uuid(pid)
+    if not uuid:
+        return f"typed it, but found no transcript for pid {pid} to confirm it from"
+    t_end = time.time() + confirm_wait
+    while time.time() < t_end:
+        if agent_color(uuid) == color:
+            return None
+        time.sleep(1)
+    return (f"typed it, but transcript {uuid[:8]} still records "
+            f"{agent_color(uuid) or 'no color'} after {confirm_wait}s")
+
 def check(a):
     hits = [(p, c, v) for p, c, v in claude_procs() if session_name(p, c, v)[0] == a.name]
     if not hits:
@@ -215,6 +297,10 @@ def main():
                     help="with --beside: v = below (default), h = to the right")
     ap.add_argument("--brief", help="default: <config>/briefs/NAME.md")
     ap.add_argument("--wait", type=int, default=60, help="seconds to wait for startup")
+    ap.add_argument("--color-wait", type=int, default=COLOR_IDLE_WAIT, metavar="S",
+                    help="seconds to wait for the new session to go idle before typing /color")
+    ap.add_argument("--no-color", action="store_true",
+                    help="do not type /color; print the line to type by hand instead")
     ap.add_argument("--go", action="store_true")
     ap.add_argument("--check", action="store_true", help="verify only; change nothing")
     ap.add_argument("--resume", metavar="UUID", help="resume a parked session's transcript")
@@ -229,7 +315,11 @@ def main():
     problems = preflight(a, brief)
     print(f"\n  spawn {a.name}  in {a.dir}")
     print(f"  brief {brief}")
-    print(f"  color {fc.colors(CFG).get(a.name) or 'NOT DECLARED'}")
+    declared = fc.colors(CFG).get(a.name)
+    print(f"  color {declared or 'NOT DECLARED'}"
+          + ("" if not declared else
+             "  (left to be typed by hand)" if a.no_color else
+             f"  (typed into the pane once idle, up to {a.color_wait}s)"))
     print(f"  place {'split ' + a.split + ' beside ' + a.beside if a.beside else 'new window ' + a.window}")
     print(f"  cmd   {launch_cmd(a, brief)}\n")
     if problems:
@@ -283,11 +373,22 @@ def main():
         print(f"  Look at pane {pane}; do not relaunch until you know why.\n")
         sys.exit(4)
     print(f"  live: pid {pid} in {a.dir}")
-    # Not typed by this tool: claude has no --color flag, and keys sent into a
-    # session that is already working on its first prompt can be corrupted or
-    # land as prompt text (observed 2026-09-07).
-    print(f"  next: once it is idle, type  /color {fc.colors(CFG)[a.name]}  in pane {pane};")
-    print("        ListAgents to confirm the name; then fleetsnap (it checks the color)\n")
+
+    color = fc.colors(CFG)[a.name]
+    if a.no_color:
+        print(f"  color: not typed (--no-color). Type  /color {color}  in pane {pane} once idle.")
+    else:
+        print(f"  color: waiting for {a.name} to go idle, then typing /color {color} ...")
+        problem = apply_color(pane, a.name, pid, color, a.color_wait)
+        if problem:
+            # The session is up and correct; only its color is not. The spawn is
+            # not failed over a label -- a retry would respawn a live session,
+            # which is a worse outcome than a pane that is the wrong color.
+            print(f"  COLOR NOT APPLIED: {problem}")
+            print(f"  everything else is fine -- type  /color {color}  in pane {pane} yourself")
+        else:
+            print(f"  color: {color}, confirmed in the session's own transcript record")
+    print("  next: ListAgents to confirm the name; then fleetsnap (it checks the color)\n")
 
 if __name__ == "__main__":
     main()

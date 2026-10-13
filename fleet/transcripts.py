@@ -17,6 +17,39 @@ def project_slug(cwd):
     other punctuation is assumed to follow the same rule."""
     return re.sub(r"[^A-Za-z0-9]", "-", cwd)
 
+# Claude Code's own per-process registry. Each running session writes
+# `<pid>.json` here with its `sessionId`, so this is the session saying which
+# transcript is its own rather than anything outside it inferring one.
+SESSIONS = os.path.expanduser("~/.claude/sessions")
+
+
+def registry_uuid(pid):
+    """The session uuid `pid` records for itself, or None.
+
+    Checked against `uuid_from_descendants` on 14 live sessions (2026-10-13):
+    the registry answered for all 14, the descendant walk for ONE. That is not a
+    flaw in the walk -- it needs a live child process, and a session has one only
+    while it is mid-tool-call, which is exactly when it is not idle. Anything
+    asking about a QUIET session needs this instead.
+
+    The file carries `pid` as a field as well as in its name. It is checked,
+    because pids are reused: a stale registry file for a dead session whose
+    number came round again would otherwise hand back another session's
+    transcript, and a wrong uuid here is a restore that reopens the wrong
+    conversation.
+    """
+    if not pid:
+        return None
+    try:
+        with open(os.path.join(SESSIONS, "%s.json" % int(pid))) as f:
+            r = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(r, dict) or str(r.get("pid")) != str(pid):
+        return None
+    return r.get("sessionId") or None
+
+
 def uuid_from_descendants(claude_pid):
     """The session uuid carried by the scratchpad path a descendant process runs
     from, or None. A scratchpad path is HANDED to a session by its environment,

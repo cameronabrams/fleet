@@ -236,3 +236,188 @@ class Resume(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+RULE_ = "─" * 30
+_D, _R = "\x1b[2m", "\x1b[0m"
+
+def screen(line, footer="  footer"):
+    """A pane as `capture-pane -p -e` renders it, around one input line."""
+    return f"⏺ done\n{RULE_}\n{line}\n{RULE_}\n{footer}\n"
+
+IDLE = screen("\x1b[39m❯\xa0")
+BUSY = screen("\x1b[39m❯\xa0", footer="  esc to interrupt")
+DRAFT = screen("\x1b[38;5;246m❯\xa0\x1b[39mhalf a thought")
+
+
+class TheColorIsAppliedNotPrinted(unittest.TestCase):
+    """fleetspawn required a declared color, refused to spawn without one, and
+    then left it to be typed by hand -- so the color was declared, validated, and
+    applied only if someone remembered. A session that misses it looks like
+    somebody else's window on every board that reads the label.
+
+    The old comment gave a real reason not to type it: keys sent into a session
+    still working its first prompt arrive corrupted or land as prompt text
+    (observed 2026-09-07). That hazard has since been solved elsewhere in this
+    repo rather than avoided -- `panes.type_line` waits for an idle pane, refuses
+    a dialog or a draft, and confirms the input line reads back exactly the
+    intended text before Enter. This uses that path.
+
+    Taken from `pkgyasi/fleet`, which made the argument and wrote it first.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.spawn = load_tool("fleetspawn")
+        self.typed = []
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def run_apply(self, screens, color_now=None, color_after="blue", uuid="u-1"):
+        """`screens` is what capture-pane returns on successive calls."""
+        it = iter(screens)
+        last = [screens[-1]]
+
+        def tmux(*a):
+            if a[0] == "capture-pane":
+                try:
+                    last[0] = next(it)
+                except StopIteration:
+                    pass
+                return 0, last[0], ""
+            self.typed.append(a)
+            return 0, "", ""
+
+        seen = {"n": 0}
+
+        def agent_color(u):
+            seen["n"] += 1
+            return color_now if seen["n"] == 1 else color_after
+
+        # The clock is driven, not slept through: the waits here are 5s and 3s of
+        # wall time and the tests must not spend them. `sleep` alone is not enough
+        # -- with it stubbed the loops spin on a real clock for the full duration,
+        # which is how this first ran for 34 seconds.
+        clock = iter(range(0, 10_000))
+        with mock.patch.object(self.spawn, "tmux", tmux), \
+             mock.patch.object(self.spawn, "session_uuid", lambda pid: uuid), \
+             mock.patch.object(self.spawn, "agent_color", agent_color), \
+             mock.patch.object(self.spawn.panes, "type_line",
+                               lambda t, p, line, **k: self.typed.append(("TYPE", line))), \
+             mock.patch.object(self.spawn.time, "sleep", lambda s: None), \
+             mock.patch.object(self.spawn.time, "time", lambda: next(clock)):
+            return self.spawn.apply_color("%1", "alpha", 42, "blue", 5, confirm_wait=3)
+
+    def test_it_types_the_color_and_confirms_from_the_transcript(self):
+        self.assertIsNone(self.run_apply([IDLE]))
+        self.assertIn(("TYPE", "/color blue"), self.typed)
+        self.assertIn(("send-keys", "-t", "%1", "C-m"), self.typed)
+
+    def test_a_session_already_carrying_it_is_not_typed_into(self):
+        """A resumed session carries its color forward. Typing into it would be a
+        keystroke into a live session for no reason."""
+        self.assertIsNone(self.run_apply([IDLE], color_now="blue"))
+        self.assertEqual(self.typed, [])
+
+    def test_a_busy_pane_is_waited_for_not_typed_into(self):
+        problem = self.run_apply([BUSY, BUSY, IDLE])
+        self.assertIsNone(problem, problem)
+        self.assertIn(("TYPE", "/color blue"), self.typed)
+
+    def test_a_pane_that_never_goes_idle_is_reported_not_typed_into(self):
+        problem = self.run_apply([BUSY])
+        self.assertIsNotNone(problem)
+        self.assertNotIn(("TYPE", "/color blue"), self.typed)
+
+    def test_a_draft_in_the_input_line_is_never_typed_over(self):
+        problem = self.run_apply([DRAFT])
+        self.assertIn("draft", problem)
+        self.assertEqual(self.typed, [])
+
+    def test_the_trust_prompt_stops_the_wait_at_once(self):
+        """Waiting cannot clear it, and this tool never answers it."""
+        problem = self.run_apply([TRUST_SCREEN])
+        self.assertIn("trust", problem)
+        self.assertEqual(self.typed, [])
+
+    def test_sending_keys_is_not_the_success_test(self):
+        """The guard the whole thing turns on. Keys always go out; the evidence is
+        the session's own agent-color record. With the record never changing, this
+        must report a failure even though every keystroke 'succeeded'."""
+        problem = self.run_apply([IDLE], color_after=None)
+        self.assertIsNotNone(problem, "a check that cannot fail is not evidence")
+        self.assertIn("typed it", problem)
+        self.assertIn(("TYPE", "/color blue"), self.typed)
+
+
+class AColorThatWillNotApplyDoesNotFailTheSpawn(unittest.TestCase):
+    """The session is up, in the right directory, with the right brief. Only its
+    label is wrong. Exiting non-zero would invite the one response that makes it
+    worse -- a retry, which respawns a session that is already live."""
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.spawn = load_tool("fleetspawn")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def test_the_failure_is_printed_with_the_line_to_type(self):
+        src = open(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "bin", "fleetspawn")).read()
+        tail = src[src.index("COLOR NOT APPLIED"):]
+        self.assertIn("type  /color", tail)
+        self.assertNotIn("sys.exit", tail,
+                         "a color that did not apply must not fail the spawn")
+
+
+class TheRegistryIsTheHandleForAQuietSession(unittest.TestCase):
+    """`uuid_from_descendants` needs a live CHILD process, which a session has
+    only while it is mid-tool-call -- exactly what `apply_color` has just finished
+    waiting for it NOT to be.
+
+    Measured on 14 live sessions (2026-10-13): the registry answered for all 14,
+    the descendant walk for 1, and that one was the only session doing work. So
+    the fork's version of this would have reported "found no transcript to confirm
+    it from" almost every time, having typed the color correctly.
+    """
+    def setUp(self):
+        self.spawn = load_tool("fleetspawn")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def entry(self, pid, body):
+        import json
+        with open(os.path.join(self.tmp.name, f"{pid}.json"), "w") as f:
+            json.dump(body, f)
+
+    def uuid(self, pid):
+        from fleet import transcripts
+        with mock.patch.object(transcripts, "SESSIONS", self.tmp.name):
+            return transcripts.registry_uuid(pid)
+
+    def test_a_session_records_its_own_transcript(self):
+        self.entry(42, {"pid": 42, "sessionId": "abc-123"})
+        self.assertEqual(self.uuid(42), "abc-123")
+
+    def test_a_stale_entry_for_a_reused_pid_is_refused(self):
+        """Pids come round again. A registry file left by a dead session whose
+        number was reissued would otherwise hand back another session's
+        transcript -- a restore that reopens the wrong conversation."""
+        self.entry(42, {"pid": 7, "sessionId": "someone-else"})
+        self.assertIsNone(self.uuid(42))
+
+    def test_missing_corrupt_and_empty_are_all_none(self):
+        self.assertIsNone(self.uuid(999))
+        with open(os.path.join(self.tmp.name, "5.json"), "w") as f:
+            f.write("{not json")
+        self.assertIsNone(self.uuid(5))
+        self.entry(6, {"pid": 6})
+        self.assertIsNone(self.uuid(6))
+
+    def test_the_descendant_walk_is_the_fallback_not_the_first_source(self):
+        with mock.patch.object(self.spawn, "registry_uuid", lambda p: "from-registry"), \
+             mock.patch.object(self.spawn, "uuid_from_descendants", lambda p: "from-walk"):
+            self.assertEqual(self.spawn.session_uuid(42), "from-registry")
+        with mock.patch.object(self.spawn, "registry_uuid", lambda p: None), \
+             mock.patch.object(self.spawn, "uuid_from_descendants", lambda p: "from-walk"):
+            self.assertEqual(self.spawn.session_uuid(42), "from-walk")

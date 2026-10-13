@@ -32,6 +32,43 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- **`fleetspawn --go` applies the declared color itself.** It required a `[colors]`
+  entry, refused to spawn without one, printed the `/color` line — and then left it
+  to be typed by hand, so the color was declared, validated and applied only if
+  someone remembered. A session that misses it looks like somebody else's window on
+  every board that reads the label.
+
+  The old comment gave a real reason not to type it: keys sent into a session still
+  working its first prompt arrive corrupted or land as prompt text (observed
+  2026-09-07). That hazard is now solved rather than avoided. It waits for the pane
+  to go idle by `fleet.panes.screen_state` — the same reader `fleetnudge` uses — and
+  types through `fleet.panes.type_line`, which reads the input line back and confirms
+  it holds exactly the intended text before Enter.
+
+  **Success is the session's own `agent-color` record**, the one `fleetsnap` reads,
+  not the keystrokes going out: sending keys cannot fail, and a check that cannot
+  fail is not evidence. A color that will not apply is reported with the line to type
+  and does **not** fail the spawn — the session is up and only its label is wrong,
+  and a retry would respawn a live session. A session already carrying the color is
+  not typed into. New flags: `--no-color` and `--color-wait`.
+
+  Taken from `pkgyasi/fleet`, which made the argument and wrote it first.
+
+- **`fleet.transcripts.registry_uuid(pid)`** — the session uuid a running session
+  records for itself in `~/.claude/sessions/<pid>.json`.
+
+  `uuid_from_descendants` needs a live child process, which a session has only while
+  it is mid-tool-call — exactly what `apply_color` has just finished waiting for it
+  not to be. Measured across 14 live sessions on 2026-10-13: the registry answered
+  for all 14, the descendant walk for **one**, the only session doing work at that
+  moment. The walk stays as the fallback, because it reads a path *handed* to the
+  session and so is evidence of a different kind.
+
+  The entry's own `pid` field is checked against the filename. Pids come round
+  again, and a stale file left by a dead session whose number was reissued would
+  otherwise hand back another session's transcript — a restore that reopens the
+  wrong conversation.
+
 - **`fleetcost` reports compliance with the 800-character rule, measured on the body
   and stated as the share that obeys.** Both halves of that are load-bearing, and
   both have been got wrong. Measured on the record the answer is 0% and always will
