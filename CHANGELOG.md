@@ -306,7 +306,7 @@ entries and makes you confirm the bump against this list.
   the case the check exists for.
 
   `fleetregister`'s refusal now counts the other registrations held by that pid and
-  says the row clears itself when the watcher exits. Behaviour is unchanged — still
+  says the row clears itself when the watcher exits. Behavior is unchanged — still
   refused, still exit 3; only the advice is different, and only when there is a set
   to forfeit.
 
@@ -328,7 +328,7 @@ entries and makes you confirm the bump against this list.
 
 - **`fleetboard` shows which `claude` each session is running.** The header states
   the installed version once; each row carries the version that session is actually
-  on, coloured when the two differ. A session keeps running the binary it started
+  on, colored when the two differ. A session keeps running the binary it started
   with, so upgrading `claude` changes nothing for a session already up — and there
   is no sign of that from inside the session. `fleetupgrade` plans the restart;
   the board only says who needs one.
@@ -339,7 +339,7 @@ entries and makes you confirm the bump against this list.
   means "running what a restart would give it", not "running the newest thing that
   exists", and the documentation says so rather than leaving the word to do it.
 
-  An unknown version prints `?` and is not coloured: colouring it would send someone
+  An unknown version prints `?` and is not colored: coloring it would send someone
   to upgrade a session over a source that failed. An unreadable *installed* version
   leaves every comparison unknown rather than marking the whole fleet stale — the
   same error as marking it current, and the board's own rule one level down.
@@ -684,7 +684,7 @@ entries and makes you confirm the bump against this list.
   mapping this transcript does not corroborate now reads
   `'X' -> 'Y', from another transcript` instead of `renamed: 'X' became 'Y'`, and
   a caller that treats the answer as an identity rather than an edge — a lane on a
-  chart — still keeps it apart, which is the `v0.1.0` behaviour and is now tested
+  chart — still keeps it apart, which is the `v0.1.0` behavior and is now tested
   so that it survives.
 
   A mapping that came from the directory branch was also being called a rename.

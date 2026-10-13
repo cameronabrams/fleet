@@ -119,8 +119,8 @@ def name_from_transcript(cwd, uuid):
 
 def color_from_transcript(cwd, uuid):
     """`/color` writes an agent-color record. Unlike agent-name it does NOT
-    survive a /clear -- the roll copies the name forward and drops the colour.
-    So a session can be correctly named and colourless. What it SHOULD be is
+    survive a /clear -- the roll copies the name forward and drops the color.
+    So a session can be correctly named and colorless. What it SHOULD be is
     declared in [colors] in fleet.toml."""
     if not uuid:
         return None
@@ -565,14 +565,14 @@ def main():
         print("     tmux set -p -t <pane> @agent <name>")
 
     declared = fc.colors(CFG)
-    # No resume uuid means no transcript was read, so no colour record could be
+    # No resume uuid means no transcript was read, so no color record could be
     # found: that is "unknown", not "lost". fleetsnap resolves more handles.
-    # A background session's colour is not recorded where a tool can read it (see
+    # A background session's color is not recorded where a tool can read it (see
     # fleetsnap's live_color): unknown, not a mismatch.
     off = [x for x in ss if x["color"] != declared.get(x["name"]) and not x.get("background")
            and (x["resume_uuid"] or not declared.get(x["name"]))]
     if off:
-        print("\n!! colour differs from [colors] in fleet.toml (a /clear drops the colour")
+        print("\n!! color differs from [colors] in fleet.toml (a /clear drops the color")
         print("   while keeping the name). Type the command in that session's pane:")
         for x in off:
             want = declared.get(x["name"])

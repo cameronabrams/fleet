@@ -47,7 +47,7 @@ class Upgrade(unittest.TestCase):
         self.assertEqual(self.up.name_from_transcript(CWD, U1), "new")
         self.assertIsNone(self.up.name_from_transcript(CWD, None))
 
-    def test_colour_is_last_record(self):
+    def test_color_is_last_record(self):
         self.transcript(U1, [{"type": "agent-color", "agentColor": "red"},
                              {"type": "agent-color", "agentColor": "blue"}])
         self.assertEqual(self.up.color_from_transcript(CWD, U1), "blue")

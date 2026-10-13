@@ -184,10 +184,10 @@ scratchpad) show no prompt, so a test there cannot exercise this path.
 - **Coordinator checkpoint:** add it to the roster there.
 - **Tell only the peers it will work with**, by pointer: "`<name>` now owns X; brief
   at <path>". Not a fleet-wide broadcast.
-- **Colour — required.** Declared in `[colors]` in `fleet.toml` before spawning
+- **Color — required.** Declared in `[colors]` in `fleet.toml` before spawning
   (preflight blocks without it); applied by the human typing `/color <c>` in the pane
   once the session is idle — there is no launch flag, and keys sent into a working
-  session can be corrupted. A `/clear` drops the live colour and keeps the name;
+  session can be corrupted. A `/clear` drops the live color and keeps the name;
   `fleetsnap` and `fleetupgrade` flag the difference and print the command.
   Duplicates are allowed if the human chooses them.
 
@@ -275,7 +275,7 @@ resume-mode prompt (exit `5`): summary or full is the human's choice.
 | don't | because |
 | :--- | :--- |
 | spawn with no brief | the role gets reconstructed later from transcript — an inference |
-| keep colours in a hand note in the state dir | it rotted: 3 members missing and one wrong within two weeks (2026-09-13) |
+| keep colors in a hand note in the state dir | it rotted: 3 members missing and one wrong within two weeks (2026-09-13) |
 | answer the trust prompt | it is the human's grant, §2f |
 | one session per repo without asking about production | misses the split that surfaces bugs |
 | give the coordinator a repo | nobody is left watching the fleet |

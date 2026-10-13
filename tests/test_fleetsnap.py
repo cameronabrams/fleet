@@ -251,7 +251,7 @@ class LiveColor(unittest.TestCase):
     def tearDown(self):
         self.cfg.close()
 
-    def test_attach_client_colour_is_unknown_not_none(self):
+    def test_attach_client_color_is_unknown_not_none(self):
         with mock.patch.object(self.snap, "agent_color", return_value=None):
             self.assertEqual(self.snap.live_color(["claude", "attach", "b20bc72b"], "b20bc72b-x"), (None, False))
             self.assertEqual(self.snap.live_color(["claude", "--name", "a", "--resume", "u"], "u"), (None, True))
@@ -267,7 +267,7 @@ class StateDirectoryNamespace(unittest.TestCase):
     manifests"; the glob said `*.json`, and a file written by a different tool is
     indistinguishable from a dead fleet's manifest. On 2026-10-03 it renamed
     another tool's cache and that tool went blind -- rendering the missing values
-    as unknown, which was correct behaviour and therefore raised no alarm. A value
+    as unknown, which was correct behavior and therefore raised no alarm. A value
     that used to be there is a different event from one that never arrived, and
     only the second is what "unknown" is designed to say.
 
@@ -353,7 +353,7 @@ class FormatMatchesItsUnpack(unittest.TestCase):
 
     The test that existed asserted the format STRING contained `#{@agent}`. It
     passed throughout. A token check cannot see a positional shift, which is why
-    these two are structural and behavioural instead.
+    these two are structural and behavioral instead.
     """
     def setUp(self):
         self.cfg = FakeConfig()

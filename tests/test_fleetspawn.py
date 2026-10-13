@@ -213,7 +213,7 @@ class Resume(unittest.TestCase):
                             self.problems("beta", "bbbbbbbb-0000-4000-8000-000000000002")))
 
     def test_another_sessions_transcript_is_refused(self):
-        # alpha's colour is declared; resuming beta's retired transcript under it is not allowed
+        # alpha's color is declared; resuming beta's retired transcript under it is not allowed
         self.assertTrue(any("belongs to [retired.beta]" in p for p in
                             self.problems("alpha", "bbbbbbbb-0000-4000-8000-000000000002")))
 

@@ -164,7 +164,7 @@ class RefusingAWatcherThatIsMidSet(unittest.TestCase):
     which would forfeit the jobs still running. Reported 2026-10-06 from
     pestifer-sweep, pid 645241 over three jobs with one completed.
 
-    Behaviour is unchanged: still refused, still exit 3. Only what it tells you
+    Behavior is unchanged: still refused, still exit 3. Only what it tells you
     to do is different, and only when this pid holds other registrations.
     """
     def setUp(self):

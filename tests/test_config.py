@@ -142,11 +142,11 @@ class Membership(unittest.TestCase):
     def test_complete(self):
         self.assertEqual(self.kinds("alpha", "red"), [])
 
-    def test_colour_mismatch_and_lost(self):
+    def test_color_mismatch_and_lost(self):
         self.assertEqual(self.kinds("alpha", "blue"), ["color"])
         self.assertEqual(self.kinds("alpha", None), ["color"])
 
-    def test_unknown_live_colour_is_not_a_mismatch(self):
+    def test_unknown_live_color_is_not_a_mismatch(self):
         self.assertEqual(self.kinds("alpha", None, color_known=False), [])
 
     def test_no_brief(self):

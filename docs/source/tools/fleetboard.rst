@@ -107,7 +107,7 @@ The version column
 ------------------
 
 The header states the **installed** version once; each row shows the version that
-session is actually running, gently coloured when the two differ.
+session is actually running, gently colored when the two differ.
 
 They differ more often than it looks like they should. A session keeps running the
 binary it started with, so upgrading ``claude`` changes nothing for a session
@@ -129,7 +129,7 @@ and the two copies had already drifted in shape — a regex for the component af
 one level deeper. ``fleetsnap``'s copy was the one that mattered: its answer goes
 into the manifest a restore is rebuilt from.
 
-An unknown version prints ``?`` and is **not** coloured. Colouring it would send
+An unknown version prints ``?`` and is **not** colored. Coloring it would send
 someone to upgrade a session over a source that failed, and an unreadable
 installed version leaves every comparison unknown rather than marking the whole
 fleet stale.
@@ -164,7 +164,7 @@ Why it lives here
 
 It was written outside this repository, in the configuration directory, and moved
 in on 2026-10-04. The configuration directory holds declared things — ``fleet.toml``,
-briefs, colours — and this is code that reads this app's state layout and calls two
+briefs, colors — and this is code that reads this app's state layout and calls two
 of its tools.
 
 The split had a cost that was paid before it was fixed. On 2026-10-03

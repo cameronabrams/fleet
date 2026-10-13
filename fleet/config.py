@@ -67,12 +67,12 @@ def owners(cfg):
 COLORS = ("red", "blue", "green", "yellow", "purple", "orange", "pink", "cyan")
 
 def colors(cfg):
-    """Session name -> declared colour, from [colors]. Required for every member.
+    """Session name -> declared color, from [colors]. Required for every member.
 
     Declared here rather than kept in a state-dir note because a `/clear` drops a
     session's agent-color record while keeping its name, so the transcript cannot
-    be the source of truth for what the colour SHOULD be. Duplicates are allowed:
-    the human chooses the colours, and two sessions may share one."""
+    be the source of truth for what the color SHOULD be. Duplicates are allowed:
+    the human chooses the colors, and two sessions may share one."""
     out = dict(cfg.get("colors", {}))
     bad = {k: v for k, v in out.items() if v not in COLORS}
     if bad:
@@ -100,7 +100,7 @@ def membership_problems(cfg, name, live_color=None, color_known=True):
         out.append(("color", "no [colors] entry in fleet.toml",
                     f'add  {name} = "<color>"  under [colors]'))
     elif color_known and live_color != want:
-        out.append(("color", f"live colour {live_color or 'NONE'}, declared {want}",
+        out.append(("color", f"live color {live_color or 'NONE'}, declared {want}",
                     f"type  /color {want}  in its pane (a session cannot set its own)"))
     return out
 

@@ -174,13 +174,13 @@ def resolve_label(label, title, proc, cwd, agents):
     return None, None
 
 def live_color(argv, uuid):
-    """(colour, knowable) for a pane's session.
+    """(color, knowable) for a pane's session.
 
     A pane running `claude attach <id>` shows a session /exit moved to the
-    background. Its fork transcript starts with no colour record, and a /color
+    background. Its fork transcript starts with no color record, and a /color
     typed through the attach client is not written anywhere a tool can read --
     OBSERVED 2026-09-15 on 2.1.272: the pane showed cyan, the fork transcript held
-    no agent-color record, and the session's metadata file has no colour field.
+    no agent-color record, and the session's metadata file has no color field.
     Reporting "NONE" there would be an alarm nobody can clear, so it is unknown."""
     if argv[1:2] == ["attach"]:
         return None, False
@@ -433,7 +433,7 @@ def main():
     for s in snap["sessions"]:
         files = ", ".join(f"`{f}`" for f in s["durable_files"]) or "_none found_"
         L.append(f"- **{shown(s)}** — {files}")
-    L.append("\n## Membership: every session needs a brief and a declared colour\n")
+    L.append("\n## Membership: every session needs a brief and a declared color\n")
     incomplete = [s for s in snap["sessions"] if s["membership_problems"]]
     if not incomplete:
         L.append(f"All {len(snap['sessions'])} complete.")
@@ -480,12 +480,12 @@ def main():
     incomplete = [s for s in snap["sessions"] if s["membership_problems"]]
     if incomplete:
         print(f"\n!! {len(incomplete)} of {len(snap['sessions'])} sessions incomplete "
-              "(every member needs a brief and a declared colour, and none may be parked or retired):")
+              "(every member needs a brief and a declared color, and none may be parked or retired):")
         for s in incomplete:
             for p in s["membership_problems"]:
                 print(f"   {shown(s):<20} {p['problem']}\n   {'':<20} -> {p['fix']}")
     else:
-        print(f"    membership: all {len(snap['sessions'])} have a brief and their declared colour")
+        print(f"    membership: all {len(snap['sessions'])} have a brief and their declared color")
 
 if __name__ == "__main__":
     main()

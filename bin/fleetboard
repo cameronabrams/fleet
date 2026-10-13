@@ -289,7 +289,7 @@ def draw(full=False, auto=False):
         stale = versions.is_stale(sv, inst)
         # Gentle on purpose: a session one release behind is a thing to do later,
         # not a fault. Current versions are dimmed so they recede and only the
-        # ones worth acting on carry colour; unknown stays dim too, because the
+        # ones worth acting on carry color; unknown stays dim too, because the
         # red in this palette is reserved for a source that failed.
         vcol = C['yel'] if stale else C['dim']
         if not jobs_known:

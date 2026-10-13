@@ -75,7 +75,7 @@ def undimmed(line):
         i = 0
         while i < len(params):
             p = params[i] or "0"
-            if p in ("38", "48", "58"):        # extended colour: skip its arguments
+            if p in ("38", "48", "58"):        # extended color: skip its arguments
                 i += 3 if params[i + 1:i + 2] == ["5"] else 5
                 continue
             if p in ("0", "22"):

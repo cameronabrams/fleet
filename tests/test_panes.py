@@ -29,10 +29,10 @@ class Suggestions(unittest.TestCase):
     def test_typed_text_with_a_dim_completion_after_it(self):
         self.assertEqual(panes.input_line(box(f"\x1b[39m❯\xa0/comp{D}act{R}")), "/comp")
 
-    def test_dim_ends_at_22_and_survives_colour_changes(self):
+    def test_dim_ends_at_22_and_survives_color_changes(self):
         self.assertEqual(panes.undimmed(f"a{D}b\x1b[22mc"), "ac")
-        self.assertEqual(panes.undimmed(f"a{D}b\x1b[38;5;2mc{R}d"), "ad")      # colour changes keep dim
-        self.assertEqual(panes.undimmed("a\x1b[38;5;2mb"), "ab")                # 38;5;2 is colour 2, not dim
+        self.assertEqual(panes.undimmed(f"a{D}b\x1b[38;5;2mc{R}d"), "ad")      # color changes keep dim
+        self.assertEqual(panes.undimmed("a\x1b[38;5;2mb"), "ab")                # 38;5;2 is color 2, not dim
         self.assertEqual(panes.undimmed("a\x1b[38;2;2;2;2mb\x1b[48;5;2mc"), "abc")
         self.assertEqual(panes.undimmed(f"a\x1b[1mb\x1b[mc"), "abc")            # bold is not dim
         self.assertEqual(panes.undimmed(f"a{D}b\x1b[mc"), "ac")                  # bare reset

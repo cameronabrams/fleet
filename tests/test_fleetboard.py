@@ -160,9 +160,9 @@ class TheVersionColumn(unittest.TestCase):
     def setUp(self):
         self.cfg = FakeConfig()
         self.b = load_tool("fleetboard")
-        # Named colours, so an assertion says WHICH colour rather than matching
+        # Named colors, so an assertion says WHICH color rather than matching
         # an escape code. The real table is empty off a tty, which would make
-        # every colour assertion below pass against uncoloured output.
+        # every color assertion below pass against uncolored output.
         self.b.C = dict.fromkeys(self.b.C, "")
         self.b.C.update({"yel": "<STALE>", "dim": "<DIM>", "r": "<->", "b": "",
                          "red": "<RED>"})
@@ -187,7 +187,7 @@ class TheVersionColumn(unittest.TestCase):
 
     @staticmethod
     def plain(text):
-        """The output with the colour markers removed -- what a reader sees.
+        """The output with the color markers removed -- what a reader sees.
 
         Asserting on the raw string tests byte adjacency instead: the header
         renders `claude <->2.1.292<DIM> installed<->`, so a literal
@@ -206,7 +206,7 @@ class TheVersionColumn(unittest.TestCase):
         self.assertEqual(out.count("installed"), 1,
                          "the installed version is stated once, not per row")
 
-    def test_a_session_behind_the_installed_binary_is_coloured(self):
+    def test_a_session_behind_the_installed_binary_is_colored(self):
         out = self.board(self.AGENTS, "2.1.292", {11: "2.1.291", 22: "2.1.292"})
         stale = [l for l in out.splitlines() if l.strip().startswith("alpha")][0]
         fresh = [l for l in out.splitlines() if l.strip().startswith("beta")][0]
@@ -215,15 +215,15 @@ class TheVersionColumn(unittest.TestCase):
         self.assertIn("2.1.292", fresh)
 
     def test_an_unknown_version_is_a_question_mark_and_not_an_alarm(self):
-        """Absence is `?`, the board's rule. It is also not coloured as stale:
-        colouring it would send someone to upgrade a session over a source that
+        """Absence is `?`, the board's rule. It is also not colored as stale:
+        coloring it would send someone to upgrade a session over a source that
         failed, and the palette's red is reserved for a source that failed."""
         out = self.board(self.AGENTS, "2.1.292", {11: None, 22: "2.1.292"})
         row = [l for l in out.splitlines() if l.strip().startswith("alpha")][0]
         self.assertIn("?", row)
         self.assertNotIn("<STALE>", row)
 
-    def test_an_unreadable_installed_version_colours_nothing_stale(self):
+    def test_an_unreadable_installed_version_colors_nothing_stale(self):
         """If the installed version cannot be read, every comparison is unknown.
         Marking the whole fleet stale on a failed readlink is the same class of
         error as marking it current -- a board acting on a source it did not get."""
@@ -335,7 +335,7 @@ class CwdAndParked(unittest.TestCase):
             self.assertNotIn(word, row, f"{word!r} in {row!r}")
         # A context figure, matched as one. The first version of this looked for
         # the substring "k " and found it in "talks/old" -- a test that fails on
-        # the data rather than on the behaviour.
+        # the data rather than on the behavior.
         import re as _re
         self.assertIsNone(_re.search(r"\b\d+k\b", row), row)
 

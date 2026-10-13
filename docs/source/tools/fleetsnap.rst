@@ -76,7 +76,7 @@ write; the newest 10 are kept.
    matched ``<state>/*.json`` and moved aside everything not named after a live
    fleet, which is the whole namespace rather than the manifests it named. On
    2026-10-03 it renamed another tool's cache, and that tool rendered the missing
-   values as *unknown* — correct behaviour, and therefore no alarm. A value that
+   values as *unknown* — correct behavior, and therefore no alarm. A value that
    used to be there is a different event from one that never arrived, and only the
    second is what ``unknown`` is designed to report.
 

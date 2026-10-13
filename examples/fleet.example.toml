@@ -23,9 +23,9 @@ conventions = "~/.config/fleet/conventions.md"   # from examples/conventions.exa
 env          = {}                                 # e.g. { NOTIFY_AGENT = "1" }
 first_prompt = "You are a new fleet session named {name}. Read {brief} and follow it."
 
-# Every member's colour, REQUIRED: fleetspawn refuses a session without one and
-# fleetsnap/fleetupgrade flag a live colour that differs. /color accepts red, blue,
-# green, yellow, purple, orange, pink, cyan. A /clear drops the colour and keeps the
+# Every member's color, REQUIRED: fleetspawn refuses a session without one and
+# fleetsnap/fleetupgrade flag a live color that differs. /color accepts red, blue,
+# green, yellow, purple, orange, pink, cyan. A /clear drops the color and keeps the
 # name, which is why the declaration lives here and not in a transcript.
 [colors]
 coordinator    = "purple"

@@ -84,7 +84,7 @@ def preflight(a, brief):
     if not os.path.isfile(brief):
         problems.append(f"no brief at {brief} -- write one first (examples/brief.example.md)")
     if not fc.colors(CFG).get(a.name):
-        problems.append(f'no colour declared -- add  {a.name} = "<color>"  under [colors] '
+        problems.append(f'no color declared -- add  {a.name} = "<color>"  under [colors] '
                         f"in fleet.toml ({', '.join(fc.COLORS)})")
     rc, _, _ = tmux("has-session")
     if rc != 0:
@@ -287,7 +287,7 @@ def main():
     # session that is already working on its first prompt can be corrupted or
     # land as prompt text (observed 2026-09-07).
     print(f"  next: once it is idle, type  /color {fc.colors(CFG)[a.name]}  in pane {pane};")
-    print("        ListAgents to confirm the name; then fleetsnap (it checks the colour)\n")
+    print("        ListAgents to confirm the name; then fleetsnap (it checks the color)\n")
 
 if __name__ == "__main__":
     main()

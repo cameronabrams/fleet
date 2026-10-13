@@ -76,7 +76,7 @@ launches ``claude``, and watches until the session is up.
 
 **It never answers the folder-trust prompt.** Trusting a directory grants an agent
 read, edit and execute there; that is yours to answer, in the pane. For the same
-reason, a session cannot set its own colour: type ``/color <declared>`` yourself, or
+reason, a session cannot set its own color: type ``/color <declared>`` yourself, or
 have :doc:`tools/fleetcontext` do it.
 
 Repeat for each role. Verify with ``ListAgents`` inside a session, and with

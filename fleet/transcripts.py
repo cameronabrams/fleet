@@ -88,7 +88,7 @@ def _norm(x):
 
 def agent_color(uuid):
     """The LAST agent-color record in transcript `uuid`, or None. A /clear rolls the
-    transcript and does not copy the colour forward, so None is common and means
+    transcript and does not copy the color forward, so None is common and means
     "not set in this file", not "never set"."""
     if not uuid:
         return None
