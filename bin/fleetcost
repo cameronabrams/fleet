@@ -22,7 +22,7 @@ the compaction boundaries in the same transcripts show.
   fleetcost --senders  per-sender volume
   fleetcost --worst    most expensive individual messages
 """
-import json, glob, os, sys
+import json, glob, os, re, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from collections import defaultdict
 from fleet import version_flag
@@ -38,6 +38,39 @@ ROOT = os.path.expanduser("~/.claude/projects")
 # scanned peer happened to receive it. Found 2026-08-28 by the session that
 # was being undercounted. Never narrow this glob to make a scan cheaper.
 PAT = os.path.join(ROOT, "*", "*.jsonl")
+
+# What a peer message costs is the whole RECORD, and the record is not the message.
+# Every arrival carries a near-constant envelope the receiver re-reads exactly like
+# the body: a line of prose, the `<cross-session-message ...>` open tag naming the
+# sender's socket, name and mode, the close tag, and a paragraph of handling advice
+# after it. Measured over 2,418 arrivals on this fleet: 722 mean, 723 median, and
+# 543 of that is the trailing advice alone.
+#
+# It is MEASURED rather than assumed, because the tag's length varies with the
+# sender's name and the surrounding prose is the harness's, not this repo's: a
+# constant here would be a number that silently stops being true.
+_OPEN = re.compile(r"<cross-session-message\b[^>]*>", re.S)
+_CLOSE = "</cross-session-message>"
+
+# The convention's ceiling, from comms.md. It governs the BODY -- what a session
+# chooses to write -- which is the only part of the record anyone can obey it with.
+RULE = 800
+
+
+def split_envelope(c):
+    """(body_len, envelope_len) for an arrival record, or (None, None).
+
+    None when the record cannot be split -- a truncated or re-quoted copy. The
+    caller must not fold that into "no envelope": a zero would understate the
+    cost in exactly the direction this whole correction goes.
+    """
+    m = _OPEN.search(c)
+    if not m:
+        return None, None
+    k = c.find(_CLOSE, m.end())
+    if k < 0:
+        return None, None
+    return k - m.end(), len(c) - (k - m.end())
 
 def is_boundary(d):
     """A compaction boundary: past it, the message is a summary, not itself.
@@ -116,7 +149,8 @@ def scan():
             if k >= 0:
                 seg = c[k+10:k+80].lstrip('\\"')
                 sender = seg.split('"')[0].split('\\')[0]
-            msgs.append((sender, len(c), rr, os.path.basename(f)[:8]))
+            body, _ = split_envelope(c)
+            msgs.append((sender, len(c), rr, os.path.basename(f)[:8], body))
     return files, msgs, bill, turns
 
 def main():
@@ -148,19 +182,53 @@ def main():
     print("                 of it are characters at 4/token, so the ratio is sound")
     print("                 and the absolutes are approximate.)")
     med = surv[len(surv)//2]
+    # The example is quoted in terms of the 800-character convention, which governs
+    # what a session WRITES -- the body. These two lines used to read the supplied
+    # character count as the whole record and so left the envelope out of a figure
+    # whose entire point is what the whole record costs: understated 1.9x at 800
+    # characters and 1.2x at 4,000 (reported 2026-10-13).
+    envs = sorted(m[1] - m[4] for m in msgs if m[4] is not None)
     print()
-    print("a 4,000-char peer message costs ~%d tok; at 800 chars, ~%d tok"
-          % (1000 * med, 200 * med))
+    if envs:
+        env = envs[len(envs)//2]
+        print("a peer message whose BODY is 4,000 chars costs ~%d tok; at 800 chars, ~%d tok"
+              % ((4000 + env) / 4 * med, (800 + env) / 4 * med))
+        print("                (each also carries a ~%d-char envelope, re-read the same way)"
+              % env)
+        # Stated as the share that OBEYS, and measured on the body. Both halves of
+        # that matter and both have been got wrong: measured on the record the
+        # answer is 0% and always will be, because the envelope alone exceeds the
+        # ceiling -- a rule about what a session writes, scored against something
+        # it does not write. And the first report of this figure gave the share
+        # that BREAKS the rule under the name compliance, which reads as the
+        # convention working when it is the same number saying it is not.
+        bodies = [m[4] for m in msgs if m[4] is not None]
+        ok = sum(1 for b in bodies if b <= RULE)
+        env_r = sum((m[1] - m[4]) * m[2] for m in msgs if m[4] is not None)
+        print()
+        print("%d-char rule   %.0f%% of BODIES obey it (%d of %d); of whole records, none do"
+              % (RULE, 100 * ok / len(bodies), ok, len(bodies)))
+        print("                (the envelope alone is ~%d, so no record can obey a rule"
+              % env)
+        print("                 written about the body. It is %.0f%% of the re-read bill:"
+              % (100 * env_r / max(r, 1)))
+        print("                 a floor no convention about what sessions write reaches.)")
+    else:
+        # Not the old number with a caveat: that number is the one being corrected.
+        print("a peer message whose BODY is 4,000 chars costs at least ~%d tok; at 800, ~%d tok"
+              % (1000 * med, 200 * med))
+        print("                (envelope UNKNOWN -- no arrival could be split, so these")
+        print("                 are floors, not estimates)")
     if "--senders" in sys.argv:
         by = defaultdict(lambda: [0, 0])
-        for s, n, _, _ in msgs:
+        for s, n, _, _, _ in msgs:
             by[s][0] += 1; by[s][1] += n
         print("\nby sender:")
         for s, (c, n) in sorted(by.items(), key=lambda x: -x[1][1])[:15]:
             print("  %-26s %3d msgs %8d chars  mean %5d" % (s[:26], c, n, n // c))
     if "--worst" in sys.argv:
         print("\nmost expensive single messages:")
-        for s, n, rr, fn in sorted(msgs, key=lambda m: -m[1]*m[2])[:10]:
+        for s, n, rr, fn, _ in sorted(msgs, key=lambda m: -m[1]*m[2])[:10]:
             print("  %6d chars x %4d turns = ~%8d tok  from %-18s [%s]"
                   % (n, rr, n*rr/4, s[:18], fn))
 

@@ -32,6 +32,20 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- **`fleetcost` reports compliance with the 800-character rule, measured on the body
+  and stated as the share that obeys.** Both halves of that are load-bearing, and
+  both have been got wrong. Measured on the record the answer is 0% and always will
+  be, because the envelope alone exceeds the ceiling: a rule about what a session
+  writes, scored against something it does not write. And the first report of this
+  figure gave the share that *breaks* the rule under the name compliance — 55% where
+  **45% obey** — which reads as the convention working when it is the same number
+  saying it is not.
+
+  The line also prints the envelope's share of the re-read bill: **36%**, a floor no
+  convention about what sessions write can reach. Capping every body at 800
+  characters would bring the bill to 72% of what it is, so the rule's ceiling is a
+  28% saving.
+
 - **`fleetboard`'s header carries the date as well as the time.** The board is
   normally read on a long-lived `--watch` pane and glanced at in passing, where a
   bare `10:34` is consistent both with a redraw a minute ago and with a board that
@@ -42,6 +56,26 @@ entries and makes you confirm the bump against this list.
   anyone tests it in a fresh process.
 
 ### Fixed
+
+- **`fleetcost`'s two example costs were understated ~1.9x: they read the character
+  count as the whole record, and the record is not the message.** Every arrival
+  carries a near-constant envelope the receiver re-reads exactly like the body — a
+  line of prose, the `<cross-session-message ...>` tag naming the sender's socket,
+  name and mode, the close tag, and a paragraph of handling advice after it. Measured
+  over 2,419 arrivals: **722 mean, 723 median**, of which 543 is the trailing advice
+  alone. Reported 2026-10-13 by a session recounting the figure for a talk.
+
+  `scan()` always counted it, because it measures the whole record. The two printed
+  examples did not, and they are the lines anyone quotes, because they are stated in
+  terms of the 800-character convention from `comms.md` — which governs the **body**.
+  A message written to that rule was quoted at `~55,600 tok` where it costs
+  `~106,000`; a 4,000-character body costs `~328,000`, not `~278,000`. The examples
+  now name the body and print the measured envelope beside it.
+
+  **`AMPLIFICATION` does not move and is unchanged.** The envelope is in both of its
+  sums and divides out — the same reason the ratio survived the duplicate-transcript
+  bug that moved every count. Figures quoted for amplification stand; figures quoted
+  from the two example lines before this are low.
 
 - **`fleetboard --watch` held the configuration it started with, so an unparked
   session never left the parked list.** `CFG` was read at import. A watcher left up
