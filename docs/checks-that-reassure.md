@@ -132,7 +132,18 @@ Three mechanisms produce it.
   regardless. A mock makes the *response* a constant; whatever is in the
   **request** is then untested. Assert on the argv too.
 
-## The rule that covers all three
+- **A test that passed because the machine it ran on had the thing it was meant
+  to do without.** A new `fleetspawn` class called `load_tool` without a
+  `FakeConfig`, so it read the author's real `~/.config/fleet/fleet.toml` --
+  which exists here and nowhere else. It passed locally, four ways, and failed on
+  the first push (2026-10-13). The rule it broke is written down in CLAUDE.md:
+  no test may read the real configuration. **The environment that makes a rule
+  worth having is the one the author does not have**, which is why the rule
+  cannot be checked by running the suite in the usual place. Running it with
+  `HOME` pointed at an empty directory reproduces CI in two seconds, and is the
+  cheapest version of the discipline this whole document is about.
+
+## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and
 confirm that outcome was reachable under the conditions you actually ran in.**

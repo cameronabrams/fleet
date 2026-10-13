@@ -381,6 +381,12 @@ class TheRegistryIsTheHandleForAQuietSession(unittest.TestCase):
     it from" almost every time, having typed the color correctly.
     """
     def setUp(self):
+        # FakeConfig first: `fleetspawn` reads the configuration at IMPORT, so a
+        # class that loads the tool without one reads the real `~/.config/fleet`.
+        # This class did, and passed here and nowhere else -- CI has no fleet
+        # configuration, which is the point of the rule it broke.
+        self.cfg = FakeConfig()
+        self.addCleanup(self.cfg.close)
         self.spawn = load_tool("fleetspawn")
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
