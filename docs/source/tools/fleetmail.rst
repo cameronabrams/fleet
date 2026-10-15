@@ -9,7 +9,7 @@ Usage
 .. code-block:: text
 
    fleetmail send TO "TEXT" --as SESSION [--kind K] [--thread T] [--attach FILE] [--go]
-   fleetmail fetch [--go] [--nudge-wait SECONDS]
+   fleetmail fetch [--go] [--nudge-wait SECONDS] [--retry-wait SECONDS]
    fleetmail inbox
    fleetmail ack ID [TEXT] --as SESSION [--go]
 
@@ -133,6 +133,49 @@ delivers once.
 but never reached its session must be visible where a human looks, not only in a log.
 ``fleetmail inbox`` prints it plus anything quarantined or undelivered.
 
+A failed nudge is retried
+-------------------------
+
+Writing the file and telling the session are two things, and only the first used to be
+idempotent. Keying on the path is right for the file and wrong for the nudge: a message
+whose nudge failed was recorded, and every later ``fetch`` then skipped it as already
+handled. Delivery was attempted **once**.
+
+A message fetched on 2026-10-05 read ``needs a human`` for ten days for this reason. The
+nudge failed because the target pane's input line held text; the pane was typeable for
+almost all of the following ten days, and nothing ever looked again.
+
+So every ``fetch`` now re-nudges anything whose file was written and whose session was
+never told — **before** the ``no new mail`` check, which is where the old behavior hid:
+the one pass that could revisit a delivery sat behind the one condition guaranteed to
+be true for it. There is no flag to remember, because a flag would reproduce the defect
+exactly — something that only works when somebody thinks to look again.
+
+**The budget is the point, and it is short.** ``--nudge-wait`` is tuned for *the session
+is busy*, which clears in minutes, so it waits minutes. The condition that actually
+fired was *the input line holds text* — a half-typed draft or an open dialog — which
+lasts hours or days and which nobody is coming to clear. A longer wait is the wrong
+answer: it blocks the fetch and still gives up at the end. ``--retry-wait`` (45 s)
+asks only whether the pane is typeable *now*, and the patience lives in the repetition.
+
+Quarantined messages are not retried: quarantine is a refusal, not a transient failure.
+A record with no ``nudged`` key at all was never at the delivery stage and is likewise
+left alone — *never tried* and *tried and failed* are different states.
+
+``ack`` resolves the record
+---------------------------
+
+``fleetmail ack`` mails the sender and now also marks the local record ``acked``, which
+clears it from ``needs a human``. A session that replied to a message has evidently read
+it — better evidence than a nudge — and until 2026-10-15 the ack touched nothing locally,
+so a message the recipient had demonstrably answered still showed as undelivered with no
+tool able to clear it. The only remaining move was hand-editing the state file, which the
+state directory's own rules forbid.
+
+The record is amended only when the send **succeeds**, and the state says which way it
+was resolved: ``delivered (by ack; the nudge never landed)``, not a bare ``delivered``,
+because collapsing the two would lose the evidence that the delivery path had a bad day.
+
 **A mailbox that cannot be read is never "no mail".** A failed pull says so and exits 4.
 
 The board, when there is one
@@ -173,6 +216,11 @@ while nobody is logged in, the user manager needs ``loginctl enable-linger``.
 
 A fetch under a timer waits less patiently for a busy session than a hand-run one
 (``--nudge-wait``, 600 s in the printed unit): the next tick will try again.
+
+That last clause was written here before it was true. The next tick re-pulled the
+mailbox and skipped everything already recorded, so a *nudge* that failed was never
+retried — the page described the behavior the code was missing, which is a large part of
+why the gap went ten days without being noticed. It is true as of 2026-10-15.
 
 Exit codes
 ----------

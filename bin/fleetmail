@@ -205,23 +205,53 @@ def delivered():
     except (OSError, ValueError):
         return {}
 
-def record(path, **fields):
-    d = delivered()
-    d[path] = dict(at=time.strftime("%Y-%m-%dT%H:%M:%S%z"), **fields)
+def _write_delivered(d):
     os.makedirs(STATE, exist_ok=True)
     tmp = DELIVERED + ".tmp"
     with open(tmp, "w") as f:
         json.dump(d, f, indent=1)
     os.replace(tmp, DELIVERED)
 
+def record(path, **fields):
+    d = delivered()
+    d[path] = dict(at=time.strftime("%Y-%m-%dT%H:%M:%S%z"), **fields)
+    _write_delivered(d)
+
+def amend(path, **fields):
+    """Add to an existing record, keeping what is already there.
+
+    `record` replaces, which is right when a message is first handled and wrong
+    afterwards: a retry that rewrote the record would drop the `drop` path the
+    first delivery wrote, and the drop file is the only thing the session is
+    being pointed at. `at` is left alone -- it says when the message arrived,
+    not when this tool last looked at it.
+    """
+    d = delivered()
+    if path not in d:
+        return False
+    d[path].update(fields)
+    _write_delivered(d)
+    return True
+
 def delivery_state(seen, rel):
-    """What happened to this message here: a human must see an undelivered one."""
+    """What happened to this message here: a human must see an undelivered one.
+
+    Two ways to be resolved, because there are two ways a session can come to
+    know. `nudged` is this tool having told it. `acked` is the session having
+    replied to the sender, which it could only do by having read the thing --
+    better evidence than the nudge, and it used to leave the record untouched, so
+    a message the recipient had answered still read `needs a human`.
+    """
     rec = seen.get(rel)
     if not rec:
         return "not fetched"
     if rec.get("outcome") == "quarantined":
         return "QUARANTINED"
-    return "delivered" if rec.get("nudged") else "UNDELIVERED (file written, session not told)"
+    if rec.get("nudged"):
+        return "delivered"
+    if rec.get("acked"):
+        return "delivered (by ack; the nudge never landed)"
+    return "UNDELIVERED (file written, session not told)"
 
 def inbox_path(fleet):
     return os.path.join(MAIL["clone"], "mail", fleet, "INBOX.md")
@@ -324,6 +354,65 @@ def do_send(a):
     print(f"  {detail}\n")
     sys.exit(0 if ok else 4)
 
+def retry_undelivered(a, seen):
+    """Re-nudge anything whose file was written but whose session was never told.
+
+    **This is the fix, and the record flag was only the symptom.** Delivery used
+    to be attempted exactly once. A message fetched on 2026-10-05 sat at
+    `needs a human` for ten days because the nudge failed at that moment, and
+    nothing ever looked again -- while the pane was typeable for almost all of
+    those ten days.
+
+    The budget is the point. `fleetnudge`'s default is tuned for "the session is
+    busy", which clears in minutes, so it waits minutes. The condition that
+    actually fired was "the input line holds text" -- a half-typed draft or an
+    open dialog, which lasts hours or days and which nobody is coming to clear.
+    A longer wait is the wrong answer to that: waiting hours inside one call
+    blocks the poll and still gives up at the end. Retrying briefly, every poll,
+    for as long as it takes, matches a condition measured in days without any
+    single call being measured in days.
+
+    So it runs on the ordinary `fetch`, with no flag to remember. A flag would
+    have reproduced the defect exactly: something that only works when somebody
+    thinks to look again.
+    """
+    stuck = sorted(k for k, v in seen.items()
+                   if v.get("nudged") is False and not v.get("acked")
+                   and v.get("outcome") != "quarantined")
+    if not stuck:
+        return 0
+    print(f"  {len(stuck)} undelivered from an earlier fetch; retrying the nudge")
+    left = 0
+    for rel in stuck:
+        rec, path = seen[rel], os.path.join(MAIL["clone"], rel)
+        head, body = parse(path)
+        if head is None:
+            print(f"    {os.path.basename(rel)}: the message no longer reads; left as is")
+            left += 1
+            continue
+        session = head["to"].split("/", 1)[1]
+        drop = rec.get("drop") or os.path.join(DROPS, f"mail-{os.path.basename(path)}")
+        first = body.splitlines()[0] if body else ""
+        tail = f"; read drops/{os.path.basename(drop)}"
+        line = first[:max(0, NUDGE_MAX - len(tail))] + tail
+        if not a.go:
+            print(f"    would retry nudge {session}: {line[:80]}")
+            left += 1
+            continue
+        # The drop may have been cleaned up under us; the session is being
+        # pointed at it, so it has to be there when the nudge lands.
+        if not os.path.exists(drop):
+            os.makedirs(DROPS, exist_ok=True)
+            with open(drop, "w") as f:
+                f.write(HEADER.format(frm=head["from"]) + "\n"
+                        + "".join(f"{k}: {v}\n" for k, v in head.items()) + "\n" + body + "\n")
+        sent, why = nudge(session, os.path.basename(path)[:40], line,
+                          head["from"], True, a.retry_wait)
+        amend(rel, nudged=sent, detail=why, retried_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+        print(f"    {session}: {'nudged at last' if sent else 'still not typeable'} -- {why}")
+        left += not sent
+    return left
+
 def do_fetch(a):
     need_mail()
     ok, detail = pull()
@@ -337,10 +426,14 @@ def do_fetch(a):
            if os.path.basename(p) != "INBOX.md"
            and os.path.relpath(p, MAIL["clone"]) not in seen]
     print(f"\n  mailbox {MAIL['repo']}  ({detail})")
+    # Before the new-mail check, not after it. `no new mail` used to return here,
+    # which is how a message already fetched could never be retried: the one path
+    # that revisits a delivery sat behind the one condition guaranteed to be false
+    # for it.
+    problems = retry_undelivered(a, seen)
     if not new:
         print("  no new mail\n")
-        return
-    problems = 0
+        sys.exit(5 if problems else 0)
     for path in new:
         rel = os.path.relpath(path, MAIL["clone"])
         head, body = parse(path)
@@ -448,7 +541,8 @@ def do_inbox(a):
     else:
         print("  (no inbox yet; run fleetmail fetch)")
     stuck = {k: v for k, v in seen.items()
-             if v.get("outcome") == "quarantined" or v.get("nudged") is False}
+             if v.get("outcome") == "quarantined"
+             or (v.get("nudged") is False and not v.get("acked"))}
     if stuck:
         print("  needs a human:")
         for k, v in sorted(stuck.items()):
@@ -468,7 +562,21 @@ def do_ack(a):
         sys.exit(2)
     a.to, a.kind, a.thread = head["from"], "ack", head.get("thread", "")
     a.text, a.attach = f"ack: {a.text.strip() or 'read'}", None
-    do_send(a)
+    # `do_send` ends in sys.exit, so a statement written after the call never
+    # runs. The first version of this fix put the amend there and did nothing at
+    # all -- the same shape as the bug being fixed, where `ack` looked like it
+    # resolved the record and did not. Caught by its own test, which is the only
+    # reason it is not still there.
+    #
+    # Only on exit 0, and the code is re-raised untouched: the ack is evidence
+    # the session read the message, and it is only evidence once it has gone out.
+    # Amending first would let a failed send mark the message answered.
+    try:
+        do_send(a)
+    except SystemExit as e:
+        if e.code in (0, None) and amend(hit[0], acked=True):
+            print(f"  local record: {os.path.basename(hit[0])} is no longer undelivered\n")
+        raise
 
 def main():
     version_flag()
@@ -485,6 +593,13 @@ def main():
     f.add_argument("--go", action="store_true")
     f.add_argument("--nudge-wait", type=int, default=1800, dest="nudge_wait",
                    help="seconds fleetnudge may keep retrying a busy session (default 1800)")
+    # Deliberately small, and deliberately not --nudge-wait. A retry asks "is the
+    # pane typeable NOW"; the waiting is done by the next poll, not inside this
+    # call. A long budget here would block the fetch and still give up at the end,
+    # which is the behavior being fixed.
+    f.add_argument("--retry-wait", type=int, default=45, dest="retry_wait",
+                   help="seconds to spend on each retry of a previously undelivered "
+                        "nudge (default 45; the patience is in the repetition)")
     f.set_defaults(fn=do_fetch)
     i = sub.add_parser("inbox"); i.set_defaults(fn=do_inbox)
     t = sub.add_parser("timer")

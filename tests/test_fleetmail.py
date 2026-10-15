@@ -399,3 +399,247 @@ class Loopback(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AFailedNudgeUsedToBePermanent(Base):
+    """The file was written, the nudge failed, and nothing ever looked again.
+
+    A message fetched on 2026-10-05 read `needs a human` for ten days. Delivery
+    was attempted exactly once: `fetch` skips anything already in the delivery
+    record, which is right for the file and wrong for the nudge, and `no new mail`
+    returned before any other path could run. So the one pass that could revisit a
+    delivery sat behind the one condition guaranteed to be false for it.
+
+    **The budget matched the wrong failure.** `fleetnudge`'s default is tuned for
+    "the session is busy", which clears in minutes. What fired was "the input line
+    holds text" -- a half-typed draft or an open dialog -- which lasts hours or
+    days and which nobody is coming to clear. The pane was typeable for almost all
+    of those ten days.
+
+    Reported by coord 2026-10-15, with the ack demonstrated rather than assumed.
+    """
+    def setUp(self):
+        super().setUp()
+        self.waits = []
+
+    def stick_one(self, name="20260918T1200-south-coord-hits.md"):
+        """Fetch a message with the nudge failing, as it failed that day."""
+        self.write(f"mail/north/{name}", message())
+        self.nudge_ok = False
+        code, out = self.run_main("fetch", "--go")
+        self.assertEqual(code, 5, out)
+        self.nudges.clear()
+        return f"mail/north/{name}"
+
+    def test_a_later_fetch_retries_the_nudge(self):
+        rel = self.stick_one()
+        self.nudge_ok = True
+        code, out = self.run_main("fetch", "--go")
+        self.assertEqual(len(self.nudges), 1, "the retry never happened: %s" % out)
+        self.assertEqual(code, 0, out)
+        self.assertTrue(self.m.delivered()[rel]["nudged"])
+
+    def test_it_retries_even_when_there_is_no_new_mail(self):
+        """The exact shape of the bug. `no new mail` is the normal state of a
+        mailbox, and it used to return before anything could retry."""
+        self.stick_one()
+        self.nudge_ok = True
+        code, out = self.run_main("fetch", "--go")
+        self.assertIn("no new mail", out)
+        self.assertEqual(len(self.nudges), 1, "returned at `no new mail` without retrying")
+
+    def test_the_retry_needs_no_flag(self):
+        """A flag would reproduce the defect exactly: something that only works
+        when somebody thinks to look again. Nobody looked for ten days."""
+        import inspect
+        src = inspect.getsource(self.m.do_fetch)
+        self.assertIn("retry_undelivered(a, seen)", src)
+        self.assertNotIn("if a.retry", src)
+
+    def patches(self):
+        """The harness's own mock, extended to record the budget.
+
+        Patching `nudge` in the test instead does not work and does not fail
+        loudly: `run_main` enters its patches inside whatever the test set up, so
+        the harness's mock wins and the test's list stays empty. The first version
+        of this read that empty list as the call never happening.
+        """
+        p = super().patches()
+        p[-1] = mock.patch.object(
+            self.m, "nudge",
+            side_effect=lambda s, i, line, frm, go, wait=0:
+            (self.waits.append(wait) or self.nudges.append((s, line, frm))
+             or (self.nudge_ok, "why")))
+        return p
+
+    def test_the_retry_budget_is_short_not_long(self):
+        """The patience is in the repetition, not in any one call. Waiting hours
+        inside one fetch blocks the poll and still gives up at the end."""
+        self.stick_one()
+        self.assertEqual(self.waits, [1800],
+                         "first delivery keeps the busy-session budget")
+        self.waits.clear()
+        self.nudge_ok = True
+        self.run_main("fetch", "--go")
+        self.assertEqual(self.waits, [45], "a retry must not block the poll")
+
+    def test_the_retry_keeps_the_drop_the_session_is_pointed_at(self):
+        """`record` replaces; a retry that used it would drop the `drop` path, and
+        the drop is the only thing the nudge line names."""
+        rel = self.stick_one()
+        before = self.m.delivered()[rel]["drop"]
+        self.nudge_ok = True
+        self.run_main("fetch", "--go")
+        self.assertEqual(self.m.delivered()[rel]["drop"], before)
+
+    def test_a_retry_rewrites_a_drop_that_was_cleaned_up(self):
+        rel = self.stick_one()
+        os.remove(self.m.delivered()[rel]["drop"])
+        self.nudge_ok = True
+        self.run_main("fetch", "--go")
+        self.assertTrue(os.path.exists(self.m.delivered()[rel]["drop"]))
+
+    def test_a_plan_retries_nothing(self):
+        self.stick_one()
+        self.nudge_ok = True
+        code, out = self.run_main("fetch")
+        self.assertEqual(self.nudges, [], "a dry run nudged a live session")
+        self.assertIn("would retry", out)
+
+    def test_a_still_failing_retry_stays_undelivered_and_says_so(self):
+        rel = self.stick_one()
+        code, out = self.run_main("fetch", "--go")
+        self.assertEqual(code, 5, out)
+        self.assertFalse(self.m.delivered()[rel]["nudged"])
+        self.assertIn("still not typeable", out)
+
+    def test_a_quarantined_message_is_not_retried(self):
+        """Quarantine is a refusal, not a transient failure. Retrying it would be
+        re-offering a message this fleet decided not to deliver.
+
+        Built as a record rather than driven through a fetch, because a fetched
+        quarantine carries no `nudged` key at all and so is already excluded by
+        the `is False` test -- which means the earlier version of this passed with
+        the quarantine check deleted. It proved the filter it names was there by
+        exercising a different one.
+
+        This state is reachable: a retry now amends rather than replaces, so a
+        record can carry a failed `nudged` and later be quarantined.
+        """
+        self.write("mail/north/20260918T1200-south-coord-hits.md", message())
+        self.m.record("mail/north/20260918T1200-south-coord-hits.md",
+                      outcome="quarantined", nudged=False, reason="guard term")
+        self.run_main("fetch", "--go")
+        self.assertEqual(self.nudges, [])
+
+    def test_never_tried_is_not_the_same_as_tried_and_failed(self):
+        """`nudged is False` means delivery was attempted and did not land. A
+        record with no `nudged` key was never at that stage, and must not be
+        swept into the retry pass on a falsy test."""
+        self.write("mail/north/20260918T1200-south-coord-hits.md", message())
+        self.m.record("mail/north/20260918T1200-south-coord-hits.md",
+                      outcome="quarantined", reason="no front matter")
+        self.run_main("fetch", "--go")
+        self.assertEqual(self.nudges, [])
+
+
+class AnAckClosesTheLoopLocally(Base):
+    """`ack` mailed the sender and never touched the local record, so a message
+    the recipient had demonstrably read still showed `needs a human` -- and the
+    only remaining move was hand-editing the state file, which the state
+    directory's own rules forbid. A tool whose only escape hatch is the thing its
+    own rules forbid has a gap, not a workflow."""
+    def stuck(self):
+        self.write("mail/north/20260918T1200-south-coord-hits.md", message())
+        self.nudge_ok = False
+        self.run_main("fetch", "--go")
+        return "mail/north/20260918T1200-south-coord-hits.md"
+
+    def test_acking_clears_the_needs_a_human_line(self):
+        rel = self.stuck()
+        self.assertIn("needs a human", self.run_main("inbox")[1])
+        code, out = self.run_main("ack", "20260918T1200", "read it",
+                                  "--as", "mailtest", "--go")
+        self.assertEqual(code, 0, out)
+        self.assertTrue(self.m.delivered()[rel]["acked"])
+        self.assertNotIn("needs a human", self.run_main("inbox")[1])
+
+    def test_the_ack_still_reaches_the_sender(self):
+        """The local bookkeeping is an addition. If it ever replaced the send, a
+        session would believe it had replied to another fleet and it would not
+        have."""
+        self.stuck()
+        code, out = self.run_main("ack", "20260918T1200", "read it",
+                                  "--as", "mailtest", "--go")
+        sent = [p for p in os.listdir(os.path.join(self.clone, "mail", "south"))
+                if p != "INBOX.md"]
+        self.assertEqual(len(sent), 1, out)
+
+    def test_a_failed_send_does_not_mark_it_acked(self):
+        """The ack is evidence only once it has gone out. Amending first is the
+        obvious shape and it is wrong: a session would believe it had replied to
+        another fleet when nothing left this machine, and the `needs a human`
+        line -- the only thing still saying so -- would be gone."""
+        rel = self.stuck()
+        self.pull_ok = (False, "could not reach the mailbox")
+        code, out = self.run_main("ack", "20260918T1200", "read it",
+                                  "--as", "mailtest", "--go")
+        self.assertEqual(code, 4, out)
+        self.assertFalse(self.m.delivered()[rel].get("acked"),
+                         "marked acked although the ack never left")
+        self.assertIn("needs a human", self.run_main("inbox")[1])
+
+    def test_an_acked_message_is_not_retried(self):
+        """It is resolved. Re-nudging would tell a session about a message it has
+        already answered."""
+        self.stuck()
+        self.run_main("ack", "20260918T1200", "read it", "--as", "mailtest", "--go")
+        self.nudges.clear()
+        self.nudge_ok = True
+        self.run_main("fetch", "--go")
+        self.assertEqual(self.nudges, [])
+
+    def test_the_state_says_how_it_was_resolved(self):
+        """Not just "delivered". The nudge never landed, and a record that hid
+        that would lose the only evidence the delivery path had a bad day."""
+        rel = self.stuck()
+        self.run_main("ack", "20260918T1200", "read it", "--as", "mailtest", "--go")
+        state = self.m.delivery_state(self.m.delivered(), rel)
+        self.assertIn("delivered", state)
+        self.assertIn("nudge never landed", state)
+
+
+class Amending(Base):
+    def test_it_keeps_what_is_already_there(self):
+        """`at` is planted as a distinct old value, not read back from `record`.
+
+        `time.strftime` has one-second resolution, so a record written and amended
+        in the same test produces the same stamp either way: the first version of
+        this compared the two and passed with `amend` overwriting `at` on every
+        call. A timestamp test that does not move the clock is not a test.
+        """
+        self.m.record("x", outcome="delivered", drop="/d", nudged=False)
+        d = self.m.delivered()
+        d["x"]["at"] = "2026-10-05T21:15:18-0400"        # ten days before the retry
+        self.m._write_delivered(d)
+
+        self.assertTrue(self.m.amend("x", nudged=True))
+        rec = self.m.delivered()["x"]
+        self.assertEqual(rec["at"], "2026-10-05T21:15:18-0400",
+                         "`at` says when the message arrived, not when it was looked at")
+        self.assertEqual((rec["drop"], rec["nudged"]), ("/d", True))
+        self.assertEqual(rec["outcome"], "delivered")
+
+    def test_a_retry_records_when_it_looked_separately(self):
+        """The arrival time and the last attempt are different facts and both are
+        wanted: how long a message sat undelivered is the measurement that found
+        this bug in the first place."""
+        self.m.record("x", outcome="delivered", drop="/d", nudged=False)
+        self.m.amend("x", nudged=True, retried_at="2026-10-15T11:46:00-0400")
+        rec = self.m.delivered()["x"]
+        self.assertIn("retried_at", rec)
+        self.assertNotEqual(rec["at"], rec["retried_at"])
+
+    def test_it_refuses_to_invent_a_record(self):
+        self.assertFalse(self.m.amend("never-seen", nudged=True))
+        self.assertNotIn("never-seen", self.m.delivered())

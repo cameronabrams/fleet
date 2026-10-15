@@ -142,6 +142,42 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **A failed `fleetmail` nudge was permanent, and nothing could clear it.** `fetch`
+  keys on the message path, which is right for writing the file and wrong for telling
+  the session: a message whose nudge failed was recorded as handled, so every later
+  fetch skipped it. Delivery was attempted **once**. A message fetched 2026-10-05 read
+  `needs a human` for ten days; the nudge had failed because the target pane's input
+  line held text, and the pane was typeable for almost all of those ten days. Reported
+  by coord 2026-10-15.
+
+  Every `fetch` now re-nudges anything whose file was written and whose session was
+  never told, **before** the `no new mail` check — where the old behavior hid, since
+  the one pass that could revisit a delivery sat behind the one condition guaranteed
+  to be true for it. No flag: a flag would reproduce the defect exactly, being
+  something that only works when somebody thinks to look again.
+
+  **The budget is the point.** `--nudge-wait` is tuned for *the session is busy*, which
+  clears in minutes. What fired was *the input line holds text*, which lasts days and
+  which nobody is coming to clear. A longer wait blocks the fetch and still gives up at
+  the end; the new `--retry-wait` (45 s) asks only whether the pane is typeable now, and
+  the patience lives in the repetition.
+
+  **The documentation already promised this.** "The next tick will try again" was on the
+  fleetmail page before it was true, which is a large part of why the gap went ten days
+  unnoticed — a documented promise the code does not keep stops anyone from looking.
+
+- **`fleetmail ack` mailed the sender and changed nothing locally**, so a message the
+  recipient had demonstrably read still showed `needs a human`, with no tool able to
+  clear it and hand-editing the state file forbidden by that directory's own rules. It
+  now marks the record `acked`, but only when the send succeeds — amending first would
+  let a failed ack mark a message answered while nothing left the machine. The state
+  distinguishes how it was resolved (`delivered (by ack; the nudge never landed)`)
+  rather than collapsing it into a bare `delivered`.
+
+  The first version of this fix did nothing at all: `do_send` ends in `sys.exit`, so the
+  amend written after the call was unreachable — the same shape as the bug, where `ack`
+  looked like it resolved the record and did not. Its own test caught it.
+
 - **Nothing could read a version on an npm install, and the staleness check could
   not fail.** `npm install -g @anthropic-ai/claude-code` keeps one binary under
   `node_modules/@anthropic-ai/claude-code/bin/` and upgrades it **in place**; the
