@@ -152,6 +152,23 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **`fleetnudge` sent a `not reached` phone push for a session that was reached.**
+  The same lie as the delivery classifier, one channel along: when the tool runs
+  inside the session it would type into, the in-session task already notifies it,
+  and the `[notify]` push still went out saying nobody had been told. Latent since
+  2026-09-14 only because the mute file has existed since then — so the test asserts
+  `push` is not *called*, with the mute irrelevant, rather than reading the log
+  string, which passes either way.
+
+  **Both channels are decided by one value.** The push and the `notified_otherwise`
+  field are the same claim to two audiences, so `give_up` converts `informed` once
+  and reads the result twice. Two derivations of one fact agree until they do not,
+  and this fact's first channel was the classifier fixed the same day.
+
+  Every other refusal still pushes, which is what the fallback is for; the log
+  records why there was no push rather than omitting the field, since `fleetwatch`
+  reads an absent push result as "a human was not told".
+
 - **`fleetwatch` reported declined nudges as delivery holes — 2 of the 3 rows then
   driving "a nudge never arrived and no push went out".** The classifier bucketed
   on `outcome` alone. `fleetnudge` declines when it is running *inside* the session

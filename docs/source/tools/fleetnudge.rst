@@ -52,6 +52,24 @@ Refused (exit 2)
 - a transcript that cannot be verified, since delivery could not be confirmed
 - a bad job id, or empty, long or multi-line ``TEXT``
 
+**One refusal is not a failure to deliver, and it is the only one.** When the tool
+is running *inside* the session it would type into, the in-session task doing the
+running already notifies it — that task's own output lands in that session's
+transcript. The content arrived; the nudge was merely redundant. So that record is
+written with ``notified_otherwise: true``, :doc:`fleetwatch` leaves it out of the
+delivery holes, and **no phone push is sent**: ``fleetnudge: <session> not reached``
+would be false on the phone for exactly the reason it was false on the board.
+
+Both follow from one value in ``give_up``, not from two tests of the same
+condition. They are the same claim — *nobody was told* — made to two audiences, and
+two derivations of one fact agree until the day they do not.
+
+Every *other* refusal does send the push, because every other one means nobody was
+told. The log records ``not pushed: the session was notified by its own in-session
+task`` rather than leaving the field out: :doc:`fleetwatch` reads an absent push
+result as "a human was not told", so an omission would be the same false alarm one
+field along.
+
 With ``--go``
 -------------
 

@@ -280,12 +280,16 @@ class OneTypistAtATime(Base):
 
 
 class Refuse(Base):
-    def refused(self, text, *argv, job="123456", msg="round 4 finished"):
+    def refused(self, text, *argv, job="123456", msg="round 4 finished", pushes=1):
+        """`pushes` is 1 for every refusal but one, and the default is the point:
+        a refusal means nobody was told, so the human hears of it by the fallback
+        channel. The exception is the session that was told by its own in-session
+        task -- see `test_inside_the_session`."""
         code, out = self.go(msg, *argv, job=job)
         self.assertEqual(code, 2, out)
         self.assertIn(text, out)
         self.assertEqual(self.keys(), [])
-        self.assertEqual(len(self.pushes), 1)          # --go: the human still hears of it
+        self.assertEqual(len(self.pushes), pushes)     # --go: the human still hears of it
         self.assertEqual(self.log()[-1]["outcome"], "not delivered")
 
     def test_bad_job(self):
@@ -339,8 +343,13 @@ class Refuse(Base):
         self.refused("2 sessions answer")
 
     def test_inside_the_session(self):
+        """The one refusal that sends NO push. Every other one here means nobody
+        was told, so the phone is the fallback; this one means the session was
+        told, by the in-session task running the nudge, whose own output lands in
+        that session's transcript. `fleetnudge: alpha not reached` would be false
+        on the phone for exactly the reason it was false on the board."""
         self.ancestors = {4242}
-        self.refused("inside the session itself")
+        self.refused("inside the session itself", pushes=0)
 
     def test_unverified_transcript(self):
         self.agents = None
@@ -516,6 +525,58 @@ class NotDeliveredIsNotAlwaysLost(Base):
         self.assertEqual(len(bad), 1, out)
         self.assertIn("sessions answer", bad[0]["reason"])
         self.assertIs(bad[0]["notified_otherwise"], False)
+
+    def test_no_phone_push_goes_out_for_an_informed_decline(self):
+        """The same lie, one channel along: the push read `fleetnudge: alpha not
+        reached` for a session that WAS reached.
+
+        Asserted on `push` not being CALLED, not on what the log says about it.
+        The real system has had a mute file since 2026-09-14, so `push()` returns
+        "push muted" and sends nothing either way -- a test that only read the log
+        string would pass against the bug, and the bug would stay latent until the
+        day somebody cleared the mute.
+        """
+        self.ancestors = {4242}
+        code, out = self.go()
+        self.assertEqual(code, 2, out)
+        self.assertEqual(self.pushes, [],
+                         "pushed `not reached` for a session that was reached")
+        bad = [r for r in self.log() if r["outcome"] == "not delivered"]
+        self.assertEqual(bad[0]["push"], self.n.NO_PUSH_INFORMED)
+
+    def test_the_log_says_why_rather_than_leaving_the_field_out(self):
+        """An absent push field is read by `fleetwatch` as "a human was not told",
+        so dropping it would be the same false alarm one field along."""
+        self.ancestors = {4242}
+        self.go()
+        bad = [r for r in self.log() if r["outcome"] == "not delivered"]
+        self.assertIn("push", bad[0])
+        self.assertNotEqual(bad[0]["push"], "")
+
+    def test_a_real_hole_still_reaches_the_phone(self):
+        """The direction that matters. Suppressing one false push must not make
+        the fallback quieter for the case it exists for."""
+        self.lands = False
+        code, out = self.go()
+        self.assertEqual(code, 4, out)
+        self.assertEqual(len(self.pushes), 1, "a genuine hole sent no push")
+        self.assertIn("not reached", self.pushes[0][0])
+
+    def test_both_channels_are_decided_by_one_value(self):
+        """coord's condition, and the reason this is one `if` rather than two: the
+        push and the log field are the same claim to two audiences. Pinned on the
+        source, because the drift this prevents would look correct in any single
+        test -- each channel right on its own, the pair disagreeing."""
+        import ast
+        src = open(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "bin", "fleetnudge")).read()
+        fn = next(n for n in ast.walk(ast.parse(src))
+                  if isinstance(n, ast.FunctionDef) and n.name == "give_up")
+        names = [ast.unparse(n) for n in ast.walk(fn) if isinstance(n, ast.Name)]
+        self.assertGreaterEqual(names.count("notified_otherwise"), 2,
+                                "the push and the log must read the same value")
+        self.assertEqual(ast.unparse(fn).count("bool(informed)"), 1,
+                         "`informed` is converted once; both channels read the result")
 
     def test_a_plan_still_refuses_when_it_is_in_session(self):
         """`--go` is what the kind feeds; the dry run must not start reporting the

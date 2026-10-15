@@ -269,18 +269,37 @@ def push(title, body):
     except OSError as e:
         return f"push FAILED: {e}"
 
+# What the log records in place of a push result when no push was warranted. It is
+# a sentence, not an absence: `fleetwatch` reads a missing push field as "a human
+# was not told", which would be the same false alarm one field along.
+NO_PUSH_INFORMED = "not pushed: the session was notified by its own in-session task"
+
+
 def give_up(code, session, job, text, reason, mail_from=None, informed=False):
+    # ONE value, both channels. The phone push and the log field are the same claim
+    # made to two audiences -- "nobody was told" -- so they are decided here, from
+    # this, and never derived twice. Two derivations of one fact agreeing for a
+    # reason nobody wrote down is the family this repository keeps finding, and the
+    # classifier fixed on 2026-10-15 was that fact's first channel.
+    notified_otherwise = bool(informed)
+    # The push said `fleetnudge: <session> not reached` for a session that WAS
+    # reached -- by the in-session task running this, whose own output lands in
+    # that session's transcript. Latent since 2026-09-14 only because the mute file
+    # has existed since then, which is why it is pinned by a test rather than left
+    # to be noticed.
+    pushed = NO_PUSH_INFORMED if notified_otherwise else push(
+        f"fleetnudge: {session} not reached",
+        f"{tag(session, job, mail_from)} {text}\nNot delivered: {reason}")
     # mail_from travels with the FAILURE too, not only with the success: a piece of
     # mail that never arrived is the case a reader most needs to identify as mail,
     # and fleetwatch reads these records to find it.
-    pushed = push(f"fleetnudge: {session} not reached",
-                  f"{tag(session, job, mail_from)} {text}\nNot delivered: {reason}")
+    #
     # `notified_otherwise` is written on EVERY not-delivered record, true or false,
     # rather than only when true. A reader can then tell "this nudge predates the
     # field" from "this nudge lost the news", which an absent key cannot say.
     log(session=session, job=job, text=text, outcome="not delivered", code=code,
         reason=reason, push=pushed, mail_from=mail_from,
-        notified_otherwise=bool(informed))
+        notified_otherwise=notified_otherwise)
     print(f"\n  NOT DELIVERED: {reason}\n  {pushed}\n")
     sys.exit(code)
 
