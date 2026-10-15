@@ -431,7 +431,7 @@ So:
 > **A ledger may assert immutable facts. It may not assert mutable ones.**
 
 A transcript uuid is immutable. A working directory at the moment of parking is
-immutable *if it is labelled as of that moment*. A pid, a HEAD, a runtime
+immutable *if it is labeled as of that moment*. A pid, a HEAD, a runtime
 inventory and an approval are all mutable, and a mutable fact in a file read by a
 session that cannot check it is a defect however true it was when written.
 

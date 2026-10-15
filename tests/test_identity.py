@@ -45,7 +45,7 @@ class Attribute(unittest.TestCase):
         ['htpolynet-30', 'htpolynet-8c', 'htpolynet-repo'], so the map correctly
         learns htpolynet-8c -> htpolynet-repo. A one-off Cameron started by hand in
         the same directory recorded only ['htpolynet-8c'] -- and inherited that
-        lineage by bare name, drawn inside the role's lane and labelled
+        lineage by bare name, drawn inside the role's lane and labeled
         "renamed: 'htpolynet-8c' became 'htpolynet-repo'". It was never renamed and
         was never that role. A confident label over an inference, and the record
         that carried it said `inferred: true` with an empty rename list in the same

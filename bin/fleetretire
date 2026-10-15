@@ -131,7 +131,7 @@ def gather(a):
         problems.append("no tmux pane holds this process -- stop it by hand")
     else:
         if pane["label"] and pane["label"] != a.name:
-            notes.append(f"pane {pane['pane']} is labelled @agent={pane['label']}")
+            notes.append(f"pane {pane['pane']} is labeled @agent={pane['label']}")
         _, screen, _ = tmux("capture-pane", "-p", "-t", pane["pane"])
         if any(m in screen for m in TRUST_MARKERS):
             problems.append(f"pane {pane['pane']} shows the folder-trust prompt")

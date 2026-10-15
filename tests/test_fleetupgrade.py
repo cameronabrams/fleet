@@ -156,7 +156,7 @@ class SessionLeaders(unittest.TestCase):
         self.cfg.close()
 
     def test_polling_is_evidence_about_shape_not_about_being_stuck(self):
-        """`immortal` still recognises a poll loop, and that is now all it claims.
+        """`immortal` still recognizes a poll loop, and that is now all it claims.
 
         It used to be the whole test for "this will block the roll", and the line
         this test replaces asserted that of these two, "only the first one blocks

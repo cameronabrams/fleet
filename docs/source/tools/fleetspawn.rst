@@ -23,7 +23,7 @@ Preflight
 
 Blocks, and changes nothing, on any of: a missing directory, a missing brief, no
 ``[colors]`` entry for the name, no tmux server, a live claude already answering to
-``NAME``, a pane already labelled ``@agent=NAME``, or a nonexistent
+``NAME``, a pane already labeled ``@agent=NAME``, or a nonexistent
 ``--beside`` pane. Fix the cause; do not work around it.
 
 A live claude answers to the name in its transcript's last ``agent-name`` record,
@@ -130,4 +130,4 @@ Exit codes
      - stopped at the resume-mode prompt (summary or full is the human's choice)
 
 A process with the right name in the right directory exists *before* the trust
-prompt is answered, so ``--check`` also reads the labelled pane for the prompt.
+prompt is answered, so ``--check`` also reads the labeled pane for the prompt.

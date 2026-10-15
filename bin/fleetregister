@@ -29,7 +29,7 @@ set -u
 
 # One version for everything in this repository, read from the one place it is
 # written. Answered before argument handling: the tools that follow take a
-# positional, and one of them refuses an argument it does not recognise.
+# positional, and one of them refuses an argument it does not recognize.
 case "${1:-}" in
   --version|-V)
     HERE_V=$(dirname "$(readlink -f "$0")")

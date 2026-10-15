@@ -9,7 +9,7 @@ The `fleet-upgrade` skill drives the sequence; this supplies the facts.
 The point of the report is that a restart is cheap for context and NOT cheap for
 runtime. A resumed session keeps its transcript and loses every Monitor,
 background job and cross-session subscription it started -- and its transcript
-still shows it creating them, so it cannot tell from inside. The only defence is
+still shows it creating them, so it cannot tell from inside. The only defense is
 a re-arm ledger written BEFORE the restart. This flags who lacks one.
 
   fleetupgrade           table + ordered plan

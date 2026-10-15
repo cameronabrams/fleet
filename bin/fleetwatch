@@ -363,7 +363,7 @@ def lost_the_news(r):
     """Whether a `not delivered` record means nobody was told.
 
     False only on positive evidence that the content arrived another way. An
-    absent field and an unrecognised reason both read as a hole, which is the
+    absent field and an unrecognized reason both read as a hole, which is the
     direction that keeps a real one visible.
     """
     if r.get("notified_otherwise") is not None:
@@ -467,7 +467,7 @@ def print_hole(r):
               % r["_later"])
 
 def _stamp_epoch(t):
-    """A wall-clock time in the human's zone, labelled. An unlabelled time in the
+    """A wall-clock time in the human's zone, labeled. An unlabelled time in the
     wrong zone reads as right, which is why fc.display_zone makes the caller
     label it."""
     if not t:

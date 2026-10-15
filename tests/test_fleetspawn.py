@@ -57,7 +57,7 @@ class ReadinessOutlivesTheBanner(unittest.TestCase):
 
     Reported 2026-10-07: five `--resume` unparks in one day, plus two the day
     before, every one reported `TIMED OUT: no live claude named X` and every one
-    actually up, correct and labelled -- confirmed by `--check` seconds later.
+    actually up, correct and labeled -- confirmed by `--check` seconds later.
     **180s failed where 60s had succeeded**, which is the tell that it was never
     about duration: a marker that is gone cannot arrive by waiting.
 

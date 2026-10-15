@@ -195,7 +195,7 @@ class RetiredAllFlag(unittest.TestCase):
         self.assertNotIn("no manifest at", r.stdout + r.stderr)
 
     def test_a_session_actually_named_all_is_still_restorable(self):
-        """The guard keys on the flag, not the word. A session labelled `all` is
+        """The guard keys on the flag, not the word. A session labeled `all` is
         a legitimate positional and must not be hijacked by it."""
         with open(os.path.join(APP, "bin", "fleetrestore")) as f:
             src = f.read()

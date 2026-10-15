@@ -3,7 +3,7 @@ fleetwaiting
 
 .. tooldoc:: fleetwaiting
 
-For each labelled pane, it finds the session's transcript — preferring one that
+For each labeled pane, it finds the session's transcript — preferring one that
 self-reports the pane's label — and scans the last 2.5 MB of it. Only the
 session's own words count: its assistant text and the messages it sent with
 ``SendMessage``. Messages sent *to* it are ignored, so a sender's blocking language

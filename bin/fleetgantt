@@ -21,7 +21,7 @@ and configuration:
            last two are inferences and drawn as such
   events   <config>/events.toml (declared), plus claude versions reaching two or
            more roles and park/retire dates (derived)
-  times    shown in [human] timezone_file / timezone, labelled on the page
+  times    shown in [human] timezone_file / timezone, labeled on the page
 
 A transcript that belongs to no role and ran in no role's directory is counted in
 the footer, not drawn (--all draws it in the unattached lane).
@@ -183,8 +183,8 @@ def build(a):
     # refused by `place_named=False` below, so the argument only populates a table
     # nothing then acts on. What it does change is what the directory branch would
     # let the chart SAY: it maps every non-current name in a role's directory to
-    # that role, so a genuine one-off would be labelled that role's earlier name.
-    # Caught by a test. Labelling from the directory instead is no better: a
+    # that role, so a genuine one-off would be labeled that role's earlier name.
+    # Caught by a test. Labeling from the directory instead is no better: a
     # transcript's project dir is where its FILE sits, which is not where it ran
     # once a session has moved -- one of the six records cwd ~/Git/mendeley-mirror
     # while its transcript lives under `-home-cfa-Git-offprint`. Neither label is

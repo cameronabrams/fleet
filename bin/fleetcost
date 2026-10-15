@@ -14,7 +14,7 @@ hitting it -- while the output still called itself an over-count (reported
 
 Survival is still a model, and now a defensible one: a message is re-read on every
 assistant turn until the context holding it is COMPACTED, which is what actually
-evicts it. The old byte window modelled a sliding cap that does not exist --
+evicts it. The old byte window modeled a sliding cap that does not exist --
 compaction summarizes rather than slides -- and put survival at a third of what
 the compaction boundaries in the same transcripts show.
 

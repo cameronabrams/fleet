@@ -173,7 +173,7 @@ def main():
     # and a usage line -- correct, and no help at all to someone whose machine
     # has just come back and who is typing the command they remember. The
     # coordinator typed it on 2026-10-05 preparing a reboot, from a drop written
-    # before the flag was removed. Keyed on the flag, so a session LABELLED
+    # before the flag was removed. Keyed on the flag, so a session LABELED
     # `all` is still an ordinary positional.
     if "--all" in sys.argv[1:]:
         sys.exit("fleetrestore: --all was retired; the bare command is the "

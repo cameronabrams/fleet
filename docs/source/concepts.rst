@@ -112,10 +112,10 @@ one group had outgrown any single window.
 The rename ran in four steps, and could not have run in fewer. The label lives in
 tmux runtime state, not in this repository, so code and panes cannot change at the
 same instant: the moment the tools stopped reading ``@repo``, every pane still
-carrying it would have stopped being recognised — the whole fleet at once, with
+carrying it would have stopped being recognized — the whole fleet at once, with
 ``fleetsnap`` then writing a snapshot of nothing over a good manifest. That is not
 a worry, it is a measurement: with the fallback removed before the panes were
-re-stamped, **0 of 14** sessions were recognised; with it, 14 of 14. So: read
+re-stamped, **0 of 14** sessions were recognized; with it, 14 of 14. So: read
 both, re-stamp every pane, drop the fallback, unset the old option. Any rename of
 a label that lives outside the repository has the same shape.
 

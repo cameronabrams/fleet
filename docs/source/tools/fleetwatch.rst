@@ -82,7 +82,7 @@ tmux's own ``lock-after-time`` with a ``lock-command`` that actually exists on t
 machine. Check that one by hand: a lock whose command is missing fails toward
 unlocked.
 
-Times are shown in the zone from ``[human]`` (:doc:`../configuration`) and labelled,
+Times are shown in the zone from ``[human]`` (:doc:`../configuration`) and labeled,
 because an unlabelled time in the wrong zone reads as right.
 
 Did the result reach the session?
@@ -121,7 +121,7 @@ decline is code 2, which it shares with caller errors that genuinely lose the ne
 would trade one defect for its mirror image, and the mirror image is the one that
 matters: a real hole rendered as fine. So ``fleetnudge`` records
 ``notified_otherwise`` on every undelivered record, true *and* false, and this
-reads the field. An absent field and an unrecognised reason are both read as a
+reads the field. An absent field and an unrecognized reason are both read as a
 hole.
 
 One exception, marked as such in the code: records written before 2026-10-15 carry

@@ -66,7 +66,7 @@ one-off — is not placed by directory: it has said who it is.
 Rule 2 needs **this** transcript to have recorded both names. A rename known only
 from another transcript places nothing here, because a lane states an identity and
 that evidence cannot tell a real rename from two sessions that shared a name
-(2026-09-22). :doc:`fleetlog` keeps such a mapping, labelled *from another
+(2026-09-22). :doc:`fleetlog` keeps such a mapping, labeled *from another
 transcript*, because a message graph has no lane to mislabel.
 
 So the unattached lane holds transcripts this chart **declined to place**, which

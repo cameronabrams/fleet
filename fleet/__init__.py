@@ -19,7 +19,7 @@ def version_flag(argv=None, prog=None):
     Every tool ships from this repository at one version, so there is one number
     and one place it is written. The awkward part was never the flag: five tools
     parse `sys.argv` by hand and the rest use argparse, and `fleetwatch` now
-    REFUSES an argument it does not recognise -- so a flag added per tool would be
+    REFUSES an argument it does not recognize -- so a flag added per tool would be
     five different shapes and one new refusal to remember. Answering it first
     costs each tool one line and changes no exit code.
 

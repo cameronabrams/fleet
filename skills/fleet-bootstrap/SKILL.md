@@ -36,7 +36,7 @@ manifest, a checkpoint or your memory says.
   `[paths].conventions` points at it. **A new fleet does not inherit the lessons of
   an old one unless this file carries them.** Read it with the human and delete
   rules that do not apply rather than shipping them unread.
-- You are the coordinator, and the human launched you in a pane labelled for it
+- You are the coordinator, and the human launched you in a pane labeled for it
   (`tmux set -p @agent coord`). You cannot spawn yourself.
 - **The coordinator's working directory is the fleet STATE directory**, with the
   application and configuration as added directories
@@ -96,7 +96,7 @@ explicit approval before spawning anything. Adding a pane changes the human's sc
   roles to "use" idle sessions — merging pours one role's context into another's,
   and every turn re-reads it.
 - **Authority stays with the human.** Do not design any session, yourself included,
-  as holding it. Relay, quoted and labelled.
+  as holding it. Relay, quoted and labeled.
 
 ### 1d. Order of spawning
 
@@ -146,7 +146,7 @@ UNATTRIBUTED — correctly, since nothing declared them.
     fleetspawn <name> <dir> --beside <pane> --go
 
 Preflight blocks on: missing directory, missing brief, no `[colors]` entry, no tmux, a live claude already
-`--name`d this, a pane already labelled this. Do not work around a block; fix its
+`--name`d this, a pane already labeled this. Do not work around a block; fix its
 cause. `[spawn]` in `fleet.toml` may set `env` (e.g. a notification flag) and
 `first_prompt`; the default prompt tells the session to read its brief.
 
@@ -167,7 +167,7 @@ scratchpad) show no prompt, so a test there cannot exercise this path.
 
 ### 2g. Verify — each check must be able to fail
 
-1. `fleetspawn --check <name> <dir>` — exactly one process, right cwd, pane labelled.
+1. `fleetspawn --check <name> <dir>` — exactly one process, right cwd, pane labeled.
    It reports WRONG DIRECTORY and duplicate names; it has been seen to.
 2. `ListAgents` lists `<name>` once. Two rows with one name make it unaddressable by
    name — find and resolve the duplicate before anyone messages it.

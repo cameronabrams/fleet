@@ -56,7 +56,7 @@ Three mechanisms produce it.
   32-task array when ssh returned a banner (2026-09-08). Require the accounting
   to CLOSE (`done + bad >= NTASK`), never absence-of-negative.
 - **A NAME is not an identity, once names are auto-generated.** `fleetgantt` drew
-  a session started by hand for one task inside a role's lane, labelled
+  a session started by hand for one task inside a role's lane, labeled
   *"renamed: 'htpolynet-8c' became 'htpolynet-repo'"*. It was never renamed and
   was never that role: the rename table is keyed by bare name across every
   transcript, and `<project>-<short id>` display names are not unique, so one
@@ -72,7 +72,7 @@ Three mechanisms produce it.
   the guard that existed to catch it.** `fleetgantt` already passed
   `place_named=False` precisely to keep one-offs out of a role's lane, and the
   rename branch returned before that check was reached. Fixing the reported
-  symptom (directory attribution, which had been honest and labelled all along)
+  symptom (directory attribution, which had been honest and labeled all along)
   would have left the defect in place. When a guard did not fire, ask what ran
   before it, not only whether it is correct.
 

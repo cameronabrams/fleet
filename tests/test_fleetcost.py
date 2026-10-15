@@ -1,5 +1,5 @@
 """fleetcost had no tests. It reported a number that was wrong by half and
-labelled it as wrong in the other direction, and nothing caught that.
+labeled it as wrong in the other direction, and nothing caught that.
 
 The tool reads `~/.claude/projects`, so every test here points `PAT` at a
 throwaway directory instead: no test may read the real transcripts.

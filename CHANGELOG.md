@@ -169,11 +169,11 @@ entries and makes you confirm the bump against this list.
   So `fleetnudge` now records `notified_otherwise` on every undelivered record,
   **true and false alike** — an absent key cannot distinguish "predates the field"
   from "lost the news" — and `fleetwatch` reads the field. An absent field and an
-  unrecognised reason are both read as a hole. Excluded from the older-than-window
+  unrecognized reason are both read as a hole. Excluded from the older-than-window
   count as well as the hole lists, since that count is what a reader uses to decide
   whether a quiet window is quiet.
 
-  One prose match remains and is labelled as one: records written before 2026-10-15
+  One prose match remains and is labeled as one: records written before 2026-10-15
   carry only the sentence. It is pinned by a test that parses `fleetnudge` for the
   string it actually emits, so a reworded refusal fails loudly instead of silently
   turning benign rows back into holes. `NUDGE_DAYS` is 7, so it is dead on
@@ -396,7 +396,7 @@ entries and makes you confirm the bump against this list.
   no single transcript records the change — rule 2 requires *this* transcript to
   have recorded both names, because a lane states an identity and cross-transcript
   evidence cannot tell a real rename from two sessions that shared a name
-  (2026-09-22). `fleetlog` keeps such a mapping, labelled *from another
+  (2026-09-22). `fleetlog` keeps such a mapping, labeled *from another
   transcript*, because a message graph has no lane to mislabel.
 
   The reported cause — `rename_map` called with an empty `dir_owner` where
@@ -409,7 +409,7 @@ entries and makes you confirm the bump against this list.
 
   Two attempts to label these honestly were built and abandoned, each killed by a
   test. Taking the candidate from the rename table maps *every* non-current name
-  in a role's directory to that role, so a genuine one-off is labelled that role's
+  in a role's directory to that role, so a genuine one-off is labeled that role's
   earlier name — the 2026-09-22 guess wearing a label instead of a lane. Taking it
   from the directory is no better: a transcript's project directory is where its
   *file* sits, not where it ran, and one of the six records
@@ -471,7 +471,7 @@ entries and makes you confirm the bump against this list.
   read. A `--resume` always loses it: replaying the conversation fills the pane
   before the first poll. Reported 2026-10-07 — five unparks in one day plus two the
   day before, every one reported timed out, every one actually up, correct and
-  labelled. **Raising `--wait` could not help; 180 s failed where 60 s had
+  labeled. **Raising `--wait` could not help; 180 s failed where 60 s had
   succeeded**, which is the tell that duration was never the variable.
 
   The reported cause was `[spawn].first_prompt` firing on a resume. It is not:
@@ -633,7 +633,7 @@ entries and makes you confirm the bump against this list.
   the operative pages describe the bare form. The error message was the only place
   the correction could still arrive, and it was the one place that said nothing.
 
-  Keyed on the flag and not the word, so a session *labelled* `all` is still an
+  Keyed on the flag and not the word, so a session *labeled* `all` is still an
   ordinary positional. `--brief` is a separate flag, which the new message says
   out loud: `--go` alone writes no briefs, and the reboot it was typed for was
   about to find that out too.
@@ -739,7 +739,7 @@ entries and makes you confirm the bump against this list.
   The whole rename needed four steps because the label lives in tmux runtime
   state, not in this repository: code and panes cannot change at the same instant.
   Measured, not assumed — with the fallback removed before the panes were
-  re-stamped, 0 of 14 sessions were recognised; with it, 14 of 14.
+  re-stamped, 0 of 14 sessions were recognized; with it, 14 of 14.
 
 - **A pane's agent is `@agent`, and `@fleet` is retired.** Membership used to be a
   pair of tmux pane options: `@repo`, the session's name, and `@fleet`, a group.
@@ -750,7 +750,7 @@ entries and makes you confirm the bump against this list.
   old option keep working; the fallback goes in a later release, once nothing
   carries it. Four tools read `@repo` *without* that fallback until now —
   `fleetrestore`, `fleetwaiting`, `fleetlog` and `fleetspawn`'s duplicate-name
-  check — so a pane labelled the new way alone was invisible to them.
+  check — so a pane labeled the new way alone was invisible to them.
 
   `@fleet` named a subdivision that did not exist. There is one fleet. The groups
   appeared to name tmux windows and agreed with them only by accident: measured on
@@ -877,7 +877,7 @@ entries and makes you confirm the bump against this list.
   running fleet which version it was, which stopped being merely untidy once there
   were tags to point at. The flag was never the awkward part — five tools parse
   `sys.argv` by hand, nine use argparse, two are shell, and `fleetwatch` refuses an
-  argument it does not recognise — so it is answered in one shared place before any
+  argument it does not recognize — so it is answered in one shared place before any
   tool parses anything, costing each tool a line and changing no exit code. The
   test is exhaustive over `bin/` rather than a sample, so a tool added later cannot
   quietly ship without it.
@@ -998,7 +998,7 @@ entries and makes you confirm the bump against this list.
   evicts a message. On this fleet the amplification figure moves from ~110x to ~356x.
   Reported by a session that had the old number on a public slide.
 
-- `fleetcost` has tests. It had none, which is how a number wrong by half, labelled
+- `fleetcost` has tests. It had none, which is how a number wrong by half, labeled
   wrong in the other direction, survived in the figure the messaging convention rests
   on.
 

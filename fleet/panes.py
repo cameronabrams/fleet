@@ -29,9 +29,9 @@ _ESC = re.compile(r"\x1b\[([0-9;:]*)([A-Za-z])|\x1b[^\[]")
 # It was `@repo` until 2026-10-01, and the rename could not be done in one step:
 # the label lives in tmux runtime state, not in this repository, so the moment the
 # code stopped reading `@repo` every pane still carrying it would stop being
-# recognised -- the whole fleet at once, with fleetsnap then snapshotting nothing
+# recognized -- the whole fleet at once, with fleetsnap then snapshotting nothing
 # over a good manifest. Measured rather than assumed: with the fallback removed
-# before the panes were re-stamped, 0 of 14 sessions were recognised; with it, 14
+# before the panes were re-stamped, 0 of 14 sessions were recognized; with it, 14
 # of 14. So: read both, re-stamp every pane, drop the fallback, unset the old
 # option. This is the fourth step, and `@repo` is no longer read anywhere.
 LABELS = "#{@agent}"

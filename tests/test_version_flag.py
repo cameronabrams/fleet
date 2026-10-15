@@ -3,7 +3,7 @@
 There was no way to ask a running fleet which version it was, which stopped being
 merely untidy once there were tags to point at. The awkward part was never the
 flag: five tools parse `sys.argv` by hand, nine use argparse, two are shell, and
-`fleetwatch` refuses an argument it does not recognise — so a flag added per tool
+`fleetwatch` refuses an argument it does not recognize — so a flag added per tool
 would have been four different shapes and one new refusal to remember.
 
 This test is deliberately exhaustive rather than a sample. A per-tool test would
@@ -53,7 +53,7 @@ class EveryToolReportsIt(unittest.TestCase):
         self.assertIn(fleet.__version__, r.stdout)
 
     def test_it_is_answered_before_the_argument_refusal(self):
-        """`fleetwatch` exits 2 on an argument it does not recognise. The version
+        """`fleetwatch` exits 2 on an argument it does not recognize. The version
         has to be answered before that, or the one tool with a strict parser would
         be the one that could not report itself."""
         r = self.ask(os.path.join(APP, "bin", "fleetwatch"))

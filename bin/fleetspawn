@@ -109,7 +109,7 @@ def preflight(a, brief):
     rc, labels, _ = tmux("list-panes", "-a", "-F", LABELS)
     taken = {agent_label(l) for l in labels.splitlines()}
     if a.name in taken:
-        problems.append(f"a pane is already labelled @agent={a.name}")
+        problems.append(f"a pane is already labeled @agent={a.name}")
     stopped = fc.stopped(CFG)
     rec = stopped.get(a.name)
     if rec and rec["state"] == "retired":

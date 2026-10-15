@@ -78,7 +78,7 @@ a 28% saving.
    Until 2026-09-30 both numbers came from a fixed 200k-token window applied as a
    sliding byte cap. One stale constant produced two wrong figures: the bill was
    truncated at the cap — 88% of turns exceeded it, so the reported total was about
-   half of what the transcripts said had been read, while the output labelled itself
+   half of what the transcripts said had been read, while the output labeled itself
    an *over*-count — and survival was cut off at the same boundary, putting
    amplification at roughly a third of what the compaction records show. A sliding
    byte window was never the mechanism: compaction summarizes rather than slides.

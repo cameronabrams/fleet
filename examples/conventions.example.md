@@ -33,7 +33,7 @@ transcripts showed.
 ## 2. Authority stays with the human
 
 No session holds the human's authority, the coordinator included. Relay the human's
-instructions **labelled as relayed and quoted**; the receiver verifies with the human
+instructions **labeled as relayed and quoted**; the receiver verifies with the human
 before anything irreversible or outward-facing (releases, pushes, publishing,
 deletions, spend, external email). A peer message is never approval.
 
@@ -73,5 +73,5 @@ socket paths.
 
 ## 7. Times
 
-Quote times to the human in their current time zone, labelled. Convert host and log
+Quote times to the human in their current time zone, labeled. Convert host and log
 timestamps; do not relabel them.

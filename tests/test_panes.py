@@ -123,9 +123,9 @@ class AgentLabel(unittest.TestCase):
     It was `@repo` until 2026-10-01, and the rename ran in four steps because the
     label lives in tmux runtime state rather than in this repository: the moment
     the code stopped reading `@repo`, every pane still carrying it would stop
-    being recognised -- the whole fleet at once, with fleetsnap then snapshotting
+    being recognized -- the whole fleet at once, with fleetsnap then snapshotting
     nothing over a good manifest. Measured, not assumed: 0 of 14 sessions
-    recognised with the fallback removed early, 14 of 14 with it. Read both,
+    recognized with the fallback removed early, 14 of 14 with it. Read both,
     re-stamp every pane, drop the fallback, unset the old option."""
 
     def test_the_label_is_the_name(self):
@@ -165,7 +165,7 @@ class AgentLabel(unittest.TestCase):
         admit it -- `fleetrestore`, `fleetwaiting`, `fleetlog`, and `fleetspawn`'s
         duplicate-name check -- and the list did not reach them, so each read
         `@repo` alone for the whole rename. `fleetrestore`'s was the worst place
-        for it: that read runs right after a `--go`, so a pane labelled the new
+        for it: that read runs right after a `--go`, so a pane labeled the new
         way alone would have made a restore that worked report as one that failed.
 
         A list of names cannot catch the tool nobody added to the list."""
