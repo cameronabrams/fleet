@@ -15,6 +15,15 @@
   (`docs/checks-that-reassure.md`). Run those checks with
   `PYTHONDONTWRITEBYTECODE=1` and no `__pycache__` present: a cached module can
   outlive an edit-and-revert made within the same second.
+- **Break the guard in a throwaway copy, never in the working tree.** These tools
+  are normally installed as symlinks into the tree, and at least one is driven by
+  a timer, so a file broken for the two seconds of a test run is the installed
+  tool for those two seconds. `git archive HEAD | tar -x -C <scratch>/breakroom`,
+  then run the suite from there; it resolves `bin/` from wherever it is invoked.
+- Run the suite once with no configuration before pushing a test change --
+  `env -u FLEET_CONFIG HOME=<empty dir> python3 -m unittest discover -s tests -t .`
+  A test that reads the real `~/.config/fleet` passes on a machine that has one
+  and nowhere else, which is the environment the rule exists for.
 - Read-only by default; anything that changes tmux or launches sessions previews
   unless `--go`. Never answer the folder-trust prompt, in code or by hand.
 - Nothing personal in this repo: no people, hosts, accounts or project sessions.

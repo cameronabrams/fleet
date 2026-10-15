@@ -143,6 +143,31 @@ Three mechanisms produce it.
   `HOME` pointed at an empty directory reproduces CI in two seconds, and is the
   cheapest version of the discipline this whole document is about.
 
+- **A green suite while the live system ran code no test had approved.** Proving a
+  guard bites means deliberately breaking the tool, and `~/bin/fleet*` are symlinks
+  into this working tree -- so for the second or two each break was on disk, the
+  broken file *was* the installed tool. `fleetmail` is driven by a 15-minute
+  systemd timer that sends real mail and types into live panes. Two ticks landed
+  inside the editing window on 2026-10-15; both happened to catch a coherent
+  version and behaved correctly. That is luck. One of the breaks replaced `amend`
+  with `record` in the retry path, which would have **destroyed the `drop` path in
+  a live delivery record** -- not odd behavior, lost state. Another re-offered
+  quarantined mail; another set a 30-minute budget inside a 15-minute poll.
+
+  Flagged by a peer reading the file mid-edit, not by the author, and not by any
+  test: the suite was green throughout, because the suite is exactly what the
+  breaks were being run against. **An edit to a tool on a live PATH is a
+  deployment, and a deliberate break is a deliberate deployment of broken code.**
+
+  The practice, which costs one command: break it where the trigger cannot reach.
+
+      git archive HEAD | tar -x -C <scratch>/breakroom
+
+  The suite runs entirely inside that copy -- `tests/support.py` resolves `bin/`
+  from the repository root it is invoked from -- so the live symlink never points
+  at a broken file. Verified end to end on 2026-10-15: 634 tests pass in the copy,
+  a break there fails 7 of them, and the live tool is untouched.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and
