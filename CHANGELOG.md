@@ -32,6 +32,43 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- **`fleetupgrade --eligible`** — who could be rolled onto a new binary right now,
+  and, for everyone else, every reason they could not. The machine half of a roll
+  that nobody has to trigger; acting on it stays with the `fleet-upgrade` skill,
+  because deciding to restart needs asking a session what it has running that its
+  ledger does not name, and asking needs an agent. Built from coord's auto-roll
+  spec of 2026-10-15.
+
+  **Every gate is a refusal, and a gate that cannot be evaluated refuses.** An
+  unreadable `claude agents`, a failed cluster query, an unreadable install time:
+  each is a reason not to roll, never clearance. The direction matters more here
+  than on a board — a board that fails toward reassurance shows a wrong color, a
+  roll that fails toward reassurance restarts a session that was holding something.
+  A refusal is not a failure, and the report says so: staying stale is the correct
+  outcome of a skip.
+
+  Gates: the hold file, the asking session itself (by uuid, never by name), soak
+  (`--soak`, default 24h), lag (`--lag`, default 2 releases), no exit-blocking child
+  — **skipped, never killed** — idle per `claude agents`, and no live cluster work
+  without a re-arm ledger. Three more are not in the spec, and each is something the
+  table already warns a human about while an unattended driver gets no warnings: a
+  **backgrounded** session (resuming its old uuid would fork it), an **unresolved**
+  resume handle, and a missing one.
+
+  Lag is a patch distance within one `major.minor`; across a minor it is reported as
+  uncountable, which satisfies any lag. Uncountable means *behind by more than this
+  can count*, not *not behind* — reading it as zero would hold back exactly the roll
+  most worth making.
+
+  It runs one command, `fleetwatch --json`, and that is pinned by a test on the
+  parsed syntax rather than on the text: the first version grepped for `kill` and
+  failed on four comments saying it never kills.
+
+- **A hold file, `<config>/no-roll`** — a standing refusal in place of a per-roll
+  decision. Present and empty holds everything; one version per line refuses those
+  versions as targets; present but unreadable **holds**, because it was put there to
+  stop something and a read error is not permission to proceed.
+
 - **`fleetspawn --go` applies the declared color itself.** It required a `[colors]`
   entry, refused to spawn without one, printed the `/color` line — and then left it
   to be typed by hand, so the color was declared, validated and applied only if

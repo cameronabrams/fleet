@@ -14,8 +14,19 @@ a re-arm ledger written BEFORE the restart. This flags who lacks one.
 
   fleetupgrade           table + ordered plan
   fleetupgrade --json    same, machine-readable
+  fleetupgrade --eligible        who could be rolled right now, and why not
+  fleetupgrade --eligible --json same, machine-readable
+    --soak H   hours the installed binary must have been present (default 24)
+    --lag N    releases behind before a roll is worth doing (default 2)
+
+`--eligible` is a COMPUTATION, not a plan to run. It answers "would a restart be
+safe to start right now" per session and hands the answer to whoever is driving.
+Every gate is a refusal, an unreadable source refuses, and a refusal is not a
+failure: staying stale is a correct outcome of a skip. What it cannot compute is
+what a session has running that its ledger does not name -- that needs asking,
+which needs an agent, which is exactly where reporting stops and acting begins.
 """
-import json, os, re, subprocess, sys, glob
+import json, os, re, subprocess, sys, glob, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
@@ -541,12 +552,283 @@ def sessions():
             })
     return out
 
+# ---- eligibility for an unattended roll: a computation, never an action ----
+#
+# `fleetupgrade` REPORTS ONLY, and `--eligible` does not change that. It answers
+# one question per session -- would a restart be safe to START right now -- and
+# hands the answer to whoever is driving. It never restarts, never kills, never
+# types into a pane and never answers a dialog.
+#
+# That boundary is not a convention, it is where the data runs out. Every gate
+# below is computable from /proc, the configuration and two JSON sources. The
+# thing that is NOT computable is asking a session what it has running that a
+# ledger does not name, which needs SendMessage and therefore an agent. So the
+# split is: this decides who is not eligible, an agent decides who to roll.
+#
+# **Every gate is a refusal.** A gate that cannot be evaluated refuses, and a
+# refusal is not a failure -- staying stale is a correct outcome. The direction
+# matters more than any single gate: an unreadable source must never read as
+# clearance, which is this repo's oldest rule and the one most often lost at the
+# point where a tool starts deciding things.
+
+HOLD = "no-roll"          # in the config dir: a human's standing refusal
+SOAK_HOURS = 24           # how long a version must have been installed
+LAG = 2                   # how many versions behind before a roll is worth it
+
+
+def hold_file(path=None):
+    """(held, why) from `<config>/no-roll`, a declaration rather than an observation.
+
+    Empty or whitespace: everything is held. Otherwise each non-comment line is a
+    version that must not be rolled TO -- "I do not trust 2.1.300" written once,
+    rather than decided again at every roll.
+
+    A file that exists but cannot be read HOLDS. It was put there to stop
+    something, and a read error is not permission to proceed.
+    """
+    p = path or os.path.join(fc.config_dir(), HOLD)
+    if not os.path.exists(p):
+        return [], None
+    try:
+        with open(p) as f:
+            body = f.read()
+    except OSError as e:
+        return None, "%s exists but could not be read (%s)" % (p, e.strerror or e)
+    lines = [l.split("#")[0].strip() for l in body.splitlines()]
+    pinned = [l for l in lines if l]
+    if not pinned:
+        return None, "%s is present: all rolling is held" % p
+    return pinned, None
+
+
+def version_lag(session_version, installed):
+    """How many releases behind `session_version` is, or None if it cannot be counted.
+
+    None means "behind by an uncountable amount", not "not behind": a change of
+    major or minor is a bigger step than any patch distance, and the caller treats
+    it as satisfying any lag. 0 means current. Counting is only honest within one
+    major.minor, because the releases between two patch numbers are not all
+    installed here -- 2.1.297 and .298 never were.
+    """
+    if not session_version or not installed:
+        return None
+    if session_version == installed:
+        return 0
+    try:
+        a = [int(x) for x in session_version.split("-")[0].split(".")]
+        b = [int(x) for x in installed.split("-")[0].split(".")]
+    except ValueError:
+        return None
+    if len(a) != 3 or len(b) != 3 or a[:2] != b[:2]:
+        return None
+    return b[2] - a[2]
+
+
+def installed_age_hours(claude=None):
+    """Hours since the installed binary appeared, or None if it cannot be read.
+
+    The mtime of the resolved binary, which is right for both layouts: the native
+    installer writes a new file per version, and npm replaces one file in place.
+    """
+    try:
+        target = os.path.realpath(claude or versions.CLAUDE)
+        return (time.time() - os.path.getmtime(target)) / 3600.0
+    except OSError:
+        return None
+
+
+def runtime_owners(watch):
+    """Sessions fleetwatch shows holding live cluster work, or None if unknown.
+
+    None when the cluster query failed. `fleetwatch` prints a banner and exits 0
+    in that case, so an empty job list is also what a broken query looks like --
+    and a restart decided on it would kill a watcher the asker could not see.
+    """
+    if not watch or not watch.get("cluster_ok"):
+        return None
+    owners = set()
+    for j in watch.get("jobs") or []:
+        owners.update(j.get("watched_by") or [])
+    for w in (watch.get("watchers_partway") or []):
+        if w.get("session"):
+            owners.add(w["session"])
+    return owners
+
+
+def eligibility(ss, inst, agents_by_name, watch, pinned, hold_why,
+                soak_hours=SOAK_HOURS, lag=LAG, age_hours=None, self_uuid=None):
+    """[(session, [reasons it is NOT eligible])] in the order given.
+
+    An empty reason list means every gate passed. The reasons are kept and
+    returned rather than short-circuited: a skip that says only "not eligible"
+    teaches nobody anything, and the list is the whole value of the report.
+    """
+    owners = runtime_owners(watch)
+    out = []
+    for s in ss:
+        why = []
+        if hold_why:
+            why.append(hold_why)
+        if inst and inst in (pinned or []):
+            why.append("%s is pinned out in %s" % (inst, HOLD))
+
+        # The session running the computation. By uuid, not by name: the name of
+        # the driving session is nobody's business but the fleet's, and the uuid
+        # is already how this tool knows which row is itself.
+        if self_uuid and s.get("resume_uuid") == self_uuid:
+            why.append("this is the session asking; it cannot roll itself")
+
+        if not inst:
+            why.append("installed version unknown")
+        if age_hours is None:
+            why.append("age of the installed binary unknown")
+        elif age_hours < soak_hours:
+            why.append("installed %.1fh ago, soak is %dh" % (age_hours, soak_hours))
+
+        n = version_lag(s.get("version"), inst)
+        if not s.get("version"):
+            why.append("its running version is unknown")
+        elif n == 0:
+            why.append("already on %s" % inst)
+        elif n is not None and n < lag:
+            why.append("%d version%s behind, lag is %d"
+                       % (n, "" if n == 1 else "s", lag))
+
+        # Structural refusals: facts in the data that make a restart wrong rather
+        # than merely untimely. None of these is in the spec; each is something
+        # this tool already warns a human about, and an unattended driver gets no
+        # warnings.
+        if s.get("background"):
+            # `/exit` can background a session (2.1.272): the pid goes, a fork
+            # continues under a NEW session id, and `--resume <old uuid>` then
+            # starts a SECOND live session on a forked history.
+            why.append("backgrounded: resuming its old uuid would fork it")
+        if "UNRESOLVED" in (s.get("name_source") or ""):
+            why.append("resume uuid unresolved -- never restart one on a guess")
+        elif not s.get("resume_uuid"):
+            why.append("no resume uuid, so there is nothing to resume")
+
+        st = (agents_by_name or {}).get(s["name"])
+        if agents_by_name is None:
+            why.append("`claude agents` could not be read, so busy/idle is unknown")
+        elif st is None:
+            why.append("not listed by `claude agents`")
+        elif st != "idle":
+            why.append("status is %s" % st)
+
+        led = [l for l in (s.get("leaders") or [])]
+        if led:
+            why.append("%d exit-blocking child process%s (%s) -- skipped, never killed"
+                       % (len(led), "" if len(led) == 1 else "es",
+                          ", ".join(_leader_label(l) for l in led)))
+
+        if owners is None:
+            why.append("fleetwatch could not read the cluster, so runtime is unknown")
+        elif s["name"] in owners and not s.get("ledger"):
+            why.append("holds live cluster work and has no re-arm ledger")
+
+        out.append((s, why))
+    return out
+
+
+def _leader_label(l):
+    cmd = (l.get("cmd") or "?").strip()
+    return "pid %s, %s, %s" % (l.get("pid"), human_age(l.get("age_s") or 0),
+                               cmd[:40] + ("..." if len(cmd) > 40 else ""))
+
+
+def _opt(flag, default):
+    """An integer option read off argv. A value that is not a number is refused
+    rather than defaulted: silently falling back to 24 after being asked for 48
+    is the tool deciding policy on the caller's behalf."""
+    if flag not in sys.argv:
+        return default
+    i = sys.argv.index(flag)
+    try:
+        return int(sys.argv[i + 1])
+    except (IndexError, ValueError):
+        sys.exit("fleetupgrade: %s needs a whole number of %s"
+                 % (flag, "hours" if flag == "--soak" else "releases"))
+
+
+def gather_eligibility(ss, inst):
+    """The computation plus everything it needed, so a caller can print either form."""
+    soak, lag = _opt("--soak", SOAK_HOURS), _opt("--lag", LAG)
+    ag = agents()
+    by_name = None if ag is None else {a.get("name"): a.get("status") for a in ag}
+    pinned, hold_why = hold_file()
+    # fleetwatch is a separate process with a network query behind it. It is asked
+    # once, and a failure is carried as a refusal rather than as an empty answer.
+    watch = run_json(["fleetwatch", "--json"])
+    rows = eligibility(ss, inst, by_name, watch, pinned, hold_why,
+                       soak_hours=soak, lag=lag,
+                       age_hours=installed_age_hours(), self_uuid=SELF_UUID)
+    return rows, soak, lag, watch
+
+
+def run_json(cmd):
+    """A sibling tool's --json, or None. None is carried through as unknown."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def report_eligible(ss, inst):
+    rows, soak, lag, watch = gather_eligibility(ss, inst)
+    ready = [s for s, why in rows if not why]
+    if "--json" in sys.argv:
+        print(json.dumps({
+            "installed": inst, "soak_hours": soak, "lag": lag,
+            "installed_age_hours": installed_age_hours(),
+            "cluster_ok": bool(watch and watch.get("cluster_ok")),
+            "eligible": [s["name"] for s in ready],
+            "sessions": [{"name": s["name"], "version": s["version"],
+                          "eligible": not why, "why_not": why} for s, why in rows],
+        }, indent=1, default=str))
+        return
+    age = installed_age_hours()
+    print("installed claude: %s%s" % (inst or "?",
+          "" if age is None else "  (%s ago)" % human_age(age * 3600)))
+    print("gates: idle, soak >= %dh, lag >= %d, no exit-blocking child, no unnamed runtime"
+          % (soak, lag))
+    # Said out loud, because a self-exclusion that silently did not happen is the
+    # shape of mistake this whole report exists to avoid. The asker is excluded by
+    # its own uuid rather than by name -- correct exactly while the asker is also
+    # the actor, which is the only arrangement this is written for.
+    print("asking session: %s\n" % (
+        (SELF_UUID[:8] + " (excluded from its own list)") if SELF_UUID
+        else "NOT A SESSION -- CLAUDE_CODE_SESSION_ID is unset, so nothing is\n"
+             "                self-excluded. A driver must exclude itself."))
+    if ready:
+        print("ELIGIBLE NOW (%d):" % len(ready))
+        for s in ready:
+            print("  %-22s %-9s -> %s" % (s["name"][:22], s["version"] or "?", inst))
+    else:
+        print("ELIGIBLE NOW: none")
+    skipped = [(s, why) for s, why in rows if why]
+    if skipped:
+        # Printed in full, every reason, because the list IS the report. A driver
+        # that is told only "not eligible" learns nothing it can act on, and a
+        # human reading the run learns nothing about whether the gates are right.
+        print("\nSKIPPED (%d) -- staying stale is the correct outcome of a skip:" % len(skipped))
+        for s, why in skipped:
+            print(("  %-22s %-9s" % (s["name"][:22], s["version"] or "?")).rstrip())
+            for w in why:
+                print("      - %s" % w)
+    print("\n  This is a report. It restarts nothing, kills nothing and answers no")
+    print("  dialog. Driving the roll is the fleet-upgrade skill's job.\n")
+
+
 def main():
     version_flag()
     inst = installed_version()
     ss = sessions()
     # coord last, then stale-first, then name
     ss.sort(key=lambda s: (s["name"] == "coord", s["version"] == inst, s["name"]))
+    if "--eligible" in sys.argv:
+        return report_eligible(ss, inst)
     if "--json" in sys.argv:
         print(json.dumps({"installed": inst, "sessions": ss}, indent=1))
         return
