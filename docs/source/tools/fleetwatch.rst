@@ -107,6 +107,29 @@ That is the reassuring direction, so the log is read here.
    and nothing else recorded the attempt. Only counted once the entry is older than
    two hours — a retry loop still running looks exactly the same.
 
+**"Not delivered" is not the same as "nobody was told."** ``fleetnudge`` declines
+when it is running *inside* the session it would type into: the in-session task
+doing the running already notifies it, so the content reaches its reader by
+another route and nothing is missing. Those rows are excluded — from the hole
+lists and from the older-than-the-window count alike. On 2026-10-15 two of the
+three rows driving this section were exactly that, and a board that invents holes
+gets read past, which costs the real ones.
+
+The exit code **cannot** carry that distinction and is not used for it. The
+decline is code 2, which it shares with caller errors that genuinely lose the news
+— a line over the 200-character limit, a malformed job id. Bucketing on the code
+would trade one defect for its mirror image, and the mirror image is the one that
+matters: a real hole rendered as fine. So ``fleetnudge`` records
+``notified_otherwise`` on every undelivered record, true *and* false, and this
+reads the field. An absent field and an unrecognised reason are both read as a
+hole.
+
+One exception, marked as such in the code: records written before 2026-10-15 carry
+only the sentence, so that exact sentence is matched. It is a parse of prose, it is
+pinned by a test against the string ``fleetnudge`` actually emits, and
+``NUDGE_DAYS`` is 7 — so nothing in the window can predate the field after
+2026-10-22 and the match can be deleted.
+
 Undelivered mail is covered by the same rows: :doc:`fleetmail` delivers through
 ``fleetnudge``, and the sender travels with the failure as well as the success.
 Mail that never *became* a nudge — quarantined, or written to a drop and never

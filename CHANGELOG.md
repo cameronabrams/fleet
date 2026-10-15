@@ -152,6 +152,33 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **`fleetwatch` reported declined nudges as delivery holes — 2 of the 3 rows then
+  driving "a nudge never arrived and no push went out".** The classifier bucketed
+  on `outcome` alone. `fleetnudge` declines when it is running *inside* the session
+  it would type into, because the in-session task doing the running already
+  notifies it: the content reaches its reader by another route and nothing is
+  missing. Reported by coord 2026-10-15, who read the classifier rather than the
+  symptom.
+
+  **The exit code cannot carry the distinction, and is not used for it.** The
+  decline is code 2, shared with caller errors that genuinely lose the news — a
+  line over the 200-character limit (2026-09-30), a malformed job id (2026-10-04).
+  Bucketing on the code would trade this defect for its mirror image, and the
+  mirror image is the dangerous one: a real hole rendered as fine.
+
+  So `fleetnudge` now records `notified_otherwise` on every undelivered record,
+  **true and false alike** — an absent key cannot distinguish "predates the field"
+  from "lost the news" — and `fleetwatch` reads the field. An absent field and an
+  unrecognised reason are both read as a hole. Excluded from the older-than-window
+  count as well as the hole lists, since that count is what a reader uses to decide
+  whether a quiet window is quiet.
+
+  One prose match remains and is labelled as one: records written before 2026-10-15
+  carry only the sentence. It is pinned by a test that parses `fleetnudge` for the
+  string it actually emits, so a reworded refusal fails loudly instead of silently
+  turning benign rows back into holes. `NUDGE_DAYS` is 7, so it is dead on
+  2026-10-22.
+
 - **A failed `fleetmail` nudge was permanent, and nothing could clear it.** `fetch`
   keys on the message path, which is right for writing the file and wrong for telling
   the session: a message whose nudge failed was recorded as handled, so every later

@@ -437,6 +437,91 @@ class GiveUp(Base):
         bad = [r for r in self.log() if r["outcome"] == "not delivered"]
         self.assertIsNone(bad[0]["mail_from"])
 
+    def test_a_failure_says_whether_the_news_was_lost(self):
+        """`notified_otherwise` is written on EVERY not-delivered record, false
+        included. An absent key cannot distinguish "this nudge predates the field"
+        from "this nudge lost the news", and a reader that has to tell those apart
+        by the date of the record is reading a timestamp as a schema version."""
+        self.lands = False
+        code, out = self.go()
+        self.assertEqual(code, 4, out)
+        bad = [r for r in self.log() if r["outcome"] == "not delivered"]
+        self.assertIn("notified_otherwise", bad[0])
+        self.assertIs(bad[0]["notified_otherwise"], False)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NotDeliveredIsNotAlwaysLost(Base):
+    """fleetnudge declines when it is running INSIDE the session it would type
+    into: the in-session task doing the running already notifies it. The content
+    reaches its reader by another route, so nothing is missing.
+
+    `fleetwatch` counted those as delivery holes until 2026-10-15 -- 2 of the 3
+    rows then driving "a nudge never arrived" -- because the log recorded only
+    `outcome: not delivered` and an exit code. **The code cannot carry this.** It
+    is 2, shared with caller errors that genuinely lose the news: a line over the
+    200-character limit (2026-09-30), a malformed job id (2026-10-04). So the
+    distinction is recorded as a field by the program that knows it, rather than
+    inferred by a reader from the sentence.
+
+    Found by coord, reading the classifier rather than the symptom.
+    """
+    def test_running_inside_the_session_is_informed_not_refused(self):
+        self.ancestors = {4242}
+        with contextlib.ExitStack() as st:
+            for pt in self.patches():
+                st.enter_context(pt)
+            r, problem = self.n.resolve("alpha")
+        self.assertIsNone(r)
+        self.assertEqual(problem[0], "informed",
+                         "the kind is what carries this; the sentence is prose")
+        self.assertIn("already notifies it", problem[1])
+
+    def test_the_record_says_the_news_was_not_lost(self):
+        self.ancestors = {4242}
+        code, out = self.go()
+        self.assertEqual(code, 2, out)
+        bad = [r for r in self.log() if r["outcome"] == "not delivered"]
+        self.assertEqual(len(bad), 1, out)
+        self.assertIs(bad[0]["notified_otherwise"], True)
+
+    def test_a_caller_error_sharing_the_exit_code_is_still_lost(self):
+        """The mirror image, and the dangerous one. Exit code 2 is not evidence of
+        anything here: this must stay a hole."""
+        code, out = self.go("x" * 500)
+        self.assertEqual(code, 2, out)
+        bad = [r for r in self.log() if r["outcome"] == "not delivered"]
+        self.assertEqual(len(bad), 1, out)
+        self.assertIs(bad[0]["notified_otherwise"], False)
+
+    def test_another_resolve_time_refusal_is_still_lost(self):
+        """The guard that makes the one above mean something.
+
+        The over-length case is refused by `static_problems`, which reaches
+        `give_up` by a different path -- so on its own it leaves the `informed=`
+        argument on the resolve-time path untested, and a version that passed
+        `informed=True` for EVERY refusal passed the whole suite. This one is
+        refused by `resolve`, beside the in-session case, and the news really is
+        lost: two sessions answer to the name, so nobody was told.
+        """
+        self.procs.append((4343, "/w", ["claude", "--name", "alpha"]))
+        self.agents.append({"pid": 4343, "name": "alpha", "sessionId": "x",
+                            "kind": "interactive", "status": "idle"})
+        code, out = self.go()
+        self.assertEqual(code, 2, out)
+        bad = [r for r in self.log() if r["outcome"] == "not delivered"]
+        self.assertEqual(len(bad), 1, out)
+        self.assertIn("sessions answer", bad[0]["reason"])
+        self.assertIs(bad[0]["notified_otherwise"], False)
+
+    def test_a_plan_still_refuses_when_it_is_in_session(self):
+        """`--go` is what the kind feeds; the dry run must not start reporting the
+        nudge as possible merely because the refusal was renamed."""
+        self.ancestors = {4242}
+        code, out = self.run_main("alpha", "123456", "done")
+        self.assertEqual(code, 2, out)
+        self.assertIn("REFUSED", out)
+        self.assertEqual(self.pushes, [], "a plan sent a push")

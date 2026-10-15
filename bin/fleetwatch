@@ -337,6 +337,40 @@ def _reached_phone(rec):
     alarm that turns out to be nothing costs a look, the reverse costs the run."""
     return bool(re.match(r"push sent \(HTTP 2\d\d\)", str(rec.get("push", ""))))
 
+# A nudge that was not delivered is not automatically news that was LOST.
+# `fleetnudge` declines when it is running inside the session it would type into:
+# the in-session task doing the running already notifies it, so the content reaches
+# its reader by another route and nothing is missing.
+#
+# That is recorded structurally, as `notified_otherwise`, by the one program that
+# can know it. **Exit code cannot stand in for it.** The decline shares code 2 with
+# caller errors that ARE holes -- a line over the 200-character limit (2026-09-30),
+# a malformed job id (2026-10-04) -- so bucketing on the code would trade this
+# defect for its mirror image, and the mirror image is the dangerous one: a real
+# hole rendered as fine.
+#
+# LEGACY, and it is a parse of prose: records written before 2026-10-15 carry no
+# such field, only the sentence. The sentence is matched exactly and pinned by a
+# test against the string `fleetnudge` emits, so a reworded refusal fails loudly
+# here rather than silently becoming a hole again. `NUDGE_DAYS` is 7, so no record
+# in the window can predate the field after 2026-10-22 and this may then be
+# deleted along with its test.
+INFORMED_LEGACY = ("this is running inside the session itself; "
+                   "an in-session task already notifies it")
+
+
+def lost_the_news(r):
+    """Whether a `not delivered` record means nobody was told.
+
+    False only on positive evidence that the content arrived another way. An
+    absent field and an unrecognised reason both read as a hole, which is the
+    direction that keeps a real one visible.
+    """
+    if r.get("notified_otherwise") is not None:
+        return not r["notified_otherwise"]
+    return (r.get("reason") or "").strip() != INFORMED_LEGACY
+
+
 def nudge_holes(only=None, days=NUDGE_DAYS):
     """Lines that never reached a session, from <state>/nudges.log.
 
@@ -396,9 +430,9 @@ def nudge_holes(only=None, days=NUDGE_DAYS):
             continue
         t, out = _when(r), r.get("outcome")
         if t < cut:
-            res["older"] += int(out == "not delivered")
+            res["older"] += int(out == "not delivered" and lost_the_news(r))
             continue
-        if out == "not delivered":
+        if out == "not delivered" and lost_the_news(r):
             # A later nudge for the same session and job may have carried the news
             # anyway (seen 2026-09-17, 13:22 lost and 14:44 delivered). Annotate;
             # do NOT suppress -- a different message about the same job is not this

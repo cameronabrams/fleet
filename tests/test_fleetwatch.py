@@ -1,3 +1,4 @@
+import re
 import contextlib, datetime, io, json, os, subprocess, sys, unittest
 from unittest import mock
 from tests.support import FakeConfig, load_tool
@@ -330,6 +331,99 @@ class Delivery(Base):
             self.w.print_delivery(self.w.nudge_holes())
         self.assertIn("mail from other-fleet/coord", out.getvalue())
         self.assertIn("NUDGE NEVER ARRIVED", out.getvalue())
+
+
+class ANudgeNotDeliveredIsNotAlwaysNewsLost(Base):
+    """"A nudge never arrived and no push went out" was 2/3 false on 2026-10-15.
+
+    The classifier bucketed on `outcome` alone. Two of the three rows driving it
+    were `fleetnudge` DECLINING because it was running inside the session it would
+    have typed into -- an in-session task that already notifies it. Nothing was
+    lost; the board called it a delivery hole, and a board that invents holes gets
+    read past, which costs the real ones.
+
+    **Exit code cannot carry the distinction.** The decline is code 2, shared with
+    caller errors that genuinely lose the news (a line over the 200-character
+    limit, 2026-09-30; a malformed job id, 2026-10-04). Bucketing on the code would
+    trade this defect for its mirror image, and the mirror image is the one that
+    matters: a real hole rendered as fine.
+
+    So `fleetnudge` records it as a field, and this reads the field. Reported by
+    coord, who read the classifier rather than the symptom.
+    """
+    def test_the_field_decides(self):
+        self.assertFalse(self.w.lost_the_news(
+            {"outcome": "not delivered", "notified_otherwise": True}))
+        self.assertTrue(self.w.lost_the_news(
+            {"outcome": "not delivered", "notified_otherwise": False}))
+
+    def test_an_absent_field_with_an_unknown_reason_is_a_hole(self):
+        """The direction that keeps a real one visible. A record this cannot
+        interpret is not a record saying everything is fine."""
+        self.assertTrue(self.w.lost_the_news({"outcome": "not delivered"}))
+        self.assertTrue(self.w.lost_the_news(
+            {"outcome": "not delivered", "reason": "TEXT is 229 characters"}))
+
+    def test_a_record_predating_the_field_is_read_from_its_reason(self):
+        """LEGACY, and it is a parse of prose -- said here as plainly as in the
+        code. It exists because records written before 2026-10-15 carry only the
+        sentence, and `NUDGE_DAYS` is 7, so it becomes dead on 2026-10-22."""
+        self.assertFalse(self.w.lost_the_news(
+            {"outcome": "not delivered", "reason": self.w.INFORMED_LEGACY}))
+
+    def test_the_legacy_sentence_is_the_one_fleetnudge_writes(self):
+        """The guard that makes a prose match defensible rather than a guess.
+
+        Matching a sentence another program emits is a dependency with nothing
+        holding it together, and this repository keeps finding that family: two
+        derivations of one fact, agreeing for a reason nobody wrote down. If the
+        refusal is reworded, this fails here instead of silently turning two benign
+        rows back into delivery holes.
+        """
+        import ast
+        src = open(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "bin", "fleetnudge")).read()
+        # Parsed, not grepped: the sentence is split across two source lines, and
+        # a regex that reassembles it is a second guess about the thing being
+        # pinned. ast gives the value the program actually builds.
+        emitted = [t.elts[1].value for t in ast.walk(ast.parse(src))
+                   if isinstance(t, ast.Tuple) and len(t.elts) == 2
+                   and isinstance(t.elts[0], ast.Constant) and t.elts[0].value == "informed"
+                   and isinstance(t.elts[1], ast.Constant)]
+        self.assertEqual(len(emitted), 1,
+                         "expected exactly one `informed` refusal in fleetnudge")
+        self.assertEqual(emitted[0], self.w.INFORMED_LEGACY,
+                         "fleetnudge's wording moved; update INFORMED_LEGACY or drop it")
+
+
+class InformedRowsLeaveTheHoleReport(Delivery):
+    """The bucketing, end to end, because `lost_the_news` being right is not the
+    same as it being called."""
+    def test_an_informed_row_is_in_neither_bucket(self):
+        self.write(self.rec(outcome="not delivered", reason="in-session",
+                            notified_otherwise=True, push="push sent (HTTP 200)"),
+                   self.rec(job="222222", outcome="not delivered", reason="pane busy",
+                            notified_otherwise=False, push="push sent (HTTP 200)"))
+        h = self.w.nudge_holes()
+        rows = h["silent"] + h["pushed"]
+        self.assertEqual([r["job"] for r in rows], ["222222"],
+                         "an informed decline was reported as a delivery hole")
+
+    def test_an_informed_row_is_not_counted_as_an_older_one_either(self):
+        """The same lie, one line up: `older` is the count a reader uses to decide
+        whether the quiet window is quiet."""
+        self.write(self.rec(ago_h=24 * 30, outcome="not delivered",
+                            reason="in-session", notified_otherwise=True),
+                   self.rec(ago_h=24 * 30, job="222222", outcome="not delivered",
+                            reason="pane busy", notified_otherwise=False))
+        self.assertEqual(self.w.nudge_holes()["older"], 1)
+
+    def test_a_code_2_caller_error_is_still_a_hole(self):
+        self.write(self.rec(outcome="not delivered", code=2,
+                            reason="TEXT is 229 characters; the limit is 200",
+                            notified_otherwise=False))
+        h = self.w.nudge_holes()
+        self.assertEqual(len(h["silent"] + h["pushed"]), 1)
 
 
 class Clients(Base):

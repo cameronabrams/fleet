@@ -186,8 +186,16 @@ def resolve(session):
     # watchers checked 2026-09-17), so that variable would refuse exactly the
     # callers this tool exists for.
     if r["pid"] in ancestors(os.getpid()):
-        return None, ("refuse", "this is running inside the session itself; an in-session "
-                                "task already notifies it")
+        # "informed", not "refuse". Both end the attempt, and the difference is the
+        # whole point: the content reaches its reader anyway, by the in-session task
+        # that is running this. Nothing was lost, so nothing is missing -- and
+        # `fleetwatch` read these as delivery holes until 2026-10-15 because the log
+        # recorded only `outcome: not delivered` and an exit code that this shares
+        # with caller errors that ARE holes (TEXT over the limit, a malformed job
+        # id). The distinction is semantic and belongs here, where it is known,
+        # rather than in a reader guessing from the sentence below.
+        return None, ("informed", "this is running inside the session itself; an in-session "
+                                  "task already notifies it")
     if not r["uuid"] or not str(r["how"]).startswith("verified"):
         return None, ("refuse", f"transcript not verified ({r['how']}); delivery could not be confirmed")
     pane_pids = panes()
@@ -261,14 +269,18 @@ def push(title, body):
     except OSError as e:
         return f"push FAILED: {e}"
 
-def give_up(code, session, job, text, reason, mail_from=None):
+def give_up(code, session, job, text, reason, mail_from=None, informed=False):
     # mail_from travels with the FAILURE too, not only with the success: a piece of
     # mail that never arrived is the case a reader most needs to identify as mail,
     # and fleetwatch reads these records to find it.
     pushed = push(f"fleetnudge: {session} not reached",
                   f"{tag(session, job, mail_from)} {text}\nNot delivered: {reason}")
+    # `notified_otherwise` is written on EVERY not-delivered record, true or false,
+    # rather than only when true. A reader can then tell "this nudge predates the
+    # field" from "this nudge lost the news", which an absent key cannot say.
     log(session=session, job=job, text=text, outcome="not delivered", code=code,
-        reason=reason, push=pushed, mail_from=mail_from)
+        reason=reason, push=pushed, mail_from=mail_from,
+        notified_otherwise=bool(informed))
     print(f"\n  NOT DELIVERED: {reason}\n  {pushed}\n")
     sys.exit(code)
 
@@ -317,7 +329,7 @@ def main():
 
     if not a.go:
         r, problem = resolve(session)
-        if problem and problem[0] == "refuse":
+        if problem and problem[0] != "wait":
             print(f"  REFUSED: {problem[1]}\n")
             sys.exit(2)
         now = f"now: {problem[1]}" if problem else f"now: idle in {r['pane']}"
@@ -347,10 +359,11 @@ def main():
                         return
                     give_up(code, session, job, text, detail, mail_from)
         kind, why = problem
-        log(session=session, job=job, text=text, outcome="waiting" if kind == "wait" else "refused",
+        log(session=session, job=job, text=text,
+            outcome="waiting" if kind == "wait" else "refused",
             attempt=attempt, reason=why, mail_from=mail_from)
-        if kind == "refuse":
-            give_up(2, session, job, text, why, mail_from)
+        if kind in ("refuse", "informed"):
+            give_up(2, session, job, text, why, mail_from, informed=(kind == "informed"))
         if time.time() + a.every > t_end:
             give_up(4, session, job, text, f"still not typeable after {a.wait}s: {why}",
                     mail_from)
