@@ -393,7 +393,7 @@ class EveryGateIsARefusal(unittest.TestCase):
 
     def judge(self, s, inst="2.1.300", agents={"alpha": "idle"},
               watch={"cluster_ok": True, "jobs": []}, pinned=(), hold=None,
-              soak=24, lag=2, age=48.0, self_uuid=None):
+              soak=24, lag=2, age=48.0, self_uuid=U2):
         rows = self.up.eligibility([s], inst, agents, watch, list(pinned), hold,
                                    soak_hours=soak, lag=lag, age_hours=age,
                                    self_uuid=self_uuid)
@@ -494,6 +494,27 @@ class EveryGateIsARefusal(unittest.TestCase):
         self.assertIn("this is the session asking; it cannot roll itself", why)
         self.assertEqual(self.judge(sess(), self_uuid=U2), [])
 
+    def test_an_unknown_asker_refuses_everyone(self):
+        """The same rule as every other source that fails here, and the one most
+        easily missed, because the gap is invisible from inside: with no uuid the
+        driving session's only remaining exclusion is "status is busy" -- true
+        merely because running the tool made it busy. A driver that is not the
+        session it is reading about would see that session eligible and roll the
+        thing it is running in.
+
+        Reported by coord 2026-10-15 from the JSON, where the banner that says
+        this in the text report does not reach.
+        """
+        why = self.judge(sess(), self_uuid=None)
+        self.assertTrue(any("could not be identified" in w for w in why), why)
+        self.assertTrue(any("nothing is self-excluded" in w for w in why), why)
+
+    def test_a_busy_asker_is_not_what_excludes_it(self):
+        """The incidental exclusion, named so it cannot be mistaken for the real
+        one. An idle asker must still be refused when the uuid is missing."""
+        why = self.judge(sess(), self_uuid=None, agents={"alpha": "idle"})
+        self.assertNotEqual(why, [], "an idle session passed with no asker known")
+
     # -- reasons accumulate ----------------------------------------------------
 
     def test_every_reason_is_reported_not_just_the_first(self):
@@ -503,6 +524,24 @@ class EveryGateIsARefusal(unittest.TestCase):
         why = self.judge(sess(version="2.1.299", background=True),
                          agents={"alpha": "busy"}, age=3.0)
         self.assertGreaterEqual(len(why), 4, why)
+
+
+class TheJsonCarriesWhoAsked(unittest.TestCase):
+    """A driver must be able to ASSERT self-exclusion, not grep for it.
+
+    The reason lands in the asking session's own row -- which is only findable by
+    a driver that already knows which row is its own, the very thing the field
+    exists to tell it. The text report shouts it in a banner; the JSON had no
+    equivalent until coord said so on 2026-10-15, having gone looking for it.
+    """
+    def test_the_field_is_top_level_and_nullable(self):
+        src = open(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "bin", "fleetupgrade")).read()
+        body = src[src.index("def report_eligible"):src.index("def main():")]
+        self.assertIn('"asking": SELF_UUID or None', body,
+                      "a --json driver cannot tell whether anything was self-excluded")
+        # Before the per-session rows, so it is read before the list it qualifies.
+        self.assertLess(body.index('"asking"'), body.index('"sessions"'))
 
 
 class TheHoldFileIsADeclaration(unittest.TestCase):
@@ -537,7 +576,7 @@ class TheHoldFileIsADeclaration(unittest.TestCase):
         self.assertIsNone(why)
         rows = self.up.eligibility([sess()], "2.1.300", {"alpha": "idle"},
                                    {"cluster_ok": True, "jobs": []}, pinned, why,
-                                   age_hours=48.0, lag=1)
+                                   age_hours=48.0, lag=1, self_uuid=U2)
         self.assertTrue(any("pinned out" in w for w in rows[0][1]), rows[0][1])
 
     def test_a_file_that_cannot_be_read_holds(self):
@@ -573,7 +612,7 @@ class CountingReleases(unittest.TestCase):
         self.assertIsNone(self.up.version_lag("2.1.300", "3.0.0"))
         rows = self.up.eligibility([sess(version="2.1.300")], "2.2.0",
                                    {"alpha": "idle"}, {"cluster_ok": True, "jobs": []},
-                                   [], None, age_hours=48.0, lag=9)
+                                   [], None, age_hours=48.0, lag=9, self_uuid=U2)
         self.assertEqual(rows[0][1], [], "an uncountable lag must satisfy any lag")
 
     def test_unparseable_and_missing_are_none(self):

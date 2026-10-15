@@ -84,7 +84,8 @@ The gates, in the order they are reported:
    * - hold
      - ``<config>/no-roll`` exists (see below)
    * - self
-     - the session's uuid is the asking session's — it cannot roll itself
+     - the session's uuid is the asking session's — it cannot roll itself, **or
+       the asker could not be identified at all**, which refuses everyone
    * - soak
      - the installed binary has been present for less than ``--soak`` hours
    * - lag
@@ -110,6 +111,20 @@ means *behind by more than this can count*, not *not behind*: reading it as zero
 would hold back exactly the roll most worth making. The releases between two patch
 numbers are not all installed locally — 2.1.297 and .298 never were here — so the
 distance is a version distance, not an adoption count.
+
+**Who is asking is a source, and it can fail.** The asking session is excluded by
+its uuid, from ``CLAUDE_CODE_SESSION_ID``. When that is unset — run from a plain
+shell, or from a driver that is not itself a session — *nothing* is self-excluded,
+so every session is refused, exactly as for an unreadable ``claude agents``. The
+gap is invisible from inside otherwise: the driving session's only remaining
+exclusion would be ``status is busy``, which is true merely because running the
+tool made it busy, and a driver reading about a session other than itself would
+see that session eligible and roll the thing it is running in.
+
+``--json`` carries ``asking`` at the top level, before the rows it qualifies:
+the uuid, or ``null``. A driver asserts on that field rather than searching its
+own row for a sentence — which it could only do by already knowing which row is
+its own, the very thing the field exists to tell it.
 
 **Why a tool and not a script.** A restart needs to ask a session what it has
 running that its ledger does not name, which needs ``SendMessage`` and therefore an

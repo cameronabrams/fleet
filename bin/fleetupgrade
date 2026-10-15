@@ -675,7 +675,19 @@ def eligibility(ss, inst, agents_by_name, watch, pinned, hold_why,
         # The session running the computation. By uuid, not by name: the name of
         # the driving session is nobody's business but the fleet's, and the uuid
         # is already how this tool knows which row is itself.
-        if self_uuid and s.get("resume_uuid") == self_uuid:
+        #
+        # An UNKNOWN asker refuses everyone, like every other source here that
+        # fails. Not knowing who is asking means not being able to guarantee the
+        # asker is excluded, and the gap is invisible from inside: with no uuid,
+        # the driving session's only remaining exclusion is "status is busy",
+        # which is true merely because running this made it busy. A driver that
+        # is not the session it is reading about would then see that session
+        # eligible and roll the thing it is running in. Reported by coord
+        # 2026-10-15, from the JSON where the banner does not reach.
+        if not self_uuid:
+            why.append("the asking session could not be identified "
+                       "(CLAUDE_CODE_SESSION_ID unset), so nothing is self-excluded")
+        elif s.get("resume_uuid") == self_uuid:
             why.append("this is the session asking; it cannot roll itself")
 
         if not inst:
@@ -780,6 +792,12 @@ def report_eligible(ss, inst):
     ready = [s for s, why in rows if not why]
     if "--json" in sys.argv:
         print(json.dumps({
+            # Top-level, because a driver must be able to ASSERT self-exclusion
+            # rather than grep for it: null here means nothing was self-excluded,
+            # and finding that out by searching one's own row requires already
+            # knowing which row is one's own -- the thing this field exists to
+            # say. The text report shouts it; the JSON has to carry it.
+            "asking": SELF_UUID or None,
             "installed": inst, "soak_hours": soak, "lag": lag,
             "installed_age_hours": installed_age_hours(),
             "cluster_ok": bool(watch and watch.get("cluster_ok")),

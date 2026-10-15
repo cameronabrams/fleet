@@ -60,6 +60,17 @@ entries and makes you confirm the bump against this list.
   can count*, not *not behind* — reading it as zero would hold back exactly the roll
   most worth making.
 
+  **An unidentifiable asker refuses everyone**, like every other failed source
+  here. With `CLAUDE_CODE_SESSION_ID` unset nothing is self-excluded, and the gap
+  is invisible from inside: the driving session's only remaining exclusion is
+  `status is busy`, true merely because running the tool made it busy, so a driver
+  reading about a session other than itself would see it eligible and roll the
+  thing it is running in. `--json` carries `asking` at the top level — the uuid or
+  `null` — so a driver can assert on it instead of searching its own row for a
+  sentence, which it could only do by already knowing which row is its own.
+  Reported by coord on 2026-10-15, from the JSON, where the text report's banner
+  does not reach.
+
   It runs one command, `fleetwatch --json`, and that is pinned by a test on the
   parsed syntax rather than on the text: the first version grepped for `kill` and
   failed on four comments saying it never kills.
