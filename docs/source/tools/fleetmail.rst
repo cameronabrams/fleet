@@ -214,6 +214,19 @@ not skipped. The service's exit code is left unmasked, so an unreachable mailbox
 an undelivered message (5) shows in ``systemctl --user status``. For the timer to run
 while nobody is logged in, the user manager needs ``loginctl enable-linger``.
 
+``fleetmail timer`` bakes in the path of **the copy it is run from**, because the
+tool resolves its own directory through ``realpath``. That is what makes a deployed
+checkout work — generate the unit there and the unit points there — and it is the
+same property that lets a 15-minute timer end up pointing at the directory someone
+develops in. Generate it from a checkout nothing edits::
+
+   git -C <repo> worktree add <deploy-dir> --detach HEAD
+   <deploy-dir>/bin/fleetmail timer
+
+It warns when the copy it is about to name has uncommitted changes, or is not a
+checkout git can read — unknown warns the same as dirty, because a wrong "clean" is
+what puts a timer on a working tree. It warns; it does not refuse.
+
 A fetch under a timer waits less patiently for a busy session than a hand-run one
 (``--nudge-wait``, 600 s in the printed unit): the next tick will try again.
 

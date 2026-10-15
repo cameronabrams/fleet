@@ -32,6 +32,16 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- **`fleetmail timer` warns when it is about to point a timer at a working tree.**
+  It bakes in the path of the copy it is run from, which is what makes a deployed
+  checkout work — and the same property that let a 15-minute timer run the
+  directory this repository is developed in. On 2026-10-15 two ticks landed inside
+  an editing window while guards were being broken on purpose; both caught a
+  coherent version by luck, and one of the breaks would have destroyed live
+  delivery state. A dirty checkout is the one cheap, checkable symptom, and
+  **unknown warns the same as dirty** — a copy git cannot speak for is not one to
+  point a timer at. It warns; it does not refuse.
+
 - **`fleetupgrade --eligible`** — who could be rolled onto a new binary right now,
   and, for everyone else, every reason they could not. The machine half of a roll
   that nobody has to trigger; acting on it stays with the `fleet-upgrade` skill,

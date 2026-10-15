@@ -507,6 +507,23 @@ Persistent=true
 WantedBy=timers.target
 """
 
+def being_edited(path):
+    """Whether `path` sits in a checkout with uncommitted changes, or None.
+
+    None when it is not a git checkout at all, or git cannot answer -- unknown,
+    not clean, because the whole point of asking is that a wrong "no" is the
+    dangerous direction.
+    """
+    try:
+        r = subprocess.run(["git", "-C", path, "status", "--porcelain"],
+                           capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    return bool(r.stdout.strip())
+
+
 def do_timer(a):
     need_mail()
     tool = os.path.join(BIN, "fleetmail")
@@ -514,6 +531,27 @@ def do_timer(a):
     env = ""
     if os.environ.get("FLEET_CONFIG"):
         env = f"Environment=FLEET_CONFIG={os.environ['FLEET_CONFIG']}"
+    # The unit names THIS copy, because `BIN` resolves from this file. That is what
+    # makes a deployed checkout work -- generate the unit from there and it points
+    # there -- and it is also the trap: generate it from the copy you develop in
+    # and a timer will run your working tree every poll, unattended, sending real
+    # mail and typing into live panes. On 2026-10-15 that was the arrangement, and
+    # two ticks landed inside an editing window while guards were being broken on
+    # purpose; both caught a coherent version by luck.
+    #
+    # A dirty checkout is the one cheap, checkable symptom. Unknown prints the same
+    # warning as dirty: a copy git cannot speak for is not a copy to point a timer
+    # at either.
+    dirty = being_edited(BIN)
+    if dirty is not False:
+        print(f"\n  !! The unit below runs {tool}")
+        print("     and that copy " + ("has uncommitted changes."
+                                       if dirty else "is not a checkout git can read."))
+        print("     A timer pointed here runs whatever is on disk at each tick, including")
+        print("     a file saved half-written or broken on purpose to test a guard.")
+        print("     Generate this from a deployed checkout instead -- one nothing edits:")
+        print("         git -C <repo> worktree add <deploy-dir> --detach HEAD")
+        print("         <deploy-dir>/bin/fleetmail timer")
     print(f"\n  Two files for ~/.config/systemd/user/ -- {service} and {timer}.")
     print(f"  They must be FILES ON DISK: a transient `systemd-run --user` unit lives in")
     print(f"  /run and is gone after a reboot.\n")

@@ -643,3 +643,53 @@ class Amending(Base):
     def test_it_refuses_to_invent_a_record(self):
         self.assertFalse(self.m.amend("never-seen", nudged=True))
         self.assertNotIn("never-seen", self.m.delivered())
+
+
+class ATimerPointedAtAWorkingTree(Base):
+    """`fleetmail timer` bakes in the path of the copy it is run from, because
+    `BIN` resolves from `__file__`. That is what makes a deployed checkout work --
+    generate the unit there and it points there -- and it is the same property
+    that lets someone point a 15-minute timer at the directory they develop in.
+
+    That was the arrangement until 2026-10-15. Two ticks landed inside an editing
+    window while guards were being deliberately broken; both caught a coherent
+    version, by luck. One of the breaks would have destroyed live state.
+
+    A dirty checkout is the one cheap, checkable symptom, and **unknown warns the
+    same as dirty**: a copy git cannot speak for is not one to point a timer at.
+    """
+    def generated(self, status=(0, "")):
+        code, out = 0, ""
+        rc, stdout = status
+        with mock.patch.object(self.m.subprocess, "run",
+                               return_value=mock.Mock(returncode=rc, stdout=stdout)):
+            code, out = self.run_main("timer")
+        return out
+
+    def test_a_clean_checkout_generates_the_unit_without_a_warning(self):
+        out = self.generated((0, ""))
+        self.assertIn("ExecStart=", out)
+        self.assertNotIn("uncommitted changes", out)
+
+    def test_a_dirty_checkout_is_warned_about(self):
+        out = self.generated((0, " M bin/fleetmail\n"))
+        self.assertIn("uncommitted changes", out)
+        self.assertIn("worktree add", out, "the warning must say what to do instead")
+        self.assertIn("ExecStart=", out, "it warns; it does not refuse")
+
+    def test_a_directory_git_cannot_speak_for_warns_too(self):
+        """Not silence. Unknown is the direction that matters: a wrong 'clean'
+        is what puts a timer on a working tree."""
+        out = self.generated((128, ""))
+        self.assertIn("not a checkout git can read", out)
+        self.assertIn("worktree add", out)
+
+    def test_git_being_unrunnable_is_unknown_not_clean(self):
+        with mock.patch.object(self.m.subprocess, "run", side_effect=OSError("no git")):
+            self.assertIsNone(self.m.being_edited("/anywhere"))
+
+    def test_the_unit_names_the_copy_it_was_generated_from(self):
+        """The property the deployment relies on, pinned so it cannot quietly
+        become 'wherever the repo is'."""
+        out = self.generated()
+        self.assertIn(f"ExecStart={os.path.join(self.m.BIN, 'fleetmail')} fetch --go", out)

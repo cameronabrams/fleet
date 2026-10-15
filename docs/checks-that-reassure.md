@@ -161,12 +161,19 @@ Three mechanisms produce it.
 
   The practice, which costs one command: break it where the trigger cannot reach.
 
-      git archive HEAD | tar -x -C <scratch>/breakroom
+      git ls-files -z | tar --null -T - -cf - | tar -x -C <scratch>/breakroom
 
   The suite runs entirely inside that copy -- `tests/support.py` resolves `bin/`
   from the repository root it is invoked from -- so the live symlink never points
-  at a broken file. Verified end to end on 2026-10-15: 634 tests pass in the copy,
-  a break there fails 7 of them, and the live tool is untouched.
+  at a broken file. Verified end to end on 2026-10-15: the full suite passes in the
+  copy, a break there fails, and the live tool is untouched.
+
+  **This was first written as `git archive HEAD`, which is wrong and failed the
+  same day.** `git archive` ships the committed tree, and the change being proved
+  is the uncommitted one -- so it copies everything except the thing under test.
+  The copy then fails for reasons that have nothing to do with the guard, which is
+  the good outcome; the bad one is a guard that appears to bite against code that
+  is not the code you wrote. A rule written down is not a rule that has been run.
 
 ## The rule that covers them all
 
