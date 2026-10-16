@@ -139,6 +139,49 @@ class RestoreLandsWhereTheManifestSays(unittest.TestCase):
             self.assertIn("--name %s --resume %s" % (s["label"], s["resume_uuid"]),
                           lines, "wrong or missing launch for %s: %r" % (s["label"], lines))
 
+    def test_a_go_restore_records_the_adoption_it_is_about_to_make(self):
+        """Behavioral, not a read of the source.
+
+        The source checks beside this one assert the sentences exist and that one
+        precedes the other. They cannot tell whether the block RUNS: wrapping it
+        in `if False:` leaves every string where it was and they all pass. This
+        builds a fleet and reads the file.
+        """
+        subprocess.run([TOOL, "--go", "--socket", SOCKET, "--stagger", "0"],
+                       capture_output=True, text=True, env=self.env())
+        path = os.path.join(self.cfg.state, "autoroll.log")
+        self.assertTrue(os.path.exists(path), "no adoption was recorded at all")
+        with open(path) as fh:
+            lines = [l for l in fh if l.strip()]
+        self.assertEqual(len(lines), 2, "".join(lines))
+        self.assertIn("restore INTENT", lines[0])
+        self.assertIn("none verified yet", lines[0])
+        self.assertIn("restore DONE", lines[1])
+        self.assertIn("rolled=%d-sessions" % len(self.man["sessions"]), lines[0])
+
+    def test_a_plan_records_no_adoption(self):
+        """A line for a restore that did not happen is the file's own lie, in the
+        file kept to catch them."""
+        subprocess.run([TOOL, "--socket", SOCKET], capture_output=True,
+                       text=True, env=self.env())
+        self.assertFalse(os.path.exists(os.path.join(self.cfg.state, "autoroll.log")))
+
+    def test_the_restore_never_runs_claude_just_to_read_a_version(self):
+        """`versions.installed()` falls back to `claude --version`, which is a
+        process launch, and this is the recovery path. Caught here first: the
+        fake `claude` recorded a `--version` call that displaced a real launch."""
+        subprocess.run([TOOL, "--go", "--socket", SOCKET, "--stagger", "0"],
+                       capture_output=True, text=True, env=self.env())
+        for _ in range(50):
+            if os.path.exists(self.log):
+                with open(self.log) as fh:
+                    if len(fh.readlines()) >= 3:
+                        break
+            time.sleep(0.1)
+        with open(self.log) as fh:
+            calls = [l.strip() for l in fh if l.strip()]
+        self.assertNotIn("--version", calls, calls)
+
     def test_it_builds_on_the_named_socket_and_not_the_caller_s(self):
         """`$TMUX` is set inside any pane, so a restore run from one used to build
         the fleet on whatever server that pane belonged to."""

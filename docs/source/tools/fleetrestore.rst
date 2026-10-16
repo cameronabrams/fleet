@@ -60,3 +60,36 @@ needs every pane that was in the window.
 
 After a restore, verify the fleet — per pane, argv against cwd against the manifest
 — not just the snapshot (:doc:`../skills/fleet-snapshot`).
+
+A restore is the fleet's largest adoption
+-----------------------------------------
+
+Every session comes up on whatever ``claude`` resolves to now, which need not be
+what the manifest recorded. That is the same hole as an unpark (see
+:doc:`fleetspawn`) with a bigger blast radius — the whole fleet at once — so
+``--go`` writes to the same ``<state>/autoroll.log``.
+
+It writes **two** lines, and the first one is honest about being a guess::
+
+   ...  rolled=15-sessions from=2.1.299 to=2.1.301 note=restore INTENT -- 15 planned, none verified yet
+   ...  rolled=15-sessions from=restore to=2.1.301 note=restore DONE -- 15 of 15 panes match the manifest (pane label and directory; not a version check)
+
+The first is written **before anything launches**, so it records intent: a restore
+that half-fails will have claimed every session, and one that dies partway will
+have claimed them all with none up. Before is still the right place, because a
+line written after a run that never finishes does not exist — and the unfinished
+restore is exactly the one worth having a record of. The second line completes it
+when there is an outcome to report.
+
+The outcome deliberately does **not** say a version was adopted. ``verify``
+compares each pane's ``@agent`` label and directory against the manifest, which is
+a different question from which binary came up, and a line claiming the stronger
+fact would be the same overstatement one step along. When tmux cannot be listed at
+all, ``verify`` returns a single row — counting that as one failed session would
+log *14 of 15 matched* for a check that matched nothing, so it reads ``COULD NOT
+CHECK`` instead.
+
+**Nothing is read per session and the launch loop is untouched.** Both lines use
+``versions.installed(ask_binary=False)``, the form that will not run
+``claude --version``: this is the recovery path, where nothing may need anything
+else to work first. An unreadable version is written ``?``.

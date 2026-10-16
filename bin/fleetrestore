@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..
 from fleet import config as fc
 from fleet import version_flag
 from fleet.panes import LABELS, agent_label
+from fleet import versions
 CFG = fc.load()
 
 STATE = fc.state_dir(CFG)
@@ -287,6 +288,32 @@ def main():
     if not a.go:
         print("  PLAN (nothing executed; pass --go to run):\n")
 
+    # A restore is the fleet's largest adoption: every session comes up on whatever
+    # `claude` resolves to now, which is not necessarily what the manifest recorded.
+    # Logged like any other adoption, into the same file, for the same reason an
+    # unpark is (2026-10-16) -- a route onto a new binary that the one file meant to
+    # show them omits.
+    #
+    # WRITTEN BEFORE THE LAUNCHES, and therefore INTENT. Two consequences, and the
+    # line says both so a later reader cannot take it for an accomplished fact:
+    # a restore that half-fails will have claimed every session, and one that dies
+    # partway will have claimed them all with none up. Before is still the right
+    # place -- a line written after a run that never finishes does not exist, and
+    # the unfinished restore is exactly the one worth having a record of. The
+    # outcome line below completes it when there is an outcome to report.
+    #
+    # Nothing is read per session and the launch loop is untouched: this is the
+    # recovery path, and the launch logic is the last thing to add machinery to.
+    if a.go:
+        was = sorted({x.get("version") for x in m["sessions"] if x.get("version")})
+        problem = versions.record_adoption(
+            STATE, "%d-sessions" % len(m["sessions"]),
+            versions.installed(ask_binary=False),
+            was[0] if len(was) == 1 else ("mixed" if was else "?"),
+            "restore INTENT -- %d planned, none verified yet" % len(m["sessions"]))
+        if problem:
+            print(f"  adoption not logged: {problem}")
+
     # group panes by window; create in original pane order, then apply the exact
     # layout tmux itself recorded. Geometry is restored verbatim, not approximated.
     by_win = {}
@@ -424,6 +451,25 @@ def main():
         else:
             print("\n  verified: every session's pane carries its @agent label and sits "
                   "in its manifest directory.")
+        # The outcome beside the intent. Deliberately NOT phrased as "adopted":
+        # `verify` compares each pane's @agent label and directory against the
+        # manifest, which is not the same question as which binary came up, and a
+        # line claiming the stronger fact would be the week's recurring mistake in
+        # a new place. What it can say honestly is how many panes matched.
+        n = len(m["sessions"])
+        # `verify` returns ONE row labelled "(all)" when it could not list panes at
+        # all. Counting that as a single failure would report "14 of 15 matched"
+        # for a check that matched nothing -- the reassuring direction, in the
+        # tool whose whole job is saying whether the fleet came back.
+        checked = not any(label == "(all)" for label, _ in bad)
+        said = ("%d of %d panes match the manifest (pane label and directory; "
+                "not a version check)" % (n - len(bad), n) if checked
+                else "COULD NOT CHECK -- %s" % (bad[0][1] if bad else "no reason given"))
+        problem = versions.record_adoption(
+            STATE, "%d-sessions" % n, versions.installed(ask_binary=False),
+            "restore", "restore DONE -- " + said)
+        if problem:
+            print(f"  outcome not logged: {problem}")
     print(f"\n  After restore: run `fleetsnap` to re-capture, and ask each session to "
           f"confirm it re-armed what its state files require.\n")
 

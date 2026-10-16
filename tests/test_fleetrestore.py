@@ -218,3 +218,70 @@ class RetiredAllFlag(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ARestoreIsTheLargestAdoption(Plan):
+    """Every session comes up on whatever `claude` resolves to now, which need not
+    be what the manifest recorded. The same hole as an unpark (2026-10-16) with a
+    bigger blast radius: fifteen sessions at once, and the one file meant to show
+    adoptions omitting all of them.
+
+    Logged WITHOUT touching the launch loop or reading any pid, because this is
+    the recovery path. The cost is that the line is written before the launches
+    and so records INTENT -- which is why it says so in the line, and why the
+    outcome is a second line rather than a rewrite of the first.
+    """
+    def log_lines(self):
+        p = os.path.join(self.cfg.state, "autoroll.log")
+        if not os.path.exists(p):
+            return []
+        with open(p) as f:
+            return [l.strip() for l in f if l.strip()]
+
+    def test_a_plan_writes_nothing(self):
+        """The default. A log line for a restore that did not happen is worse than
+        no line: it is the file's own lie, in the file kept to catch them."""
+        r = self.run_tool()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.log_lines(), [])
+
+    def test_the_intent_line_says_it_is_intent(self):
+        """A reader finding this after a restore that died partway must not take
+        it for an accomplished fact."""
+        src = open(TOOL).read()
+        i = src.index("restore INTENT")
+        self.assertIn("none verified yet", src[i:i + 120])
+        self.assertLess(src.index("restore INTENT"), src.index("by_win = {}"),
+                        "the intent line must be written before anything launches")
+
+    def test_the_outcome_is_a_second_line_not_a_rewrite(self):
+        """Before is the right place for the first line -- a line written after a
+        run that never finishes does not exist, and the unfinished restore is the
+        one worth a record. So the outcome adds, it does not replace."""
+        src = open(TOOL).read()
+        self.assertIn("restore DONE", src)
+        self.assertLess(src.index("restore INTENT"), src.index("restore DONE"))
+        self.assertEqual(src.count("record_adoption"), 2)
+
+    def test_the_outcome_does_not_claim_a_version_was_adopted(self):
+        """`verify` compares each pane's @agent label and directory against the
+        manifest. That is not the question "which binary came up", and a line
+        claiming the stronger fact would be this week's recurring mistake in a
+        new place."""
+        src = open(TOOL).read()
+        # The caveat sits in the sentence built just ABOVE the call, so the window
+        # looks both ways. Searching only forward passed nothing and failed for a
+        # reason that had nothing to do with the claim being tested.
+        i = src.index("restore DONE")
+        self.assertIn("not a version check", src[i - 700:i + 300])
+
+    def test_an_unreadable_tmux_is_not_counted_as_one_failure(self):
+        """`verify` returns a single row labelled `(all)` when it could not list
+        panes at all. Treating that as one failed session would log "14 of 15
+        matched" for a check that matched nothing -- the reassuring direction, in
+        the tool whose whole job is saying whether the fleet came back."""
+        src = open(TOOL).read()
+        i = src.index("restore DONE")
+        head = src[max(0, i - 900):i]
+        self.assertIn('label == "(all)"', head)
+        self.assertIn("COULD NOT CHECK", src[i - 900:i + 200])

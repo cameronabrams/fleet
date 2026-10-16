@@ -134,7 +134,7 @@ def _spoken(cand):
     return v
 
 
-def installed(claude=None):
+def installed(claude=None, ask_binary=True):
     """The version `claude` would start now, or None if it cannot be read.
 
     This is "the most recent available version" as a session experiences it: the
@@ -145,6 +145,14 @@ def installed(claude=None):
     With no argument it takes the `claude` a new session would actually launch --
     `shutil.which`, then the native default. A path given explicitly is used as
     given, which is how the tests pin a layout without installing one.
+
+    **`ask_binary=False` makes this pure.** The last resort is running
+    `claude --version`, which is a process launch, and some callers must not do
+    that: `fleetrestore` is the recovery path, where the rule is that nothing may
+    need anything else to work first, and `record_adoption` writes a log line,
+    which is never worth an exec. They get None where the layout is silent, and
+    None is written `?`. Found by the restore end-to-end test, whose fake `claude`
+    recorded a `--version` call this had no business making.
     """
     cands = [claude] if claude else [shutil.which("claude"), CLAUDE]
     for cand in cands:
@@ -155,6 +163,8 @@ def installed(claude=None):
             return v
         if not os.path.exists(cand):
             continue             # nothing there; the next candidate may be real
+        if not ask_binary:
+            return None          # the layout said nothing and we may not ask
         # It exists, so THIS is the binary a new session launches. The layout said
         # nothing about it, so ask it -- and whatever it answers is the answer,
         # including None. Falling through to the next candidate here would report
@@ -236,8 +246,10 @@ def record_adoption(state_dir, session, to, frm, note, installed_version=None):
     written as `?`, never omitted and never guessed.
     """
     path = os.path.join(state_dir, ADOPTION_LOG)
+    # `ask_binary=False`: a log line is never worth launching a process for, and
+    # one of this function's callers is the recovery path.
     line = _LINE % (time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                    installed_version or installed() or "?",
+                    installed_version or installed(ask_binary=False) or "?",
                     session, frm or "?", to or "?", note)
     try:
         os.makedirs(state_dir, exist_ok=True)

@@ -372,3 +372,62 @@ class RecordingThatASessionMovedOntoABinary(unittest.TestCase):
         self.assertIsNone(versions.record_adoption(d, "alpha", "2.1.301", "new",
                                                    "spawn", installed_version="x"))
         self.assertTrue(os.path.exists(os.path.join(d, versions.ADOPTION_LOG)))
+
+
+class SomeCallersMayNotLaunchAProcess(unittest.TestCase):
+    """`installed()`'s last resort is running `claude --version`. Two callers must
+    never do that, and neither is obvious from the call site.
+
+    `fleetrestore` is the recovery path, where the repository's first rule is that
+    nothing may need anything else to work first; `record_adoption` writes one log
+    line, which is never worth an exec. Both were added on 2026-10-16 calling the
+    executing form, and the restore's end-to-end test caught it -- its fake
+    `claude` recorded a `--version` call that displaced a real launch.
+    """
+    def setUp(self):
+        versions._spoken_cache.clear()
+        self.addCleanup(versions._spoken_cache.clear)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.exe = os.path.join(self.tmp.name, "claude")
+        open(self.exe, "w").close()
+
+    def test_ask_binary_false_returns_none_rather_than_running_it(self):
+        run = mock.Mock(return_value=mock.Mock(stdout="2.1.301\n"))
+        with mock.patch.object(versions.shutil, "which", lambda n: self.exe), \
+             mock.patch.object(versions.subprocess, "run", run):
+            self.assertIsNone(versions.installed(ask_binary=False))
+        run.assert_not_called()
+
+    def test_the_layout_still_answers_without_asking(self):
+        """Pure does not mean blind: a path that names its version needs no exec,
+        and that is the common case."""
+        with mock.patch.object(versions.shutil, "which",
+                               lambda n: "/s/versions/2.1.301/claude"):
+            self.assertEqual(versions.installed(ask_binary=False), "2.1.301")
+
+    def test_recording_an_adoption_never_execs(self):
+        run = mock.Mock(return_value=mock.Mock(stdout="2.1.301\n"))
+        with mock.patch.object(versions.shutil, "which", lambda n: self.exe), \
+             mock.patch.object(versions.subprocess, "run", run):
+            versions.record_adoption(self.tmp.name, "alpha", "2.1.301", "parked",
+                                     "unpark")
+        run.assert_not_called()
+        with open(os.path.join(self.tmp.name, versions.ADOPTION_LOG)) as f:
+            self.assertIn("installed=?", f.read())
+
+    def test_the_default_still_asks(self):
+        """The flag is opt-out, not a change of behavior: `fleetboard` and
+        `fleetupgrade` want the answer and an npm install only has it from the
+        binary."""
+        run = mock.Mock(return_value=mock.Mock(stdout="2.1.301\n"))
+        with mock.patch.object(versions.shutil, "which", lambda n: self.exe), \
+             mock.patch.object(versions.subprocess, "run", run):
+            self.assertEqual(versions.installed(), "2.1.301")
+        run.assert_called_once()
+
+    def test_the_recovery_path_does_not_call_the_executing_form(self):
+        src = open(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "bin", "fleetrestore")).read()
+        self.assertEqual(src.count("versions.installed(ask_binary=False)"), 2)
+        self.assertNotIn("versions.installed()", src)

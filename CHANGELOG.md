@@ -32,6 +32,26 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- **`fleetrestore --go` records the adoption too, as the fleet's largest.** Every
+  session comes up on whatever `claude` resolves to, which need not be what the
+  manifest recorded — the same hole as an unpark with the whole fleet in it. Two
+  lines: an **intent** line before anything launches, saying so in the line, and an
+  outcome line after `verify`. Before is the right place for the first, because a
+  line written after a run that never finishes does not exist, and the unfinished
+  restore is the one worth a record.
+
+  The outcome does not claim a version was adopted — `verify` compares pane labels
+  and directories, not binaries — and a tmux that cannot be listed reads `COULD NOT
+  CHECK` rather than being counted as one failed session, which would have logged
+  *14 of 15 matched* for a check that matched nothing.
+
+- **`fleet.versions.installed(ask_binary=False)`**, the form that will not run
+  `claude --version`. Two callers must not: `fleetrestore` is the recovery path,
+  where nothing may need anything else to work first, and `record_adoption` writes
+  one log line, which is never worth an exec. Both were added calling the executing
+  form on 2026-10-16 and the restore's end-to-end test caught it — its fake `claude`
+  recorded a `--version` call that displaced a real launch.
+
 - **`fleetspawn --go` logs the adoption, because every launch is one.** There is no
   version argument and none is wanted, so a spawn — and an **unpark** — puts a
   session onto whatever `claude` resolves to. That was invisible, and it was not a
