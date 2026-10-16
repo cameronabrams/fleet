@@ -87,7 +87,14 @@ The gates, in the order they are reported:
      - the session's uuid is the asking session's — it cannot roll itself, **or
        the asker could not be identified at all**, which refuses everyone
    * - soak
-     - the installed binary has been present for less than ``--soak`` hours
+     - the installed binary has sat on disk for less than ``--soak`` hours.
+       **Wall-clock delay, not a trial**: nothing on this machine runs the release
+       while it waits — no feed, no advisory check, no route by which a bad one
+       becomes known here. 2.1.301 sat 18 hours with no session on it (2026-10-16).
+       The bet is only that the wider world finds problems first, which is worth
+       something against a release pulled within hours and is **not** evidence to
+       tune on. The fleet's own sensor is version diversity plus someone noticing,
+       and that starts when a session is rolled
    * - lag
      - fewer than ``--lag`` releases behind, or already current
    * - background

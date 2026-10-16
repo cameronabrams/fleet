@@ -110,6 +110,37 @@ After a ``/clear`` or a restart it is yours again: a ``/clear`` drops the live c
 and keeps the name, and nothing goes back through ``fleetspawn`` at that point.
 :doc:`fleetsnap` and :doc:`fleetupgrade` flag the difference and print the command.
 
+Every launch is an adoption, and it is logged
+---------------------------------------------
+
+There is no version argument and none is wanted. The command is plain ``claude``,
+so a spawn — and an **unpark** — puts a session onto whatever ``~/.local/bin/claude``
+resolves to at that moment.
+
+Until 2026-10-16 that happened invisibly, and it was not a rare path: the fleet's
+entire version spread was unparks rather than rolls. The auto-roll log recorded
+``rolled=none skipped=15`` at 09:50 that morning and a session went onto an
+18-hour-old release at 09:51, by a route the log could not see.
+
+So ``--go`` appends one line to ``<state>/autoroll.log``::
+
+   2026-10-16T09:51:04-0400  installed=2.1.301 rolled=ycleptic-repo from=parked to=2.1.301 note=unpark
+
+It is the auto-roll's own log and not a new one, deliberately: a second file would
+have said ``rolled=none`` twice. ``from`` is ``parked`` for an unpark and ``new``
+for a fresh spawn — ``parked`` is honest rather than lazy, since a parked session
+is not running and nothing here can know which binary it was on.
+
+``to`` is read from the **running process**, not from what was installed when the
+command was composed: a session takes up to ``--wait`` seconds to come up, and a
+human can upgrade in between. An unreadable version is written ``?``.
+
+**The adoption is recorded, not gated.** A park and unpark is a human act with its
+own reasons, and making it wait on :doc:`fleetupgrade`'s on-disk window would be
+the wrong trade. A log line that cannot be written is printed and does not fail the
+spawn — the session is up, and the obvious repair for a failed spawn is to launch
+again, which here would start a second one.
+
 Exit codes
 ----------
 

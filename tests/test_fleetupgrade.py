@@ -433,8 +433,15 @@ class EveryGateIsARefusal(unittest.TestCase):
         self.assertIn("status is busy", self.judge(sess(), agents={"alpha": "busy"}))
 
     def test_the_soak_is_measured_from_the_install(self):
+        """Worded as time ON DISK, not as a soak. Nothing on this machine runs the
+        release while it waits -- no feed, no advisory check -- so "soak" invites
+        a reader to tune it as if it were evidence-gathering. 2.1.301 sat 18 hours
+        with no session on it (2026-10-16). The flag keeps its name because the
+        driver's runbook uses it; the words a reader sees do not."""
         self.assertEqual(self.judge(sess(), age=48.0), [])
-        self.assertTrue(any("soak is 24h" in w for w in self.judge(sess(), age=3.0)))
+        why = self.judge(sess(), age=3.0)
+        self.assertTrue(any("needs 24h on disk" in w for w in why), why)
+        self.assertFalse(any("soak" in w for w in why), why)
 
     def test_a_single_release_is_skipped_at_the_default_lag(self):
         self.assertTrue(any("1 version behind" in w

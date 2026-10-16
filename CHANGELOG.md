@@ -32,6 +32,21 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- **`fleetspawn --go` logs the adoption, because every launch is one.** There is no
+  version argument and none is wanted, so a spawn — and an **unpark** — puts a
+  session onto whatever `claude` resolves to. That was invisible, and it was not a
+  rare path: the fleet's entire version spread was unparks rather than rolls, and
+  the auto-roll log said `rolled=none skipped=15` at 09:50 on 2026-10-16 while a
+  session went onto an 18-hour-old release at 09:51. Reported by coord, from
+  Cameron asking where the new binary was soaking.
+
+  One line into `<state>/autoroll.log`, which is the auto-roll's own log and not a
+  new one: a second file would have said `rolled=none` twice. `to` is read from the
+  running process rather than from what was installed when the command was
+  composed, since a session takes up to `--wait` seconds to come up. **Recorded,
+  not gated** — a park and unpark is a human act with its own reasons — and a log
+  that cannot be written is printed without failing the spawn.
+
 - **`fleetmail timer` warns when it is about to point a timer at a working tree.**
   It bakes in the path of the copy it is run from, which is what makes a deployed
   checkout work — and the same property that let a 15-minute timer run the
@@ -41,6 +56,12 @@ entries and makes you confirm the bump against this list.
   delivery state. A dirty checkout is the one cheap, checkable symptom, and
   **unknown warns the same as dirty** — a copy git cannot speak for is not one to
   point a timer at. It warns; it does not refuse.
+
+- **`fleetupgrade --eligible` stops calling the on-disk window a soak.** Nothing
+  here exercises a release while it waits, so the word invited tuning it as if it
+  were evidence-gathering. The flag keeps its name, because the driver's runbook
+  uses it; the help text, the gate table and the per-session reason now say *on
+  disk* and say plainly what the delay buys. Raised by coord, 2026-10-16.
 
 - **`fleetupgrade --eligible`** — who could be rolled onto a new binary right now,
   and, for everyone else, every reason they could not. The machine half of a roll

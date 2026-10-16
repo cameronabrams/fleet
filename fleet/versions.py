@@ -34,6 +34,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 
 # `~/.local/bin/claude` is the native installer's symlink into the versioned
 # store, and the fallback when nothing named `claude` is on PATH. It is resolved
@@ -204,3 +205,44 @@ def is_stale(session_version, installed_version):
     if not session_version or not installed_version:
         return None
     return session_version != installed_version
+
+
+# The fleet's record of sessions moving onto a binary. It is the auto-roll's log
+# because an adoption is an adoption however it happened, and a second file would
+# reproduce the defect this exists to fix: on 2026-10-16 that log said
+# `rolled=none` at 09:50 and a session went onto an 18-hour-old release at 09:51,
+# by a route the log could not see. Two files would have said `rolled=none` twice.
+ADOPTION_LOG = "autoroll.log"
+
+# The field order `fleetupgrade`'s driver writes, so one grep reads both. Fields
+# that mean nothing on this route are left out rather than filled with `-`: an
+# absent key is readable as "not applicable here", a dash is readable as "nobody
+# looked".
+_LINE = "%s  installed=%s rolled=%s from=%s to=%s note=%s\n"
+
+
+def record_adoption(state_dir, session, to, frm, note, installed_version=None):
+    """Append one line saying `session` has been put onto a binary, or say why not.
+
+    Returns None on success and a reason otherwise. **The caller must not fail on
+    it.** A session that came up correctly has come up correctly; refusing to
+    report that because a log could not be written would turn a bookkeeping fault
+    into a fleet one, and the obvious repair -- try the launch again -- is the
+    damaging one.
+
+    `to` is what the process is OBSERVED running, not what was installed when the
+    command was composed: between those two reads a human can have upgraded, and
+    the question this log answers is which binary the session is on. Unknown is
+    written as `?`, never omitted and never guessed.
+    """
+    path = os.path.join(state_dir, ADOPTION_LOG)
+    line = _LINE % (time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                    installed_version or installed() or "?",
+                    session, frm or "?", to or "?", note)
+    try:
+        os.makedirs(state_dir, exist_ok=True)
+        with open(path, "a") as f:
+            f.write(line)
+    except OSError as e:
+        return "could not write %s (%s)" % (path, e.strerror or e)
+    return None

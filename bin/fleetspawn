@@ -37,10 +37,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..
 from fleet import config as fc
 from fleet import version_flag
 from fleet import panes
+from fleet import versions
 from fleet.panes import LABELS, agent_label, TRUST_MARKERS
 from fleet.procs import claude_procs, named
 from fleet.transcripts import agent_color, registry_uuid, session_name, uuid_from_descendants
 CFG = fc.load()
+STATE = fc.state_dir(CFG)
 
 # Imported, not restated. This file kept its own identical copy of the tuple, and
 # a marker with two homes is a marker that drifts: the two in fleet/panes.py
@@ -251,6 +253,20 @@ def apply_color(pane, name, pid, color, idle_wait, confirm_wait=COLOR_CONFIRM_WA
     return (f"typed it, but transcript {uuid[:8]} still records "
             f"{agent_color(uuid) or 'no color'} after {confirm_wait}s")
 
+def adoption_kind(resume):
+    """(from, note) for the adoption line: an unpark and a fresh spawn are
+    different events and the log has to tell them apart.
+
+    A function rather than two conditionals at the call site, so there is
+    something a test can call. The first version of that test re-evaluated the
+    expression itself and would have passed against any behavior at all.
+
+    `from=parked` is honest rather than lazy: a parked session is not running, so
+    nothing here can know which binary it was on before.
+    """
+    return ("parked", "unpark") if resume else ("new", "spawn")
+
+
 def check(a):
     hits = [(p, c, v) for p, c, v in claude_procs() if session_name(p, c, v)[0] == a.name]
     if not hits:
@@ -373,6 +389,25 @@ def main():
         print(f"  Look at pane {pane}; do not relaunch until you know why.\n")
         sys.exit(4)
     print(f"  live: pid {pid} in {a.dir}")
+
+    # Every launch here puts a session onto whatever `claude` resolves to -- there
+    # is no version argument and none is wanted; a park/unpark is a human act with
+    # its own reasons and making it wait on a soak would be the wrong trade. But it
+    # IS an adoption, and until 2026-10-16 it was an invisible one: the fleet's
+    # whole version spread came from unparks, and the log meant to show adoptions
+    # recorded `rolled=none` in the minute before one happened.
+    #
+    # Read from the running process, not from `installed()`: between composing the
+    # command and the session coming up, the answer can have changed, and the
+    # question is which binary this session is on.
+    ran = versions.of_pid(pid)
+    frm, note = adoption_kind(a.resume)
+    problem = versions.record_adoption(STATE, a.name, ran, frm, note)
+    if problem:
+        # Said, not swallowed, and it does not fail the spawn: the session is up.
+        print(f"  adoption not logged: {problem}")
+    else:
+        print(f"  adoption logged: {a.name} on {ran or '?'}")
 
     color = fc.colors(CFG)[a.name]
     if a.no_color:

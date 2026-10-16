@@ -308,3 +308,67 @@ class NoToolDerivesItAlone(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecordingThatASessionMovedOntoABinary(unittest.TestCase):
+    """Every route onto a new binary has to reach one file, or the file lies by
+    omission.
+
+    `fleetspawn` launches with whatever `claude` resolves to -- there is no version
+    argument and none is wanted -- so an unpark silently adopts the newest release.
+    On 2026-10-16 the auto-roll log recorded `rolled=none skipped=15` at 09:50 and
+    a session went onto an 18-hour-old release at 09:51, by a route the log could
+    not see. The fleet's entire version spread was unparks, not rolls.
+
+    It is the auto-roll's own log and not a new one, deliberately: a second file
+    would have said `rolled=none` twice.
+    """
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def lines(self):
+        with open(os.path.join(self.tmp.name, versions.ADOPTION_LOG)) as f:
+            return [l.strip() for l in f if l.strip()]
+
+    def test_it_appends_rather_than_replacing(self):
+        """A log that forgets the last adoption cannot answer the question it
+        exists for."""
+        for n in ("alpha", "beta"):
+            self.assertIsNone(versions.record_adoption(
+                self.tmp.name, n, "2.1.301", "parked", "unpark",
+                installed_version="2.1.301"))
+        self.assertEqual(len(self.lines()), 2)
+        self.assertIn("rolled=beta", self.lines()[1])
+
+    def test_the_line_carries_what_a_reader_greps_for(self):
+        versions.record_adoption(self.tmp.name, "alpha", "2.1.301", "parked",
+                                 "unpark", installed_version="2.1.301")
+        line = self.lines()[0]
+        for field in ("installed=2.1.301", "rolled=alpha", "from=parked",
+                      "to=2.1.301", "note=unpark"):
+            self.assertIn(field, line, line)
+
+    def test_an_unknown_version_is_a_question_mark_not_an_omission(self):
+        """A missing `to=` would read as a line somebody forgot to finish. `?` is
+        this repository's word for a source that could not be read, and the field
+        order has to survive a reader that splits on it."""
+        versions.record_adoption(self.tmp.name, "alpha", None, None, "unpark",
+                                 installed_version="2.1.301")
+        self.assertIn("to=?", self.lines()[0])
+        self.assertIn("from=?", self.lines()[0])
+
+    def test_a_log_that_cannot_be_written_is_reported_not_raised(self):
+        """The caller is a tool that has just brought a session up. Failing the
+        launch over a bookkeeping fault would turn it into a fleet fault, and the
+        obvious repair -- launch again -- is the damaging one."""
+        problem = versions.record_adoption("/proc/nowhere/at/all", "alpha",
+                                           "2.1.301", "parked", "unpark")
+        self.assertIsNotNone(problem)
+        self.assertIn("could not write", problem)
+
+    def test_it_creates_the_state_directory(self):
+        d = os.path.join(self.tmp.name, "state-not-made-yet")
+        self.assertIsNone(versions.record_adoption(d, "alpha", "2.1.301", "new",
+                                                   "spawn", installed_version="x"))
+        self.assertTrue(os.path.exists(os.path.join(d, versions.ADOPTION_LOG)))

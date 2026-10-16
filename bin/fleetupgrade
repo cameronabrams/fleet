@@ -16,7 +16,10 @@ a re-arm ledger written BEFORE the restart. This flags who lacks one.
   fleetupgrade --json    same, machine-readable
   fleetupgrade --eligible        who could be rolled right now, and why not
   fleetupgrade --eligible --json same, machine-readable
-    --soak H   hours the installed binary must have been present (default 24)
+    --soak H   hours the installed binary must have sat on disk (default 24).
+               Wall-clock delay, NOT a trial: nothing here runs the new release
+               while it waits. The bet is that the wider world finds problems
+               first; this fleet's own sensor starts when a session is rolled.
     --lag N    releases behind before a roll is worth doing (default 2)
 
 `--eligible` is a COMPUTATION, not a plan to run. It answers "would a restart be
@@ -572,7 +575,16 @@ def sessions():
 # point where a tool starts deciding things.
 
 HOLD = "no-roll"          # in the config dir: a human's standing refusal
-SOAK_HOURS = 24           # how long a version must have been installed
+# How long the installed binary must have been on disk. **Wall-clock delay, not a
+# trial.** Nothing on this machine exercises a release while it waits: there is no
+# feed, no advisory check, no mechanism by which a bad release becomes known here,
+# and on 2026-10-16 2.1.301 had sat for 18 hours with no session running it. The
+# bet is only that the wider world finds problems first. The fleet's own sensor is
+# version diversity plus someone noticing, and that starts when a session is
+# rolled -- so this number is worth something against a release pulled within
+# hours, and is NOT evidence to tune on. The flag keeps the name `--soak` because
+# the driver's runbook uses it; the word oversells it and the help text says so.
+SOAK_HOURS = 24
 LAG = 2                   # how many versions behind before a roll is worth it
 
 
@@ -695,7 +707,7 @@ def eligibility(ss, inst, agents_by_name, watch, pinned, hold_why,
         if age_hours is None:
             why.append("age of the installed binary unknown")
         elif age_hours < soak_hours:
-            why.append("installed %.1fh ago, soak is %dh" % (age_hours, soak_hours))
+            why.append("installed %.1fh ago, needs %dh on disk" % (age_hours, soak_hours))
 
         n = version_lag(s.get("version"), inst)
         if not s.get("version"):
@@ -809,7 +821,7 @@ def report_eligible(ss, inst):
     age = installed_age_hours()
     print("installed claude: %s%s" % (inst or "?",
           "" if age is None else "  (%s ago)" % human_age(age * 3600)))
-    print("gates: idle, soak >= %dh, lag >= %d, no exit-blocking child, no unnamed runtime"
+    print("gates: idle, on disk >= %dh, lag >= %d, no exit-blocking child, no unnamed runtime"
           % (soak, lag))
     # Said out loud, because a self-exclusion that silently did not happen is the
     # shape of mistake this whole report exists to avoid. The asker is excluded by

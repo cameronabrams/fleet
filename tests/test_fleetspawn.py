@@ -427,3 +427,65 @@ class TheRegistryIsTheHandleForAQuietSession(unittest.TestCase):
         with mock.patch.object(self.spawn, "registry_uuid", lambda p: None), \
              mock.patch.object(self.spawn, "uuid_from_descendants", lambda p: "from-walk"):
             self.assertEqual(self.spawn.session_uuid(42), "from-walk")
+
+
+class AnUnparkIsAnAdoption(unittest.TestCase):
+    """`fleetspawn` has no version argument and wants none -- a park and unpark is
+    a human act with its own reasons, and making it wait on a soak would be the
+    wrong trade. But it puts a session onto whatever `claude` resolves to, and
+    until 2026-10-16 it did so invisibly: the fleet's whole version spread came
+    from unparks, and the auto-roll log said `rolled=none skipped=15` in the
+    minute before one happened.
+
+    Recording it is the fix. Gating it is not proposed and is not done here.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.spawn = load_tool("fleetspawn")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def test_the_version_logged_is_read_from_the_running_process(self):
+        """Not from `installed()`. Between composing the launch and the session
+        coming up -- up to `--wait` seconds -- a human can have upgraded, and the
+        question this log answers is which binary this session is on."""
+        import inspect
+        src = inspect.getsource(self.spawn.main)
+        i = src.index("record_adoption")
+        before = src[:i]
+        self.assertIn("versions.of_pid(pid)", before,
+                      "the adoption must log the version actually running")
+        self.assertNotIn("versions.installed()", before)
+
+    def test_an_unpark_and_a_fresh_spawn_are_told_apart(self):
+        """Calls the function `main` calls. The first version of this re-evaluated
+        the conditional itself inside the test helper -- so it asserted that
+        `"parked" if resume else "new"` equals "parked" when resume is set, which
+        is true of the test and says nothing about the tool. It passed with the
+        distinction deleted from `main` entirely."""
+        self.assertEqual(self.spawn.adoption_kind("uuid-1"), ("parked", "unpark"))
+        self.assertEqual(self.spawn.adoption_kind(None), ("new", "spawn"))
+        self.assertEqual(self.spawn.adoption_kind(""), ("new", "spawn"))
+
+    def test_main_uses_that_function_rather_than_repeating_it(self):
+        import inspect
+        self.assertIn("adoption_kind(a.resume)", inspect.getsource(self.spawn.main))
+
+    def test_a_failed_log_does_not_fail_the_spawn(self):
+        """The session is up and correct. A retry would respawn a live session,
+        which is a worse outcome than a missing log line -- so the failure is
+        printed and the exit code is untouched."""
+        import inspect
+        src = inspect.getsource(self.spawn.main)
+        tail = src[src.index("record_adoption"):]
+        self.assertIn("adoption not logged", tail)
+        self.assertNotIn("sys.exit", tail)
+
+    def test_it_logs_on_go_only(self):
+        """A plan changes nothing, including the log. The dry run returns before
+        a pane is ever made, so the adoption line must sit after that return."""
+        import inspect
+        src = inspect.getsource(self.spawn.main)
+        self.assertLess(src.index("plan only -- re-run with --go"),
+                        src.index("record_adoption"))
