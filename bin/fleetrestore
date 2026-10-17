@@ -19,6 +19,9 @@ from fleet import version_flag
 from fleet.panes import LABELS, agent_label
 from fleet import versions
 CFG = fc.load()
+# Set once in main(), before any pane is built. Bare `claude` until then, so an
+# import or a helper called out of order cannot silently launch something else.
+CLAUDE_CMD = "claude"
 
 STATE = fc.state_dir(CFG)
 
@@ -121,6 +124,24 @@ def windows_by_name(sess):
         if name and wid:
             out.setdefault(name, []).append(wid)
     return out
+
+
+def claude_cmd():
+    """(command, why) -- the binary to launch, and what that choice was.
+
+    Shared intent with `fleetspawn`'s: the fleet runs the newest release that has
+    SOAKED. Separate code because this one must never exec anything to find out --
+    `versions.target` reads mtimes and a symlink, and nothing here may depend on
+    running `claude` to decide how to run `claude`.
+    """
+    version, path = versions.target()
+    if path and os.path.exists(path):
+        return shlex.quote(path), "%s, the newest soaked release" % version
+    if version:
+        return "claude", (f"bare `claude` -- target {version} is gone from the "
+                          f"version store")
+    return "claude", ("bare `claude` -- nothing has soaked yet, or there is no "
+                      "version store on this machine")
 
 
 def verify(sessions):
@@ -239,10 +260,24 @@ def main():
         if not m["sessions"]:
             print("  nothing to restore.\n")
             return
+    # Which binary every session will come up on. Resolved ONCE, before anything
+    # is built, so a run cannot start some sessions on one release and the rest on
+    # another because the installer moved underneath it.
+    #
+    # **A pin can be missing, and a restore must not stop for that.** The named
+    # version can have been pruned, or this can be a fresh machine, or an npm
+    # install with no version store at all -- and a restore that refuses to launch
+    # because a release is absent is far worse than one that adopts a fresh binary.
+    # So it falls back to bare `claude`, and says which it did, because the manifest
+    # a later reader compares against will say something else.
+    global CLAUDE_CMD
+    CLAUDE_CMD, claude_why = claude_cmd()
+
     age = time.time() - os.path.getmtime(MANIFEST)
     print(f"\n  coordinator: {m.get('coordinator','?')}")
     print(f"  manifest captured {m['captured']}  ({age/3600:.1f} h ago)")
-    print(f"  {len(m['sessions'])} sessions, claude {m['installed_claude']}\n")
+    print(f"  {len(m['sessions'])} sessions, claude {m['installed_claude']} in the manifest")
+    print(f"  launching with: {claude_why}\n")
 
     # A session the snapshot could not name cannot be relaunched: --name and its
     # brief both need the name, and a made-up one would pin the wrong identity.
@@ -436,7 +471,7 @@ def main():
             env = fc.launch_env(CFG)
             run(["tmux", "send-keys", "-t", target,
                  (f"{env} " if env else "") +
-                 f"claude --name {shlex.quote(s_['label'])} "
+                 f"{CLAUDE_CMD} --name {shlex.quote(s_['label'])} "
                  f"--resume {s_['resume_uuid']}", "Enter"], a.go)
             if a.go and a.stagger:
                 time.sleep(a.stagger)

@@ -170,8 +170,14 @@ class TheVersionColumn(unittest.TestCase):
     def tearDown(self):
         self.cfg.close()
 
-    def board(self, agents, installed, per_pid):
-        """Draw with every slow source absent; only versions are under test."""
+    def board(self, agents, installed, per_pid, target=-1):
+        """Draw with every slow source absent; only versions are under test.
+
+        `target` defaults to `installed`, which is what every test written before
+        2026-10-17 assumed. The two are different every day now, and staleness is
+        measured against the TARGET -- the newest release that has soaked."""
+        if target == -1:
+            target = installed
         panes = {n: {"win": "1", "winname": "w", "pane": "%1",
                      "quiet": False, "current": False} for n in agents}
         import io, contextlib
@@ -179,6 +185,8 @@ class TheVersionColumn(unittest.TestCase):
              mock.patch.object(self.b, "agents", lambda: agents), \
              mock.patch.object(self.b, "load_cache", lambda: None), \
              mock.patch.object(self.b.versions, "installed", lambda *a: installed), \
+             mock.patch.object(self.b.versions, "target",
+                               lambda *a, **k: (target, "/v/%s" % target)), \
              mock.patch.object(self.b.versions, "of_pid", lambda pid: per_pid.get(pid)):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
@@ -205,6 +213,31 @@ class TheVersionColumn(unittest.TestCase):
         self.assertIn("2.1.292 installed", out)
         self.assertEqual(out.count("installed"), 1,
                          "the installed version is stated once, not per row")
+
+    def test_a_session_on_the_target_is_not_stale_though_it_is_behind_installed(self):
+        """The whole point of the 2026-10-17 change, and the trap in it.
+
+        The fleet runs the newest SOAKED release, so a correctly rolled session is
+        behind `installed` every single day. Measuring staleness against
+        `installed` would mark the entire fleet stale permanently -- a column that
+        is wrong exactly when the mechanism is working.
+        """
+        out = self.board(self.AGENTS, "2.1.302", {11: "2.1.301", 22: "2.1.299"},
+                         target="2.1.301")
+        on_target = [l for l in out.splitlines() if l.strip().startswith("alpha")][0]
+        behind = [l for l in out.splitlines() if l.strip().startswith("beta")][0]
+        self.assertNotIn("<STALE>", on_target, on_target)
+        self.assertIn("<STALE>2.1.299", behind)
+
+    def test_the_header_names_both_numbers(self):
+        """They answer different questions and neither stands in for the other.
+        Printing only `installed` is how a gate that could never open stayed
+        invisible for two days."""
+        out = self.board(self.AGENTS, "2.1.302", {11: "2.1.301"}, target="2.1.301")
+        head = out.splitlines()[1]
+        self.assertIn("2.1.302", head)
+        self.assertIn("2.1.301", head)
+        self.assertIn("target", head)
 
     def test_a_session_behind_the_installed_binary_is_colored(self):
         out = self.board(self.AGENTS, "2.1.292", {11: "2.1.291", 22: "2.1.292"})

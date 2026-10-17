@@ -87,14 +87,9 @@ The gates, in the order they are reported:
      - the session's uuid is the asking session's — it cannot roll itself, **or
        the asker could not be identified at all**, which refuses everyone
    * - soak
-     - the installed binary has sat on disk for less than ``--soak`` hours.
-       **Wall-clock delay, not a trial**: nothing on this machine runs the release
-       while it waits — no feed, no advisory check, no route by which a bad one
-       becomes known here. 2.1.301 sat 18 hours with no session on it (2026-10-16).
-       The bet is only that the wider world finds problems first, which is worth
-       something against a release pulled within hours and is **not** evidence to
-       tune on. The fleet's own sensor is version diversity plus someone noticing,
-       and that starts when a session is rolled
+     - **nothing** has sat on disk for ``--soak`` hours, so there is no soaked
+       release to roll to. This no longer refuses a session for the *newest*
+       release being young — see below.
    * - lag
      - fewer than ``--lag`` releases behind, or already current
    * - background
@@ -111,6 +106,40 @@ The gates, in the order they are reported:
 The last three of those are not in the spec this was built from. Each is something
 the table above already warns a *human* about — and an unattended driver gets no
 warnings.
+
+The target is the newest **soaked** release, not the newest
+-----------------------------------------------------------
+
+Releases arrive here about every 25 hours (median gap 25.2 h, measured
+2026-10-17) and the gate used to read the age of the **newest** one — so every
+arrival reset the clock it was reading. The gate could open for an hour or two a
+day and only if nothing shipped overnight. Two fires, two days, zero sessions
+eligible, with the log filling up with clean ``rolled=none`` lines that read as a
+healthy mechanism waiting for its moment. Nothing in it said the moment could not
+come.
+
+The soak's intent is *do not be the first here to run a fresh binary*. Some
+release satisfies that every day, just not the newest. So the window now picks
+the **target** — the newest release that has soaked — and eligibility compares
+each session against that. The gate opens daily, the intent is unchanged, and when
+releases speed up the target falls further behind instead of the mechanism
+latching shut.
+
+Two consequences follow, and both are visible in the output:
+
+* **``installed`` and ``target`` are different numbers every day**, and the report
+  prints both. Neither stands in for the other; one standing in for the other is
+  what closed the gate.
+* **Staleness is measured against the target.** A session rolled exactly right is
+  behind ``installed`` by design, so comparing with ``installed`` would mark the
+  whole fleet stale permanently — a column that is wrong precisely when the
+  mechanism is working.
+
+The relaunch lines in the plan **name the target explicitly**
+(``.../versions/2.1.301 --name ...``) rather than saying ``claude``, because a
+line typed as ``claude`` lands the roll on the newest release and not on the one
+the report just chose. When nothing has soaked, the lines say ``claude`` and the
+plan says so.
 
 **Counting releases.** Lag is a patch distance within one ``major.minor``; across a
 minor or major it is reported as uncountable, which satisfies any lag. Uncountable

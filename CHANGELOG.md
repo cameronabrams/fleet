@@ -193,6 +193,28 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **The soak gate could not open, and the log read as though it were waiting.**
+  `--eligible` measured the age of the *newest* installed release against a 24-hour
+  window, and releases land here about every 25 hours (median gap 25.2 h) — so each
+  arrival reset the clock the gate was reading. Two fires, two days, zero sessions
+  eligible. Reported by coord 2026-10-17, from Cameron asking where the new binary
+  was soaking.
+
+  **The fleet now targets the newest release that has SOAKED, not the newest
+  release.** The soak's intent — *do not be the first here to run a fresh binary* —
+  is satisfied by some release every day. The gate opens daily, and when releases
+  speed up the target falls further behind rather than the mechanism latching shut.
+
+  Three things follow. `fleetspawn` and `fleetrestore` **launch the target by path**
+  instead of bare `claude`, since otherwise nothing rolls to it; both fall back to
+  bare `claude` when no release has soaked or the named one is gone, and say which
+  they did — a session that will not start because a pinned release is missing is
+  far worse than one that starts on a fresh binary. **Staleness is measured against
+  the target**, because a session rolled exactly right is behind `installed` by
+  design and comparing with `installed` would mark the whole fleet stale
+  permanently. And `fleetboard`'s header and `fleetupgrade`'s report **print both
+  numbers**, because one standing in for the other is what closed the gate.
+
 - **`fleetnudge` sent a `not reached` phone push for a session that was reached.**
   The same lie as the delivery classifier, one channel along: when the tool runs
   inside the session it would type into, the in-session task already notifies it,

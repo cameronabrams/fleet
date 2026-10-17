@@ -159,6 +159,86 @@ class RestoreLandsWhereTheManifestSays(unittest.TestCase):
         self.assertIn("restore DONE", lines[1])
         self.assertIn("rolled=%d-sessions" % len(self.man["sessions"]), lines[0])
 
+    def version_store(self, newest="2.1.302", soaked_name="2.1.301", age_h=48.0):
+        """A native version store under the test's own HOME, with one release old
+        enough to have soaked and a newer one that has not."""
+        vdir = os.path.join(self.home, ".local", "share", "claude", "versions")
+        os.makedirs(vdir, exist_ok=True)
+        os.makedirs(os.path.join(self.home, ".local", "bin"), exist_ok=True)
+        paths = {}
+        for name, age in ((soaked_name, age_h), (newest, 1.0)):
+            p = os.path.join(vdir, name)
+            with open(p, "w") as f:
+                f.write("#!/bin/sh\necho \"$@\" >> \"$FAKE_CLAUDE_LOG\"\n")
+            os.chmod(p, 0o755)
+            t = time.time() - age * 3600
+            os.utime(p, (t, t))
+            paths[name] = p
+        link = os.path.join(self.home, ".local", "bin", "claude")
+        if os.path.lexists(link):
+            os.remove(link)
+        os.symlink(paths[newest], link)
+        return paths[soaked_name]
+
+    def test_a_restore_launches_the_soaked_release_not_the_newest(self):
+        """The pin, end to end. The fixtures above have no version store, so both
+        the pinned and the bare path fall back to plain `claude` and a test
+        against them cannot tell the two apart -- which is how a break that
+        removed the pin entirely passed."""
+        pinned = self.version_store()
+        subprocess.run([TOOL, "--go", "--socket", SOCKET, "--stagger", "0"],
+                       capture_output=True, text=True, env=self.env())
+        panes = self.tmux("list-panes", "-a", "-F", "#{pane_id}").stdout.split()
+        typed = "\n".join(
+            self.tmux("capture-pane", "-p", "-t", p).stdout for p in panes)
+        self.assertIn(pinned, typed,
+                      "the restore did not name the soaked release")
+
+    def test_a_restore_says_which_binary_it_launched_with(self):
+        self.version_store()
+        r = subprocess.run([TOOL, "--go", "--socket", SOCKET, "--stagger", "0"],
+                           capture_output=True, text=True, env=self.env())
+        self.assertIn("launching with:", r.stdout)
+        self.assertIn("2.1.301", r.stdout)
+
+    def test_a_pruned_target_still_restores(self):
+        """The failure mode pinning introduces, in the path that matters most. A
+        restore that refuses to launch because a release is missing is far worse
+        than one that adopts a fresh binary.
+
+        Pruning the only soaked release leaves nothing to pin to, and the run
+        says which it did -- the manifest a later reader compares against will
+        say something else. (The separate "target is gone" wording is a race:
+        `soaked` cannot return a file it failed to stat, so that branch only
+        fires if the prune lands between the two reads. It is unit-tested with a
+        mock, not here.)
+        """
+        pinned = self.version_store()
+        os.remove(pinned)
+        r = subprocess.run([TOOL, "--go", "--socket", SOCKET, "--stagger", "0"],
+                           capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("bare `claude`", r.stdout)
+        self.assertIn("nothing has soaked", r.stdout)
+        self.assertIn("--name alpha --resume u-alpha", r.stdout)
+
+    def test_pruning_the_target_falls_back_to_the_release_behind_it(self):
+        """Better than bare `claude`, and the reason the store is searched rather
+        than a single name being remembered: an older soaked release is still a
+        soaked release."""
+        self.version_store()
+        older = os.path.join(self.home, ".local", "share", "claude",
+                             "versions", "2.1.300")
+        with open(older, "w") as f:
+            f.write("#!/bin/sh\n")
+        os.chmod(older, 0o755)
+        t = time.time() - 100 * 3600
+        os.utime(older, (t, t))
+        os.remove(os.path.join(os.path.dirname(older), "2.1.301"))
+        r = subprocess.run([TOOL, "--go", "--socket", SOCKET, "--stagger", "0"],
+                           capture_output=True, text=True, env=self.env())
+        self.assertIn("2.1.300, the newest soaked release", r.stdout)
+
     def test_a_plan_records_no_adoption(self):
         """A line for a restore that did not happen is the file's own lie, in the
         file kept to catch them."""

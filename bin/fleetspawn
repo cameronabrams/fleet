@@ -131,17 +131,42 @@ def preflight(a, brief):
             problems.append(f"no such pane: {a.beside}")
     return problems
 
+def claude_cmd():
+    """(command, why) -- the binary to launch, and what that choice was.
+
+    The fleet runs the newest release that has SOAKED, not the newest release, so
+    a launch names that version explicitly instead of taking whatever the
+    installer's symlink points at. An unpark was the fleet's main uncontrolled
+    route onto a fresh binary (2026-10-16); pinning brings it under the same
+    policy as a roll.
+
+    **Falls back to bare `claude` and says so.** A named version can be absent --
+    pruned, or a fresh machine, or an npm install with no version store at all --
+    and a session that refuses to start because a pinned release is missing is a
+    far worse outcome than one that starts on a fresh binary.
+    """
+    version, path = versions.target()
+    if path and os.path.exists(path):
+        return shlex.quote(path), "pinned to %s, the newest soaked release" % version
+    if version:
+        return "claude", ("target %s is gone from the version store; "
+                          "falling back to whatever `claude` resolves to" % version)
+    return "claude", ("nothing has soaked yet (or there is no version store); "
+                      "falling back to whatever `claude` resolves to")
+
+
 def launch_cmd(a, brief):
     spawn = CFG.get("spawn", {})
     env = fc.launch_env(CFG)
+    claude, _why = claude_cmd()
     if getattr(a, "resume", None):
         # A resumed session continues its own conversation; no first prompt.
-        return " ".join(x for x in (env, "claude", "--name", shlex.quote(a.name),
+        return " ".join(x for x in (env, claude, "--name", shlex.quote(a.name),
                                     "--resume", shlex.quote(a.resume)) if x)
     prompt = spawn.get("first_prompt",
                        "You are a new fleet session named {name}. "
                        "Read {brief} and follow it.").format(name=a.name, brief=brief)
-    return " ".join(x for x in (env, "claude", "--name", shlex.quote(a.name),
+    return " ".join(x for x in (env, claude, "--name", shlex.quote(a.name),
                                 shlex.quote(prompt)) if x)
 
 def wait_for(pane, name, directory, timeout):
@@ -337,7 +362,8 @@ def main():
              "  (left to be typed by hand)" if a.no_color else
              f"  (typed into the pane once idle, up to {a.color_wait}s)"))
     print(f"  place {'split ' + a.split + ' beside ' + a.beside if a.beside else 'new window ' + a.window}")
-    print(f"  cmd   {launch_cmd(a, brief)}\n")
+    print(f"  cmd   {launch_cmd(a, brief)}")
+    print(f"  claude {claude_cmd()[1]}\n")
     if problems:
         for p in problems:
             print(f"  BLOCKED: {p}")
@@ -402,6 +428,12 @@ def main():
     # question is which binary this session is on.
     ran = versions.of_pid(pid)
     frm, note = adoption_kind(a.resume)
+    # `to` used to be a pure readout. With a pinned launch it is also a CHOICE,
+    # so the two can disagree -- a stale pane, a fallback, a binary swapped under
+    # the launch -- and a log that recorded only one of them could not show it.
+    want = versions.target()[0]
+    if want and ran and ran != want:
+        note += " MISMATCH (meant %s)" % want
     problem = versions.record_adoption(STATE, a.name, ran, frm, note)
     if problem:
         # Said, not swallowed, and it does not fail the spawn: the session is up.

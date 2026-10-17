@@ -204,6 +204,92 @@ def of_pid(pid):
     return of_binary(exe)
 
 
+# How long a release must have been on disk before this fleet will start a
+# session on it. Lives here, not in one tool, because every launcher needs the
+# same answer: `fleetupgrade` to decide who may roll, `fleetspawn` and
+# `fleetrestore` to decide what to launch. A second copy would be a second policy.
+SOAK_HOURS = 24
+
+
+def target(hours=None, claude=None):
+    """(version, path) the fleet should be running, or (None, None).
+
+    **Not the newest version -- the newest one that has soaked.** Releases land
+    here about every 25 hours (median gap 25.2 h, measured 2026-10-17) and a gate
+    reading the newest version's age was reset by each one: two fires, two days,
+    zero sessions eligible, with the log filling up with clean lines that read as
+    a mechanism waiting for its moment rather than one that could not open.
+
+    This is also what "stale" must be measured against. A session correctly rolled
+    to the target is BEHIND the installed version by design, every day, so
+    comparing it with `installed()` would mark the whole fleet stale permanently --
+    a report that is wrong whenever it is working.
+    """
+    return soaked(SOAK_HOURS if hours is None else hours, claude)
+
+
+def _key(v):
+    """Sort key for a version string. Unparseable sorts lowest, never highest: an
+    oddly named file in the store must not be chosen as the newest thing there."""
+    try:
+        return (1, tuple(int(x) for x in v.split("-")[0].split(".")))
+    except (AttributeError, ValueError):
+        return (0, ())
+
+
+def store(claude=None):
+    """The directory the native installer keeps versions side by side in, or None.
+
+    Derived from the resolved binary rather than hardcoded, and only accepted when
+    the directory is actually named `versions`: on an npm install the binary's
+    parent is `bin/`, there is no history to choose from, and the honest answer is
+    that this layout has none.
+    """
+    try:
+        d = os.path.dirname(os.path.realpath(claude or CLAUDE))
+    except OSError:
+        return None
+    return d if os.path.basename(d) == "versions" and os.path.isdir(d) else None
+
+
+def soaked(hours, claude=None, now=None):
+    """(version, path) of the newest version that has been on disk for `hours`.
+
+    (None, None) when there is no such version, which includes every npm install
+    and a fresh machine with one release on it. The caller then launches plain
+    `claude`: refusing to start a session because no version has soaked would be a
+    far worse outcome than starting one on a fresh binary.
+
+    **Newest by version number, among those old enough by mtime.** The two orders
+    normally agree and must not be assumed to: a re-download touches the file, and
+    a version that was just rewritten has not soaked whatever its number says.
+
+    **Never newer than what `claude` resolves to.** If the installer's symlink has
+    been moved back deliberately, rolling past it would overrule that choice with
+    a file left on disk.
+    """
+    d = store(claude)
+    if not d:
+        return None, None
+    now = time.time() if now is None else now
+    cap = installed(claude, ask_binary=False)
+    best = None
+    for name in os.listdir(d):
+        path = os.path.join(d, name)
+        try:
+            if (now - os.path.getmtime(path)) / 3600.0 < hours:
+                continue
+        except OSError:
+            continue
+        if _key(name)[1] == ():
+            continue                       # not a version; not a candidate
+        if cap and _key(name) > _key(cap):
+            continue                       # newer than the installer's choice
+        if best is None or _key(name) > _key(best[0]):
+            best = (name, path)
+    return best or (None, None)
+
+
 def is_stale(session_version, installed_version):
     """True only when both are known AND they differ.
 

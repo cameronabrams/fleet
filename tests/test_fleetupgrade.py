@@ -419,29 +419,38 @@ class EveryGateIsARefusal(unittest.TestCase):
             why = self.judge(sess(), watch=w)
             self.assertTrue(any("runtime is unknown" in x for x in why), (w, why))
 
-    def test_an_unreadable_install_time_refuses(self):
-        why = self.judge(sess(), age=None)
-        self.assertIn("age of the installed binary unknown", why)
+    def test_no_soaked_release_refuses_everyone(self):
+        """What the on-disk window now gates: the TARGET, not who may roll.
 
-    def test_an_unknown_version_on_either_side_refuses(self):
+        Before 2026-10-17 it refused each session for the newest release being
+        young -- and since releases land about every 25 hours against a 24-hour
+        window, that refused everyone almost always. Two fires, two days, zero
+        eligible. The window now chooses which release to roll TO, and only the
+        absence of any soaked release refuses anybody.
+        """
+        why = self.judge(sess(), inst=None)
+        self.assertTrue(any("no soaked release" in w for w in why), why)
+
+    def test_the_newest_release_being_young_refuses_nobody(self):
+        """The defect itself, as a test. `age` is the newest release's age; with
+        a target in hand it must not bear on eligibility at all."""
+        self.assertEqual(self.judge(sess(), age=3.0), [])
+        self.assertEqual(self.judge(sess(), age=None), [])
+
+    def test_an_unknown_running_version_still_refuses(self):
         self.assertIn("its running version is unknown", self.judge(sess(version=None)))
-        self.assertIn("installed version unknown", self.judge(sess(), inst=None))
 
     # -- the gates themselves -------------------------------------------------
 
     def test_a_busy_session_is_not_eligible(self):
         self.assertIn("status is busy", self.judge(sess(), agents={"alpha": "busy"}))
 
-    def test_the_soak_is_measured_from_the_install(self):
-        """Worded as time ON DISK, not as a soak. Nothing on this machine runs the
-        release while it waits -- no feed, no advisory check -- so "soak" invites
-        a reader to tune it as if it were evidence-gathering. 2.1.301 sat 18 hours
-        with no session on it (2026-10-16). The flag keeps its name because the
-        driver's runbook uses it; the words a reader sees do not."""
-        self.assertEqual(self.judge(sess(), age=48.0), [])
-        why = self.judge(sess(), age=3.0)
-        self.assertTrue(any("needs 24h on disk" in w for w in why), why)
-        self.assertFalse(any("soak" in w for w in why), why)
+    def test_the_on_disk_window_no_longer_refuses_a_session(self):
+        """It picks the target instead. Kept as the gravestone of the gate that
+        could not open: a per-session refusal keyed on the newest release's age is
+        a refusal keyed on something that resets every 25 hours."""
+        for age in (48.0, 3.0, None):
+            self.assertEqual(self.judge(sess(), age=age), [], age)
 
     def test_a_single_release_is_skipped_at_the_default_lag(self):
         self.assertTrue(any("1 version behind" in w
@@ -529,7 +538,8 @@ class EveryGateIsARefusal(unittest.TestCase):
         list is the whole value of the report -- to the driver, and to whoever is
         later deciding whether the gates are set right."""
         why = self.judge(sess(version="2.1.299", background=True),
-                         agents={"alpha": "busy"}, age=3.0)
+                         agents={"alpha": "busy"},
+                         self_uuid=U1, hold="held by hand")
         self.assertGreaterEqual(len(why), 4, why)
 
 

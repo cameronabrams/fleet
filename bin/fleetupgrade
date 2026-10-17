@@ -29,7 +29,7 @@ failure: staying stale is a correct outcome of a skip. What it cannot compute is
 what a session has running that its ledger does not name -- that needs asking,
 which needs an agent, which is exactly where reporting stops and acting begins.
 """
-import json, os, re, subprocess, sys, glob, time
+import json, os, re, shlex, subprocess, sys, glob, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
@@ -46,6 +46,8 @@ REARM    = os.path.join(fc.state_dir(CFG), "rearm")
 # The session running this tool exports its own uuid to child processes.
 # That is how we know which row is "you" without hardcoding a name.
 SELF_UUID = os.environ.get("CLAUDE_CODE_SESSION_ID")
+# Set in main() before anything is printed; bare until then.
+CLAUDE_RUN, CLAUDE_TARGET = "claude", None
 # Same launch environment fleetspawn and fleetrestore use, so a rolled session
 # keeps e.g. its notification flag. Trailing space when non-empty.
 ENV = (fc.launch_env(CFG) + " ") if fc.launch_env(CFG) else ""
@@ -702,12 +704,12 @@ def eligibility(ss, inst, agents_by_name, watch, pinned, hold_why,
         elif s.get("resume_uuid") == self_uuid:
             why.append("this is the session asking; it cannot roll itself")
 
+        # `inst` is the TARGET -- the newest release that has soaked -- so its
+        # existence IS the soak gate, and the newest release being young is no
+        # longer a reason to refuse anybody. It is simply not the thing to roll to.
         if not inst:
-            why.append("installed version unknown")
-        if age_hours is None:
-            why.append("age of the installed binary unknown")
-        elif age_hours < soak_hours:
-            why.append("installed %.1fh ago, needs %dh on disk" % (age_hours, soak_hours))
+            why.append("nothing has been on disk %dh yet, so there is no soaked "
+                       "release to roll to" % soak_hours)
 
         n = version_lag(s.get("version"), inst)
         if not s.get("version"):
@@ -775,19 +777,44 @@ def _opt(flag, default):
                  % (flag, "hours" if flag == "--soak" else "releases"))
 
 
+def claude_cmd():
+    """The binary a relaunch should name, and why. See `fleetspawn.claude_cmd`.
+
+    The plan below is typed by a human or by the driver, so if it says bare
+    `claude` the roll lands on the newest release and not on the target -- which
+    is the whole thing this report exists to coordinate.
+    """
+    version, path = versions.target()
+    if path and os.path.exists(path):
+        return shlex.quote(path), version
+    return "claude", None
+
+
+def inst_newest():
+    """What `claude` resolves to. Named apart from the TARGET on purpose: the two
+    are different every day by design, and the bug that closed the gate was one
+    standing in for the other."""
+    return versions.installed()
+
+
 def gather_eligibility(ss, inst):
     """The computation plus everything it needed, so a caller can print either form."""
     soak, lag = _opt("--soak", SOAK_HOURS), _opt("--lag", LAG)
+    # What the fleet should be on: the newest release that has soaked, not the
+    # newest release. A gate reading the newest one was reset by every arrival --
+    # median gap 25.2h against a 24h soak -- so it could open for an hour or two a
+    # day and only if nothing shipped overnight. Two fires, two days, zero eligible.
+    tgt, _tpath = versions.target(soak)
     ag = agents()
     by_name = None if ag is None else {a.get("name"): a.get("status") for a in ag}
     pinned, hold_why = hold_file()
     # fleetwatch is a separate process with a network query behind it. It is asked
     # once, and a failure is carried as a refusal rather than as an empty answer.
     watch = run_json(["fleetwatch", "--json"])
-    rows = eligibility(ss, inst, by_name, watch, pinned, hold_why,
+    rows = eligibility(ss, tgt, by_name, watch, pinned, hold_why,
                        soak_hours=soak, lag=lag,
                        age_hours=installed_age_hours(), self_uuid=SELF_UUID)
-    return rows, soak, lag, watch
+    return rows, soak, lag, watch, tgt
 
 
 def run_json(cmd):
@@ -800,7 +827,7 @@ def run_json(cmd):
 
 
 def report_eligible(ss, inst):
-    rows, soak, lag, watch = gather_eligibility(ss, inst)
+    rows, soak, lag, watch, tgt = gather_eligibility(ss, inst)
     ready = [s for s, why in rows if not why]
     if "--json" in sys.argv:
         print(json.dumps({
@@ -810,7 +837,11 @@ def report_eligible(ss, inst):
             # knowing which row is one's own -- the thing this field exists to
             # say. The text report shouts it; the JSON has to carry it.
             "asking": SELF_UUID or None,
-            "installed": inst, "soak_hours": soak, "lag": lag,
+            # Two different facts, and conflating them is what closed the gate.
+            # `installed` is what `claude` resolves to; `target` is what the fleet
+            # should run, which is the newest release that has soaked.
+            "installed": inst_newest(), "target": tgt,
+            "soak_hours": soak, "lag": lag,
             "installed_age_hours": installed_age_hours(),
             "cluster_ok": bool(watch and watch.get("cluster_ok")),
             "eligible": [s["name"] for s in ready],
@@ -819,10 +850,12 @@ def report_eligible(ss, inst):
         }, indent=1, default=str))
         return
     age = installed_age_hours()
-    print("installed claude: %s%s" % (inst or "?",
+    print("installed claude: %s%s" % (inst_newest() or "?",
           "" if age is None else "  (%s ago)" % human_age(age * 3600)))
-    print("gates: idle, on disk >= %dh, lag >= %d, no exit-blocking child, no unnamed runtime"
-          % (soak, lag))
+    print("target (newest soaked): %s" % (tgt or "NONE -- nothing has soaked yet"))
+    print("gates: idle, lag >= %d behind the target, no exit-blocking child, "
+          "no unnamed runtime" % lag)
+    print("       (the %dh on-disk window picks the TARGET, not who may roll)" % soak)
     # Said out loud, because a self-exclusion that silently did not happen is the
     # shape of mistake this whole report exists to avoid. The asker is excluded by
     # its own uuid rather than by name -- correct exactly while the asker is also
@@ -834,7 +867,7 @@ def report_eligible(ss, inst):
     if ready:
         print("ELIGIBLE NOW (%d):" % len(ready))
         for s in ready:
-            print("  %-22s %-9s -> %s" % (s["name"][:22], s["version"] or "?", inst))
+            print("  %-22s %-9s -> %s" % (s["name"][:22], s["version"] or "?", tgt))
     else:
         print("ELIGIBLE NOW: none")
     skipped = [(s, why) for s, why in rows if why]
@@ -854,20 +887,28 @@ def report_eligible(ss, inst):
 def main():
     version_flag()
     inst = installed_version()
+    # The fleet's target: the newest release that has SOAKED. Staleness in the
+    # table and the plan below is measured against this, not against `inst` -- a
+    # session rolled exactly right is behind `inst` by design, every day, so
+    # comparing with it would mark the whole fleet stale permanently.
+    tgt = versions.target()[0] or inst
+    global CLAUDE_RUN, CLAUDE_TARGET
+    CLAUDE_RUN, CLAUDE_TARGET = claude_cmd()
     ss = sessions()
     # coord last, then stale-first, then name
-    ss.sort(key=lambda s: (s["name"] == "coord", s["version"] == inst, s["name"]))
+    ss.sort(key=lambda s: (s["name"] == "coord", s["version"] == tgt, s["name"]))
     if "--eligible" in sys.argv:
         return report_eligible(ss, inst)
     if "--json" in sys.argv:
         print(json.dumps({"installed": inst, "sessions": ss}, indent=1))
         return
-    print("installed claude: %s\n" % inst)
+    print("installed claude: %s   target (newest soaked): %s\n"
+          % (inst, versions.target()[0] or "NONE -- nothing has soaked"))
     print("%-22s %-5s %-9s %-6s %-7s %-8s %s" % ("SESSION", "PANE", "VERSION", "STALE", "LEDGER", "COLOR", "RESUME UUID"))
     for s in ss:
         print("%-22s %-5s %-9s %-6s %-7s %-8s %s" % (
             s["name"][:22], s["pane"], s["version"] or "?",
-            "YES" if s["version"] != inst else "no",
+            "YES" if s["version"] != tgt else "no",
             "yes" if s["ledger"] else "MISSING",
             s["color"] or ("?" if s.get("background") or not s["resume_uuid"] else "LOST"),
             (s["resume_uuid"] or "?")[:8]))
@@ -912,7 +953,7 @@ def main():
         print("     tr '\\0' ' ' < /proc/<pid>/cmdline")
         print("   or close the other session and re-run.")
 
-    stuck = blockers(ss, inst)
+    stuck = blockers(ss, tgt)
     if stuck:
         print("\n!! /exit WILL NOT COMPLETE while these run -- each is a child in its OWN")
         print("   process session, so \"Exit and stop tasks\" never reaches it. True of")
@@ -961,21 +1002,30 @@ def main():
     print("\nNames here are from transcripts. ListAgents is the authority; reconcile"
           "\nbefore restarting anything.")
 
-    stale = [s for s in ss if s["version"] != inst]
+    stale = [s for s in ss if s["version"] != tgt]
     print("\n%d of %d sessions stale." % (len(stale), len(ss)))
     if not stale:
         print("Nothing to upgrade. Do not restart anything.")
         self_block(ss)
         return
     print("\nOrdered plan (coord last, since restarting it kills the driver):")
+    if CLAUDE_TARGET:
+        print("  Each line names %s explicitly: the fleet runs the newest SOAKED"
+              % CLAUDE_TARGET)
+        print("  release, which is not the newest one. Typing bare `claude` instead")
+        print("  would land the roll on %s." % inst)
+    else:
+        print("  !! Lines say bare `claude`: no soaked release to pin to, so a")
+        print("     relaunch takes whatever the installer points at (%s)." % inst)
     for i, s in enumerate(stale, 1):
         if s.get("background"):
             print("  %d. %-20s pane %-4s  BACKGROUND session -- restart by hand (see above)"
                   % (i, s["name"], s["pane"]))
             continue
         warn = "" if s["ledger"] else "   <-- NO LEDGER: ask it to write one first"
-        print("  %d. %-20s pane %-4s  %sclaude --name %s --resume %s%s"
-              % (i, s["name"], s["pane"], ENV, s["name"], s["resume_uuid"], warn))
+        print("  %d. %-20s pane %-4s  %s%s --name %s --resume %s%s"
+              % (i, s["name"], s["pane"], ENV, CLAUDE_RUN, s["name"],
+                 s["resume_uuid"], warn))
     bad = [x for x in stale if x["resume_uuid"] is None or "UNRESOLVED" in x["name_source"]]
     for x in bad:
         print("  !! %s: %s -- do not restart on this" % (x["name"], x["name_source"]))
@@ -1008,7 +1058,8 @@ def self_block(ss):
     # running in ~/.local/state/fleet on 2026-09-18; `--resume` would have found no
     # transcript there.
     here = (proc_cwd(me["pid"]) or me["cwd"]).replace(os.path.expanduser("~"), "~", 1)
-    print("     cd %s && %sclaude --name %s --resume %s\n" % (here, ENV, me["name"], uuid))
+    print("     cd %s && %s%s --name %s --resume %s\n"
+          % (here, ENV, CLAUDE_RUN, me["name"], uuid))
     if uuid != me["resume_uuid"]:
         print("  (uuid taken from this session's own environment, which is")
         print("   authoritative over the transcript scan above)")

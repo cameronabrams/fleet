@@ -489,3 +489,65 @@ class AnUnparkIsAnAdoption(unittest.TestCase):
         src = inspect.getsource(self.spawn.main)
         self.assertLess(src.index("plan only -- re-run with --go"),
                         src.index("record_adoption"))
+
+
+class LaunchingTheSoakedTargetNotTheNewest(unittest.TestCase):
+    """The fleet runs the newest release that has SOAKED, so a launch names that
+    version instead of taking whatever the installer's symlink points at.
+
+    Before 2026-10-17 an unpark was the fleet's main uncontrolled route onto a
+    fresh binary; pinning brings it under the same policy as a roll. The cost is
+    a new failure mode -- a named version can be absent where bare `claude`
+    always resolves to something -- and the fallback is the important half.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.spawn = load_tool("fleetspawn")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(self.cfg.close)
+
+    def target(self, version, exists=True):
+        path = os.path.join(self.tmp.name, version or "none")
+        if exists and version:
+            open(path, "w").close()
+        return mock.patch.object(self.spawn.versions, "target",
+                                 lambda *a, **k: (version, path if version else None))
+
+    def test_it_names_the_soaked_version(self):
+        with self.target("2.1.301"):
+            cmd, why = self.spawn.claude_cmd()
+        self.assertIn("2.1.301", cmd)
+        self.assertIn("pinned", why)
+
+    def test_a_pruned_target_falls_back_to_bare_claude_and_says_so(self):
+        """A session that refuses to start because a pinned release is missing is
+        a far worse outcome than one that starts on a fresh binary."""
+        with self.target("2.1.301", exists=False):
+            cmd, why = self.spawn.claude_cmd()
+        self.assertEqual(cmd, "claude")
+        self.assertIn("gone from the version store", why)
+        self.assertIn("2.1.301", why)
+
+    def test_nothing_soaked_falls_back_and_says_so(self):
+        """A fresh machine, or an npm install with no version store at all."""
+        with self.target(None):
+            cmd, why = self.spawn.claude_cmd()
+        self.assertEqual(cmd, "claude")
+        self.assertIn("nothing has soaked", why)
+
+    def test_the_launch_command_uses_it_for_a_resume_and_a_first_prompt(self):
+        a = SimpleNamespace(name="alpha", resume="u-1")
+        with self.target("2.1.301"):
+            self.assertIn("2.1.301", self.spawn.launch_cmd(a, "/b.md"))
+            self.assertIn("2.1.301",
+                          self.spawn.launch_cmd(SimpleNamespace(name="alpha", resume=None),
+                                                "/b.md"))
+
+    def test_the_path_is_quoted(self):
+        """It goes into a shell line typed at a pane."""
+        with mock.patch.object(self.spawn.versions, "target",
+                               lambda *a, **k: ("2.1.301", "/a dir/2.1.301")):
+            with mock.patch.object(self.spawn.os.path, "exists", lambda p: True):
+                cmd, _ = self.spawn.claude_cmd()
+        self.assertIn("'/a dir/2.1.301'", cmd)

@@ -1,4 +1,5 @@
 import json, os, shutil, subprocess, tempfile, unittest
+from unittest import mock
 from tests.support import APP, BASE_TOML, FakeConfig, load_tool
 
 TOOL = os.path.join(APP, "bin", "fleetrestore")
@@ -285,3 +286,37 @@ class ARestoreIsTheLargestAdoption(Plan):
         head = src[max(0, i - 900):i]
         self.assertIn('label == "(all)"', head)
         self.assertIn("COULD NOT CHECK", src[i - 900:i + 200])
+
+
+class TheRestoreLaunchesTheSoakedTarget(Plan):
+    """Same policy as a spawn, with the fallback mattering more: a restore that
+    refuses to launch because a pinned release is absent is far worse than one
+    that adopts a fresh binary. This is the recovery path."""
+    def test_a_pruned_target_falls_back_to_bare_claude(self):
+        # `load_tool`, because these files have no .py extension and
+        # `spec_from_file_location` returns None for them.
+        mod = load_tool("fleetrestore")
+        with mock.patch.object(mod.versions, "target",
+                               lambda *a, **k: ("2.1.301", "/gone/2.1.301")):
+            cmd, why = mod.claude_cmd()
+        self.assertEqual(cmd, "claude")
+        self.assertIn("gone from the version store", why)
+
+    def test_nothing_soaked_falls_back_and_names_the_reason(self):
+        mod = load_tool("fleetrestore")
+        with mock.patch.object(mod.versions, "target", lambda *a, **k: (None, None)):
+            cmd, why = mod.claude_cmd()
+        self.assertEqual(cmd, "claude")
+        self.assertIn("nothing has soaked", why)
+
+    def test_the_binary_is_resolved_once_before_anything_is_built(self):
+        """So a run cannot start some sessions on one release and the rest on
+        another because the installer moved underneath it."""
+        src = open(TOOL).read()
+        self.assertLess(src.index("CLAUDE_CMD, claude_why = claude_cmd()"),
+                        src.index("by_win = {}"))
+        self.assertEqual(src.count("claude_cmd()"), 2)   # the def and the one call
+
+    def test_it_never_runs_claude_to_decide_how_to_run_claude(self):
+        src = open(TOOL).read()
+        self.assertNotIn("versions.installed()", src)

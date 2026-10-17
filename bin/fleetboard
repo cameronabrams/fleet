@@ -243,6 +243,11 @@ def draw(full=False, auto=False):
     if full or (auto and (cache is None or time.time() - cache["at"] > REFRESH)):
         cache, full = refresh_cache(), True
     inst = versions.installed()
+    # What the fleet SHOULD be on: the newest release that has soaked, which is
+    # behind `installed` by design, every day. Staleness is measured against this
+    # and not against `installed`, or a session rolled exactly right would read
+    # stale forever -- a column that is wrong precisely when it is working.
+    tgt = versions.target()[0]
     # Date as well as time. The board is usually read on a `--watch` pane that was
     # started some time ago and is looked at in passing, and a bare clock cannot
     # distinguish "this redrew a minute ago" from "this froze yesterday at the same
@@ -254,6 +259,13 @@ def draw(full=False, auto=False):
     # like any other unreadable source; it is not omitted, because a missing line
     # reads as "nothing to say about versions" rather than "could not tell".
     head += f"   {C['dim']}claude {C['r']}{inst or '?'}{C['dim']} installed{C['r']}"
+    # Both numbers, because they answer different questions and neither stands in
+    # for the other: `installed` is what a bare `claude` gives, `target` is what a
+    # roll aims at. Printing only one was how a closed gate stayed invisible.
+    if tgt and tgt != inst:
+        head += f"{C['dim']}, {C['r']}{tgt}{C['dim']} target{C['r']}"
+    elif not tgt:
+        head += f"{C['dim']}, {C['r']}?{C['dim']} target (nothing soaked){C['r']}"
     print(head)
     if a is None:
         print(f"  {C['red']}claude agents could not be read -- every status below is ?{C['r']}")
@@ -286,7 +298,7 @@ def draw(full=False, auto=False):
         # the pid, so a session it could not report has an unknown version --
         # rendered `?`, never silently as current.
         sv = versions.of_pid((ag or {}).get("pid"))
-        stale = versions.is_stale(sv, inst)
+        stale = versions.is_stale(sv, tgt)
         # Gentle on purpose: a session one release behind is a thing to do later,
         # not a fault. Current versions are dimmed so they recede and only the
         # ones worth acting on carry color; unknown stays dim too, because the

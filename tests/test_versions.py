@@ -12,6 +12,7 @@ fact, agreeing for a reason nobody wrote down, in a value that is read later as
 authoritative -- here the manifest a restore is rebuilt from.
 """
 import json
+import time
 import os
 import tempfile
 import unittest
@@ -431,3 +432,106 @@ class SomeCallersMayNotLaunchAProcess(unittest.TestCase):
             os.path.abspath(__file__))), "bin", "fleetrestore")).read()
         self.assertEqual(src.count("versions.installed(ask_binary=False)"), 2)
         self.assertNotIn("versions.installed()", src)
+
+
+class TheNewestVersionThatHasSoaked(unittest.TestCase):
+    """The soak gate could not open. Releases land about every 25 hours here
+    (median gap 25.2 h, measured 2026-10-17) and eligibility read the age of the
+    NEWEST version, so each release reset the clock the 24-hour gate was reading.
+    Two fires, two days, zero eligible -- a log accumulating clean lines that read
+    as a healthy mechanism waiting for its moment, with nothing saying the moment
+    could not arrive.
+
+    The soak's intent is *do not be the first here to run a fresh binary*. That is
+    satisfied by some version every day, just not by the newest one. So the target
+    is the newest version that HAS soaked, which keeps the intent, opens the gate
+    daily, and degrades when releases speed up rather than latching shut.
+    """
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = os.path.join(self.tmp.name, "share", "claude", "versions")
+        os.makedirs(self.dir)
+        self.link = os.path.join(self.tmp.name, "claude")
+
+    def put(self, name, age_h):
+        p = os.path.join(self.dir, name)
+        open(p, "w").close()
+        t = time.time() - age_h * 3600
+        os.utime(p, (t, t))
+        return p
+
+    def point_at(self, name):
+        if os.path.lexists(self.link):
+            os.remove(self.link)
+        os.symlink(os.path.join(self.dir, name), self.link)
+
+    def test_it_skips_the_newest_and_takes_the_one_behind_it(self):
+        self.put("2.1.301", 43.7)
+        self.put("2.1.302", 17.9)                  # the real machine, 2026-10-17
+        self.point_at("2.1.302")
+        self.assertEqual(versions.soaked(24, self.link)[0], "2.1.301")
+
+    def test_newest_by_version_number_not_by_mtime(self):
+        """The two orders normally agree and must not be assumed to. A re-download
+        touches the file, so a high version number can be the youngest thing in
+        the directory -- and a file just rewritten has not soaked.
+
+        The directory order is FORCED, because `os.listdir` order is arbitrary:
+        a version of this that relied on it passed against code taking whatever
+        it saw first, which is the bug and not the fix.
+        """
+        self.put("2.1.299", 200.0)
+        self.put("2.1.300", 30.0)
+        self.put("2.1.301", 1.0)                   # re-downloaded an hour ago
+        self.point_at("2.1.301")
+        with mock.patch.object(versions.os, "listdir",
+                               lambda d: ["2.1.299", "2.1.300", "2.1.301"]):
+            self.assertEqual(versions.soaked(24, self.link)[0], "2.1.300")
+        # and the other way round, so neither order can carry the answer
+        with mock.patch.object(versions.os, "listdir",
+                               lambda d: ["2.1.301", "2.1.300", "2.1.299"]):
+            self.assertEqual(versions.soaked(24, self.link)[0], "2.1.300")
+
+    def test_it_never_goes_newer_than_the_installer_points_at(self):
+        """A symlink moved back is a deliberate downgrade. Rolling past it would
+        overrule that choice with a file left lying in the directory."""
+        self.put("2.1.299", 200.0)
+        self.put("2.1.302", 200.0)
+        self.point_at("2.1.299")
+        self.assertEqual(versions.soaked(24, self.link)[0], "2.1.299")
+
+    def test_nothing_soaked_is_none_not_the_newest_anyway(self):
+        """A fresh machine with one release on it. The caller launches plain
+        `claude`: refusing to start a session because nothing has soaked is a far
+        worse outcome than starting one on a fresh binary."""
+        self.put("2.1.302", 2.0)
+        self.point_at("2.1.302")
+        self.assertEqual(versions.soaked(24, self.link), (None, None))
+
+    def test_a_file_that_is_not_a_version_is_never_chosen(self):
+        self.put("2.1.299", 200.0)
+        self.put("README", 200.0)
+        self.put("tmp-download", 200.0)
+        self.point_at("2.1.299")
+        self.assertEqual(versions.soaked(24, self.link)[0], "2.1.299")
+
+    def test_the_path_returned_is_the_one_to_launch(self):
+        p = self.put("2.1.299", 200.0)
+        self.point_at("2.1.299")
+        self.assertEqual(versions.soaked(24, self.link)[1], p)
+
+    def test_an_npm_install_has_no_store_and_no_target(self):
+        """One binary, upgraded in place: there is no history to choose from, and
+        the honest answer is that this layout has none."""
+        pkg = os.path.join(self.tmp.name, "node_modules", "@anthropic-ai",
+                           "claude-code", "bin")
+        os.makedirs(pkg)
+        exe = os.path.join(pkg, "claude")
+        open(exe, "w").close()
+        self.assertIsNone(versions.store(exe))
+        self.assertEqual(versions.soaked(24, exe), (None, None))
+
+    def test_a_missing_store_is_none_not_a_crash(self):
+        self.assertIsNone(versions.store("/nowhere/at/all/claude"))
+        self.assertEqual(versions.soaked(24, "/nowhere/at/all/claude"), (None, None))
