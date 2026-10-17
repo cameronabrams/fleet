@@ -168,8 +168,15 @@ class RestoreLandsWhereTheManifestSays(unittest.TestCase):
         paths = {}
         for name, age in ((soaked_name, age_h), (newest, 1.0)):
             p = os.path.join(vdir, name)
+            # Each versioned fake names ITSELF in the log. Checking the pane text
+            # instead does not work and fails in an environment-dependent way:
+            # `capture-pane` wraps at the terminal width, so a long temporary path
+            # arrives split across a newline. That passed here and failed on CI,
+            # whose tmp paths are longer -- the same shape as every other "works
+            # on the machine that wrote it" fault this week.
             with open(p, "w") as f:
-                f.write("#!/bin/sh\necho \"$@\" >> \"$FAKE_CLAUDE_LOG\"\n")
+                f.write("#!/bin/sh\necho \"RAN %s $@\" >> \"$FAKE_CLAUDE_LOG\"\n"
+                        % name)
             os.chmod(p, 0o755)
             t = time.time() - age * 3600
             os.utime(p, (t, t))
@@ -185,14 +192,20 @@ class RestoreLandsWhereTheManifestSays(unittest.TestCase):
         the pinned and the bare path fall back to plain `claude` and a test
         against them cannot tell the two apart -- which is how a break that
         removed the pin entirely passed."""
-        pinned = self.version_store()
+        self.version_store()
         subprocess.run([TOOL, "--go", "--socket", SOCKET, "--stagger", "0"],
                        capture_output=True, text=True, env=self.env())
-        panes = self.tmux("list-panes", "-a", "-F", "#{pane_id}").stdout.split()
-        typed = "\n".join(
-            self.tmux("capture-pane", "-p", "-t", p).stdout for p in panes)
-        self.assertIn(pinned, typed,
-                      "the restore did not name the soaked release")
+        for _ in range(50):
+            if os.path.exists(self.log):
+                with open(self.log) as fh:
+                    if len(fh.readlines()) >= 3:
+                        break
+            time.sleep(0.1)
+        with open(self.log) as fh:
+            ran = fh.read()
+        self.assertIn("RAN 2.1.301 --name alpha", ran,
+                      "the restore did not run the soaked release")
+        self.assertNotIn("RAN 2.1.302", ran, "it ran the newest, not the soaked one")
 
     def test_a_restore_says_which_binary_it_launched_with(self):
         self.version_store()

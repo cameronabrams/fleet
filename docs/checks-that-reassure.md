@@ -175,6 +175,19 @@ Three mechanisms produce it.
   the good outcome; the bad one is a guard that appears to bite against code that
   is not the code you wrote. A rule written down is not a rule that has been run.
 
+- **A test that read a wrapped terminal.** The end-to-end proof that a restore
+  launches the pinned release searched `capture-pane` output for the binary's
+  path. `capture-pane` wraps at the terminal width, so on CI -- whose temporary
+  paths are a few characters longer -- the path arrived split across a newline and
+  the test failed (2026-10-17). It had passed here, repeatedly, for no better
+  reason than a shorter `$TMPDIR`.
+
+  The repair is the same one as the rest of this file: assert on something the
+  environment cannot reformat. Each versioned fake binary now writes its own name
+  into a log, so the check is `RAN 2.1.301` and not a path in a rendered pane.
+  **Screen text is a rendering, not a fact**, and a test that reads one has a
+  dependency on the window it ran in.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and
