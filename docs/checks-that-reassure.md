@@ -231,6 +231,38 @@ Three mechanisms produce it.
   the diff before pushing, and ask of every proper noun whether it is the
   project's or somebody's.
 
+- **An alarm that nothing can clear, which is how a true one gets missed.** The
+  delivery section of `fleetwatch` has carried two red lines since 2026-10-15: a
+  nudge that gave up after 1800 s, and a second attempt killed mid-retry. The news
+  reached that session anyway — it wrote the report about the episode and said so
+  the same hour — but `nudges.log` still records *never arrived*, and no tool can
+  say otherwise. They clear only by ageing out of the seven-day window.
+
+  **This is the same gap closed for mail on 2026-10-15 and not for nudges.**
+  `fleetmail` got `notified_otherwise`, so a record can say the content arrived by
+  another route, and `retry_undelivered`, so a transient failure is attempted
+  again. `fleetnudge` got the first *only for the case it can detect itself* — the
+  in-session decline — and never got the second.
+
+  It is not quite an oversight, and the difference is the useful part. **Mail's
+  retry had a driver and nudges have none**: `fleetmail fetch` already runs on a
+  timer, so "try again" had somewhere to live, while a nudge is invoked once by a
+  watcher and nothing comes back to it. **Mail's ack had an actor and nudges have
+  no verb**: a session that read a message runs `fleetmail ack`, and there is no
+  equivalent for a session that learned a result some other way.
+
+  The direction matters less than it looks. A check that cannot be cleared is not
+  safe merely because it errs toward alarm — a section with permanent red in it
+  gets read past, and then a real hole arrives into a place nobody looks. That is
+  the same end state as a check that fails toward reassurance, reached from the
+  other side, which is why it belongs in this file.
+
+  Whenever it is worth fixing, the shape is known: a `fleetnudge --delivered
+  SESSION JOB` that writes `notified_otherwise` on the matching record, usable by
+  the session that got the news; and either a driver that retries, or an explicit
+  decision that nudges do not retry and the window is the only clearing mechanism.
+  Deciding the second is the real work; the first is an afternoon.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and

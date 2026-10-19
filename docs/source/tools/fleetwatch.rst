@@ -124,6 +124,16 @@ matters: a real hole rendered as fine. So ``fleetnudge`` records
 reads the field. An absent field and an unrecognized reason are both read as a
 hole.
 
+**A hole here cannot be cleared by any tool, only by ageing out of the window.**
+There is no ack and no retry: a session that learned the result by another route
+has no way to say so, and nothing re-attempts a nudge that gave up. Both exist for
+undelivered *mail* (`notified_otherwise`, and a retry on every `fleetmail fetch`)
+and neither was built here, because a nudge has no recurring driver to retry from
+and no verb for the recipient to answer with. Until that changes, a red line can
+outlive the problem it reports — which is worth knowing when reading this section,
+since a permanent alarm is read past and a real one then arrives somewhere nobody
+looks.
+
 One exception, marked as such in the code: records written before 2026-10-15 carry
 only the sentence, so that exact sentence is matched. It is a parse of prose, it is
 pinned by a test against the string ``fleetnudge`` actually emits, and
