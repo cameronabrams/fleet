@@ -36,8 +36,8 @@ import datetime, json, os, re, subprocess, sys, glob
 from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
-from fleet.nudgelog import (DANGLING_AFTER, INFORMED_LEGACY,
-                            informed_times, lost_the_news, resolved_by_hand)
+from fleet.nudgelog import (DANGLING_AFTER, INFORMED_LEGACY, informed_times,
+                            last_nudge_word, lost_the_news, resolved_by_hand)
 from fleet import version_flag
 from fleet.procs import alive
 from fleet.panes import is_agent_pane
@@ -388,10 +388,10 @@ def nudge_holes(only=None, days=NUDGE_DAYS):
 
     now = datetime.datetime.now(datetime.timezone.utc)
     cut = now - datetime.timedelta(days=days)
-    # the last word on each session/job, for the dangling check below
-    last = {}
-    for r in recs:
-        last[(r.get("session"), str(r.get("job")))] = r
+    # the last word on each session/job, for the dangling check below. Shared
+    # with the clearing tool, and it ignores `informed` records: those are
+    # assertions about a nudge, not outcomes of one.
+    last = last_nudge_word(recs)
 
     informed = informed_times(recs)
     for r in recs:

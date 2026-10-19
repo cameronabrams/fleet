@@ -115,6 +115,23 @@ def read(path):
     return recs, bad
 
 
+def last_nudge_word(recs):
+    """The last record `fleetnudge` itself wrote, per session and job.
+
+    `informed` records are excluded, and that is not bookkeeping. They are
+    assertions ABOUT a nudge, not outcomes OF one, so letting one count as the
+    last word would mean a cleared hole stopped being recognisable as the kind
+    of hole it was -- and a genuine dangling that arrived AFTER an assertion
+    would be masked by it, which is the dangerous direction.
+    """
+    last = {}
+    for r in recs:
+        if r.get("outcome") == INFORMED_OUTCOME:
+            continue
+        last[(r.get("session"), str(r.get("job")))] = r
+    return last
+
+
 def open_trouble(recs, session=None, job=None, now=None,
                  dangling_after=DANGLING_AFTER):
     """The records a report would currently be unhappy about.
@@ -126,9 +143,7 @@ def open_trouble(recs, session=None, job=None, now=None,
     would make two flagged rows look like thirty.
     """
     now = now or datetime.datetime.now(datetime.timezone.utc)
-    last = {}
-    for r in recs:
-        last[(r.get("session"), str(r.get("job")))] = r
+    last = last_nudge_word(recs)
     informed = informed_times(recs)
     out = []
     for r in recs:

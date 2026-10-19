@@ -118,3 +118,25 @@ class ReadingTheLog(unittest.TestCase):
         recs, bad = nudgelog.read(self.path)
         self.assertEqual(len(recs), 1)
         self.assertEqual(bad, 2)
+
+
+class AnAssertionIsNotTheLastNudgeWord(unittest.TestCase):
+    """`informed` records are assertions ABOUT a nudge, not outcomes OF one.
+
+    Letting one count as the last word has two effects, and the second is the
+    dangerous one: a cleared `waiting` stops being recognisable as the kind of
+    hole it was, so the report under-counts what was cleared by hand; and a
+    genuine dangling that arrives AFTER an assertion is masked by it. Seen on the
+    first real use -- two records cleared, one counted.
+    """
+    def test_a_cleared_dangling_is_still_recognised_as_one(self):
+        w = at(200, outcome="waiting", reason="mid-turn")
+        ok = at(30, outcome="informed", notified_otherwise=True, reason="told me")
+        self.assertIs(nudgelog.last_nudge_word([w, ok])[("alpha", "111")], w)
+
+    def test_a_dangling_after_an_assertion_is_not_masked(self):
+        """The direction that matters. An assertion covers the trouble that came
+        before it, never the trouble that comes after."""
+        ok = at(200, outcome="informed", notified_otherwise=True, reason="told me")
+        w = at(190, outcome="waiting", reason="mid-turn")
+        self.assertEqual(nudgelog.open_trouble([ok, w]), [w])
