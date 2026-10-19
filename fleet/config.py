@@ -220,6 +220,28 @@ def context(cfg):
         raise ConfigError("[context] compact_focus must be one line of text")
     return out
 
+def updates(cfg):
+    """`[updates]` -- a file some other program derives this machine's pending
+    software updates into, or None when nothing is configured.
+
+    The PATH lives here and not in the tool, because it names a host
+    (`/var/lib/<hostname>-updates/status.json` on the machine this was written
+    for) and this repository may not. Absent means the board shows nothing about
+    updates, which is different from a configured source that failed: one was
+    never asked for, the other could not be read.
+
+    `stale_hours` bounds how old a check may be before it stops counting as
+    current -- the producer is a daily timer, so the default allows a missed day
+    and no more.
+    """
+    u = cfg.get("updates", {})
+    path = u.get("status")
+    if not path:
+        return None
+    return {"status": os.path.expanduser(path),
+            "stale_hours": float(u.get("stale_hours", 36))}
+
+
 def notify(cfg):
     """[notify]: where a tool sends a phone push when it could not reach a session.
 

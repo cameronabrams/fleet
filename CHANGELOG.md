@@ -52,6 +52,25 @@ entries and makes you confirm the bump against this list.
   form on 2026-10-16 and the restore's end-to-end test caught it — its fake `claude`
   recorded a `--version` call that displaced a real launch.
 
+- **`fleetboard` shows this machine's pending software updates**, when an
+  `[updates]` section points it at a file some other program derives them into.
+  It reads and declares nothing, the same contract as its other sources. The path
+  is configuration because it names a host. Requested by a peer session
+  2026-10-19; the producer is that session's, not this repository's.
+
+  **Nothing renders as "up to date" except a check that ran and found nothing.** A
+  missing file, an unparseable one, an unknown `schema`, `ok: false`, or no
+  readable timestamp all read as a problem; a check older than `stale_hours`
+  (default 36, for a daily producer) shows its numbers marked `STALE` in words
+  rather than leaving a reader to do arithmetic on an age. A file with no `schema`
+  key is read as schema 1 — the contract the first producer was written to, and
+  treating its absence as a mismatch would break the feature on arrival.
+
+  `reboot_needed` is flagged in the header beside the clock: it is the one fact
+  here that is true *now* and about the fleet rather than a package list, since a
+  reboot ends every session. It is raised only from a source that could be read,
+  because a failed check may still carry the fields of its last good run.
+
 - **`fleetspawn --go` logs the adoption, because every launch is one.** There is no
   version argument and none is wanted, so a spawn — and an **unpark** — puts a
   session onto whatever `claude` resolves to. That was invisible, and it was not a

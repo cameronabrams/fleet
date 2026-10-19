@@ -198,6 +198,67 @@ def cwd_width(fixed, lo=14, hi=42):
     """
     return max(lo, min(hi, shutil.get_terminal_size((80, 24)).columns - fixed))
 
+# The schema this understands. A file that declares a different one is a producer
+# this board has not been taught to read, which is a PROBLEM and not an absence:
+# rendering unknown fields as "nothing pending" is the failure this whole tool is
+# written against. A file with no `schema` key at all is read as 1, because that
+# is the contract the first producer was written to and treating its absence as a
+# mismatch would break the feature on the day it arrives.
+UPDATES_SCHEMA = 1
+
+
+def read_updates(path, stale_hours, now=None):
+    """(state, data) for the pending-updates file. State is one of:
+
+      "ok"       -- read, current, and the check itself succeeded
+      "stale"    -- read, but older than `stale_hours`; its numbers still shown
+      "failed"   -- the check ran and reported `ok: false`
+      "unknown"  -- missing, unreadable, unparseable, or an unknown schema
+
+    **Never "up to date" by default.** Every failure here is a reason the board
+    cannot say what is pending, and a board that answers "nothing" because its
+    source went missing is worse than one that says it does not know.
+    """
+    now = time.time() if now is None else now
+    try:
+        with open(path) as f:
+            d = json.load(f)
+    except OSError as e:
+        return "unknown", {"error": "cannot read %s (%s)" % (path, e.strerror or e)}
+    except ValueError as e:
+        return "unknown", {"error": "%s is not readable JSON (%s)" % (path, e)}
+    if not isinstance(d, dict):
+        return "unknown", {"error": "%s does not hold an object" % path}
+    if int(d.get("schema", UPDATES_SCHEMA) or 0) != UPDATES_SCHEMA:
+        return "unknown", {"error": "%s declares schema %s; this board reads %d"
+                                    % (path, d.get("schema"), UPDATES_SCHEMA)}
+    if not d.get("ok"):
+        return "failed", d
+    at = d.get("checked_epoch")
+    try:
+        age_h = (now - float(at)) / 3600.0
+    except (TypeError, ValueError):
+        return "unknown", dict(d, error="no readable checked_epoch in %s" % path)
+    d = dict(d, _age_s=now - float(at))
+    return ("stale" if age_h > stale_hours else "ok"), d
+
+
+def updates():
+    """(state, data) for this machine's pending updates, or (None, None) when no
+    source is configured -- which is silence, not a failure.
+
+    Re-read on every call for the same reason `parked` is: `--watch` outlives the
+    file, which a daily timer rewrites underneath it.
+    """
+    try:
+        cfg = fc.updates(fc.load())
+    except Exception:
+        return "unknown", {"error": "the fleet configuration could not be read"}
+    if not cfg:
+        return None, None
+    return read_updates(cfg["status"], cfg["stale_hours"])
+
+
 def parked():
     """name -> {cwd, since} for sessions DECLARED parked, or None if unreadable.
 
@@ -242,6 +303,8 @@ def draw(full=False, auto=False):
     cache = load_cache() if not full else None
     if full or (auto and (cache is None or time.time() - cache["at"] > REFRESH)):
         cache, full = refresh_cache(), True
+    u_state, u_data = updates()
+    u_data = u_data or {}
     inst = versions.installed()
     # What the fleet SHOULD be on: the newest release that has soaked, which is
     # behind `installed` by design, every day. Staleness is measured against this
@@ -266,6 +329,11 @@ def draw(full=False, auto=False):
         head += f"{C['dim']}, {C['r']}{tgt}{C['dim']} target{C['r']}"
     elif not tgt:
         head += f"{C['dim']}, {C['r']}?{C['dim']} target (nothing soaked){C['r']}"
+    # A reboot ends every session on this machine, so it is the one fact here that
+    # belongs beside the clock rather than in the footer with the aged sources: it
+    # is true NOW, and it is about the fleet rather than about a package list.
+    if u_state in ("ok", "stale") and u_data.get("reboot_needed"):
+        head += f"   {C['red']}REBOOT NEEDED{C['r']}"
     print(head)
     if a is None:
         print(f"  {C['red']}claude agents could not be read -- every status below is ?{C['r']}")
@@ -345,6 +413,35 @@ def draw(full=False, auto=False):
             also = f"  {C['red']}ALSO RUNNING{C['r']}" if n in names else ""
             print((f"   {C['dim']}{n:<21}{short_path(pk[n]['cwd'], pw):<{pw}}  "
                    f"since {pk[n]['since']}{C['r']}{also}").rstrip())
+
+    # Beside the other aged sources, and carrying its age for the same reason they
+    # do: a package count is evidence as of a time, and the producer is a daily
+    # timer. Nothing is printed when no source is configured -- that is silence by
+    # choice, which is the one absence here that is not a failure.
+    if u_state == "unknown":
+        print(f"\n  {C['red']}updates: UNKNOWN -- {u_data.get('error', 'no reason given')}{C['r']}")
+    elif u_state == "failed":
+        print(f"\n  {C['red']}updates: THE CHECK FAILED -- "
+              f"{u_data.get('error') or 'no reason given'}{C['r']}")
+    elif u_state in ("ok", "stale"):
+        n = u_data.get("total")
+        k = u_data.get("kernel_update") or []
+        tgt = u_data.get("target_snapshot")
+        if n:
+            what = "%s update%s" % (n, "" if n == 1 else "s")
+            if k:
+                what += " (kernel)"
+            if tgt and tgt != u_data.get("snapshot"):
+                what += " -> %s" % tgt
+        else:
+            what = "up to date (%s)" % (u_data.get("snapshot") or "?")
+        when = "checked %s ago" % age(time.time() - u_data["_age_s"])
+        # STALE is said, not implied by a large number: a reader who sees only an
+        # age has to do the arithmetic, and the whole point is that a check which
+        # stopped running must not read as a quiet machine.
+        mark = f"  {C['red']}STALE{C['r']}" if u_state == "stale" else ""
+        color = C['red'] if (n or u_state == "stale") else C['dim']
+        print(f"\n  {color}updates: {what}{C['r']}{C['dim']} - {when}{C['r']}{mark}")
 
     if cache:
         stamp = f"{C['dim']}cluster + context as of {age(cache['at'])} ago"

@@ -531,3 +531,174 @@ class TheStampCarriesTheDate(unittest.TestCase):
         self.assertIn("2026-10-14", second,
                       "the stamp was frozen at the value of the first draw")
         self.assertNotIn("2026-10-13", second)
+
+
+class PendingUpdatesAreASourceLikeAnyOther(unittest.TestCase):
+    """A file some other program derives this machine's pending updates into.
+
+    The board reads it and declares nothing, which is the same contract it holds
+    for every other source -- a design in which the producer pushes status was
+    considered and refused on 2026-10-03. The PATH is configuration, because it
+    names a host and this repository may not.
+
+    Every test here is about the same thing: **no failure may render as "up to
+    date."** A missing file, an unparseable one, a schema this board has not been
+    taught, a check that ran and failed, a check that stopped running -- each is a
+    reason the board cannot say what is pending, and a board that answers
+    "nothing" because its source went away is worse than one that says it does not
+    know. Requested by a peer session 2026-10-19.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.b = load_tool("fleetboard")
+        self.path = os.path.join(self.cfg.state, "status.json")
+        self.addCleanup(self.cfg.close)
+
+    def write(self, doc):
+        with open(self.path, "w") as f:
+            json.dump(doc, f)
+        return self.path
+
+    def read(self, doc=None, stale_hours=36, now=None):
+        if doc is not None:
+            self.write(doc)
+        return self.b.read_updates(self.path, stale_hours, now=now)
+
+    def fresh(self, **kw):
+        d = {"schema": 1, "ok": True, "total": 0, "snapshot": "20261017",
+             "checked_epoch": time.time() - 3600}
+        d.update(kw)
+        return d
+
+    # -- the source failing ---------------------------------------------------
+
+    def test_a_missing_file_is_unknown_not_up_to_date(self):
+        state, data = self.b.read_updates(self.path, 36)
+        self.assertEqual(state, "unknown")
+        self.assertIn("cannot read", data["error"])
+
+    def test_an_unparseable_file_is_unknown(self):
+        with open(self.path, "w") as f:
+            f.write("{not json")
+        state, data = self.b.read_updates(self.path, 36)
+        self.assertEqual(state, "unknown")
+        self.assertIn("not readable JSON", data["error"])
+
+    def test_a_file_that_is_not_an_object_is_unknown(self):
+        state, _ = self.read([1, 2, 3])
+        self.assertEqual(state, "unknown")
+
+    def test_an_unknown_schema_is_unknown_not_read_anyway(self):
+        """A producer this board has not been taught to read. Rendering its
+        fields as "nothing pending" is the failure the whole tool is written
+        against."""
+        state, data = self.read(self.fresh(schema=2, total=0))
+        self.assertEqual(state, "unknown")
+        self.assertIn("schema 2", data["error"])
+
+    def test_a_missing_schema_key_is_read_as_the_first_one(self):
+        """The first producer's own example omits it. Treating absence as a
+        mismatch would break the feature on the day it arrives, and absence here
+        is a contract rather than a failed read.
+
+        The key is REMOVED explicitly: `fresh()` supplies `schema: 1`, so a
+        version of this that just called it asserted nothing and passed with
+        absence treated as a mismatch.
+        """
+        d = self.fresh(total=4)
+        d.pop("schema")
+        self.assertNotIn("schema", d)
+        self.assertEqual(self.read(d)[0], "ok")
+
+    def test_a_check_that_failed_is_not_up_to_date(self):
+        state, data = self.read({"schema": 1, "ok": False, "error": "repo unreachable"})
+        self.assertEqual(state, "failed")
+        self.assertEqual(data["error"], "repo unreachable")
+
+    def test_no_readable_timestamp_is_unknown(self):
+        """Without one there is no age, and an age is what separates a current
+        answer from one that stopped being produced."""
+        d = self.fresh(); d.pop("checked_epoch")
+        state, _ = self.read(d)
+        self.assertEqual(state, "unknown")
+
+    # -- the check stopping, which is the quiet one ---------------------------
+
+    def test_a_check_older_than_the_window_is_stale(self):
+        now = time.time()
+        self.assertEqual(self.read(self.fresh(checked_epoch=now - 50 * 3600),
+                                   now=now)[0], "stale")
+        self.assertEqual(self.read(self.fresh(checked_epoch=now - 2 * 3600),
+                                   now=now)[0], "ok")
+
+    def test_stale_is_said_on_the_line_not_left_to_arithmetic(self):
+        out = self.draw(self.fresh(total=3, checked_epoch=time.time() - 50 * 3600))
+        self.assertIn("STALE", out)
+
+    # -- rendering -------------------------------------------------------------
+
+    def draw(self, doc=None):
+        import io, contextlib
+        if doc is not None:
+            self.write(doc)
+            with open(os.path.join(self.cfg.config, "fleet.toml"), "a") as f:
+                f.write('\n[updates]\nstatus = "%s"\n' % self.path)
+        with mock.patch.object(self.b, "panes", lambda: {}), \
+             mock.patch.object(self.b, "agents", lambda: {}), \
+             mock.patch.object(self.b, "load_cache", lambda: None), \
+             mock.patch.object(self.b.versions, "installed", lambda *a, **k: "2.1.303"), \
+             mock.patch.object(self.b.versions, "target", lambda *a, **k: ("2.1.302", "/v")):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.b.draw()
+        return buf.getvalue()
+
+    def test_no_configured_source_prints_nothing_about_updates(self):
+        """The one absence here that is not a failure: it was never asked for.
+        A board that nagged about updates on a machine with no checker would be
+        reporting its own configuration as the machine's state."""
+        self.assertNotIn("updates:", self.draw())
+
+    def test_a_reboot_is_flagged_in_the_header(self):
+        """It is true NOW and it ends every session on the machine, which makes
+        it a fact about the fleet rather than about a package list."""
+        out = self.draw(self.fresh(total=5, reboot_needed=True))
+        head = [l for l in out.splitlines() if "FLEET" in l][0]
+        self.assertIn("REBOOT NEEDED", head)
+
+    def test_no_reboot_flag_when_none_is_needed(self):
+        out = self.draw(self.fresh(total=5, reboot_needed=False))
+        self.assertNotIn("REBOOT NEEDED", out)
+
+    def test_a_failed_check_does_not_claim_a_reboot_from_stale_fields(self):
+        """`reboot_needed` is carried in the fixture ON PURPOSE. A failed check
+        may still hold the fields of its last successful run, and a header flag
+        raised from a document the board has just declared unreliable would be
+        the board vouching for something it cannot read. A version of this with
+        no `reboot_needed` in the fixture proved nothing: the flag was absent
+        either way."""
+        out = self.draw({"schema": 1, "ok": False, "error": "repo unreachable",
+                         "reboot_needed": True})
+        self.assertNotIn("REBOOT NEEDED", out)
+        self.assertIn("THE CHECK FAILED", out)
+
+    def test_an_unknown_source_does_not_claim_a_reboot_either(self):
+        out = self.draw({"schema": 9, "ok": True, "reboot_needed": True,
+                         "checked_epoch": time.time()})
+        self.assertNotIn("REBOOT NEEDED", out)
+        self.assertIn("UNKNOWN", out)
+
+    def test_the_count_and_the_age_are_both_shown(self):
+        out = self.draw(self.fresh(total=214, kernel_update=["kernel-default-7.2"],
+                                   target_snapshot="20261021"))
+        line = [l for l in out.splitlines() if "updates:" in l][0]
+        self.assertIn("214 updates", line)
+        self.assertIn("kernel", line)
+        self.assertIn("20261021", line)
+        self.assertIn("ago", line, "a count with no age reads as current")
+
+    def test_nothing_pending_says_so_with_its_snapshot(self):
+        line = [l for l in self.draw(self.fresh(total=0)).splitlines()
+                if "updates:" in l][0]
+        self.assertIn("up to date", line)
+        self.assertIn("20261017", line)

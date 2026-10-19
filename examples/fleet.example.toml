@@ -87,3 +87,16 @@ billed = false
 [owners]
 "/project-a-sweep" = "project-a-runs"
 "/project-a"       = "project-a-repo"
+
+# Pending software updates for THIS machine, read by fleetboard. Optional: with
+# no [updates] section the board says nothing about them, which is silence by
+# choice rather than a source that failed.
+#
+# fleetboard only READS this. Some other program -- a root timer, typically --
+# derives the state into the file; the board declares nothing, the same contract
+# it holds for every other source. The path lives here because it names a host,
+# and nothing in the application may.
+#
+# [updates]
+# status = "/var/lib/<host>-updates/status.json"
+# stale_hours = 36     # a daily producer may miss one day and no more

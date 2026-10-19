@@ -150,6 +150,45 @@ someone to upgrade a session over a source that failed, and an unreadable
 installed version leaves every comparison unknown rather than marking the whole
 fleet stale.
 
+Pending software updates
+------------------------
+
+With an ``[updates]`` section in the configuration, the board reads a file that
+some other program derives this machine's pending updates into — a root timer,
+typically — and shows what it found. It **declares nothing and asks nothing**:
+the same contract as every other source, and the reason a design where producers
+push status was refused on 2026-10-03.
+
+The path is configuration because it names a host, and nothing in the
+application may::
+
+   [updates]
+   status = "/var/lib/<host>-updates/status.json"
+   stale_hours = 36
+
+With no such section the board says nothing about updates. That is the one
+absence here which is not a failure — it was never asked for — and it is
+distinguishable from a configured source that could not be read.
+
+**Nothing renders as "up to date" except a check that ran and found nothing.**
+A missing file, an unparseable one, a ``schema`` this board has not been taught,
+a check that reported ``ok: false``, or one with no readable timestamp all read
+as a problem. A check older than ``stale_hours`` still shows its numbers, marked
+``STALE`` in words rather than left to a reader doing arithmetic on an age: a
+checker that stopped running must not look like a quiet machine.
+
+A file with **no** ``schema`` key is read as schema 1, which is the contract the
+first producer was written to. Treating that absence as a mismatch would break
+the feature on the day it arrived.
+
+``reboot_needed`` is flagged in the **header**, beside the clock, rather than in
+the footer with the aged sources. It is the one fact here that is true *now* and
+is about the fleet rather than about a package list: a reboot ends every session
+on the machine. It is raised only from a source the board could actually read —
+a failed or unknown check may still carry the fields of its last good run, and
+a flag raised from a document just declared unreliable would be the board
+vouching for something it cannot read.
+
 Absence is rendered ``?``, never as a pass
 ------------------------------------------
 
