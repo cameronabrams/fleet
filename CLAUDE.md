@@ -37,4 +37,13 @@
 - Read-only by default; anything that changes tmux or launches sessions previews
   unless `--go`. Never answer the folder-trust prompt, in code or by hand.
 - Nothing personal in this repo: no people, hosts, accounts or project sessions.
-  Those belong in configuration (`~/.config/fleet`), never here.
+  Those belong in configuration (`~/.config/fleet`), never here. **This repository
+  is public**, and it applies to tracked prose as much as to code -- a CHANGELOG
+  entry, a docstring, a test fixture, an example log line. Writing a real session
+  name because it makes a bug concrete is the trade the rule exists to forbid.
+  Use the placeholder vocabulary the tests already use: `alpha`, `beta`, `gamma`
+  for sessions, `-home-u-...` for project slugs, `198.51.100.23` (RFC 5737) for an
+  address. Where a story needs two names, say what they were FOR -- `site-repo`,
+  `sim-study`, `oldname` and `newname` for a rename -- never what they were.
+  No automated check can catch this, because the repository must not contain the
+  list of names it would check against; `git diff` before a push is the check.

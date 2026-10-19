@@ -8,8 +8,8 @@ path: `argv[0]` became `.../claude/versions/2.1.302`, whose basename is
 
 **Every reader then got an empty list, which is indistinguishable from an idle
 fleet.** For two days `fleetcontext` listed no sessions, `fleetnudge` and
-`fleetspawn` could find none, and `fleetretire --park drexiglas` answered "no
-claude process named 'drexiglas' is running" about a session sitting in a pane.
+`fleetspawn` could find none, and `fleetretire --park site-repo` answered "no
+claude process named 'site-repo' is running" about a session sitting in a pane.
 All 16 were invisible. Nothing failed; four tools just quietly had nothing to
 report.
 
@@ -50,12 +50,27 @@ class _Spawned:
         self.p = subprocess.Popen([self.argv0, "60"], executable=self.path,
                                   stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL)
-        for _ in range(100):                      # exec has to have happened
+        # Wait for the EXEC, and say so if it never happens. `Popen` returns as
+        # soon as the child is forked, and `/proc/<pid>/exe` points at the new
+        # binary only once exec has run -- so a test that reads it too early sees
+        # nothing and fails an assertion about process identity instead of about
+        # timing. That is what made the first version of this flaky: it passed
+        # alone and failed about one run in three under a loaded suite, which is
+        # the worst possible behaviour because it trains you to re-run.
+        deadline = time.time() + 10
+        while True:
             try:
-                os.readlink("/proc/%d/exe" % self.p.pid)
-                break
+                if os.readlink("/proc/%d/exe" % self.p.pid) == self.path:
+                    break
             except OSError:
-                time.sleep(0.01)
+                pass
+            if self.p.poll() is not None:
+                raise AssertionError("the fixture process exited before exec: rc=%s"
+                                     % self.p.returncode)
+            if time.time() > deadline:
+                raise AssertionError("the fixture never exec'd %s within 10s"
+                                     % self.path)
+            time.sleep(0.01)
 
     def __enter__(self):
         return self

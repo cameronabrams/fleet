@@ -2,7 +2,7 @@
 
 Catalogue started by a study session (five instances, all in one project) and
 extended by nine sessions of one fleet, 2026-08-27 .. 2026-09-12: study,
-production, repo, website, literature and coordinator roles.
+production, repo, website, oldname and coordinator roles.
 
 **The property they share is not a mechanism, it is a DIRECTION.** Each of these
 is a check that can be wrong, and when it is wrong it says *fine*. None of them
@@ -57,7 +57,7 @@ Three mechanisms produce it.
   to CLOSE (`done + bad >= NTASK`), never absence-of-negative.
 - **A NAME is not an identity, once names are auto-generated.** `fleetgantt` drew
   a session started by hand for one task inside a role's lane, labeled
-  *"renamed: 'htpolynet-8c' became 'htpolynet-repo'"*. It was never renamed and
+  *"renamed: 'sim-8c' became 'sim-repo'"*. It was never renamed and
   was never that role: the rename table is keyed by bare name across every
   transcript, and `<project>-<short id>` display names are not unique, so one
   transcript's real history was applied to another that merely ended up with the
@@ -200,7 +200,7 @@ Three mechanisms produce it.
   identified a session by `basename(argv[0]) == "claude"`. It returned an empty
   list for two days. `fleetcontext` listed no sessions, `fleetnudge` and
   `fleetspawn` could find none, and `fleetretire --park` answered *"no claude
-  process named 'drexiglas' is running"* about a session sitting in a pane.
+  process named 'site-repo' is running"* about a session sitting in a pane.
 
   **Every one of those is an empty result that reads as "nothing to do."** The
   suite was green throughout: every test of the four callers supplied
@@ -215,6 +215,21 @@ Three mechanisms produce it.
   script does not work either, because for `#!/bin/sh` the exe is the
   interpreter. **A fixture for a process-identity bug has to get the process's
   identity right.**
+
+- **A rule I re-read the same morning I broke it.** This repository is public and
+  its own `CLAUDE.md` says *"Nothing personal in this repo: no people, hosts,
+  accounts or project sessions."* Over several days I put real session names into
+  CHANGELOG entries, a docs example and three test docstrings -- each time because
+  the real name made a failure concrete, which is exactly the trade the rule
+  forbids. A standing grant to push meant nothing paused to ask, and the names
+  reached a public remote (2026-10-19, found by the owner asking "you pushed
+  this?").
+
+  **It is the one fault in this file that no test can catch**, because the check
+  would need the list of real names and the repository must not contain it. The
+  guard has to be a habit at the only point where the information exists: read
+  the diff before pushing, and ask of every proper noun whether it is the
+  project's or somebody's.
 
 ## The rule that covers them all
 

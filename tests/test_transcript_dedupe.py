@@ -4,8 +4,8 @@ A working directory gets RENAMED. Claude Code opens a project directory for the
 new path; the old one keeps its copy of the transcript. Both are then matched by
 `<projects>/*/*.jsonl`, and a tool that sums per FILE counts that session twice.
 
-Live on this fleet since 2026-10-02, when `~/Sync/mendeley` became
-`~/Sync/library`: three transcripts under both slugs, byte-identical, same
+Live on this fleet since 2026-10-02, when `~/notes/oldname` became
+`~/notes/newname`: three transcripts under both slugs, byte-identical, same
 sha256, different inodes. `fleetgantt` drew three sessions twice until ef89336;
 `fleetcost` read 101 transcripts where there are 98 and reported 2,528 peer
 messages where there are 2,353.
@@ -39,8 +39,8 @@ class DedupePaths(unittest.TestCase):
         return p
 
     def test_one_session_in_two_projects_is_returned_once(self):
-        a = self.write("-home-u-Sync-library", "uuid-1.jsonl", "x" * 100)
-        b = self.write("-home-u-Sync-mendeley", "uuid-1.jsonl", "x" * 100)
+        a = self.write("-home-u-notes-newname", "uuid-1.jsonl", "x" * 100)
+        b = self.write("-home-u-notes-oldname", "uuid-1.jsonl", "x" * 100)
         got = transcripts.dedupe_paths([a, b])
         self.assertEqual(len(got), 1)
         self.assertIn(got[0], (a, b))
@@ -99,7 +99,7 @@ class FleetlogUsesItToo(unittest.TestCase):
     them, so the message graph was right -- measured invariant at 3,007 edges
     with the dedupe on and off. But `sessions` is keyed by PATH, so the table
     listed the same transcript once per project directory: 81 rows where there
-    are 79, two of `library`'s shown twice.
+    are 79, two of `notes-session`'s shown twice.
 
     Safe by a route that would not survive the two copies differing is not the
     same as safe, which is why this is pinned rather than left to the edge

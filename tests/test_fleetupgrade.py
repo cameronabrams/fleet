@@ -171,7 +171,7 @@ class SessionLeaders(unittest.TestCase):
         loop = ("/bin/bash -c eval 'until ! pgrep -f \"sqm -O\" >/dev/null; "
                 "do sleep 30; done'")
         running = ("/bin/bash -c eval 'timeout 900 ssh picotte "
-                   "apptainer pull --force htpolynet-cuda.sif'")
+                   "apptainer pull --force sim-cuda.sif'")
         self.assertTrue(self.u.immortal(loop))
         self.assertFalse(self.u.immortal(running))
         self.assertFalse(self.u.immortal("/bin/bash -c eval 'make -j8'"))
@@ -181,8 +181,8 @@ class SessionLeaders(unittest.TestCase):
         """The false negative. `/exit` fails because a child is in its own process
         session, which a poll loop is one way to reach and not the definition.
 
-        On 2026-10-07 `htpolynet-study` was not flagged while a 22-hour-old `eza`
-        -- an aliased `ls` that never returned -- held its exit. `library` hit the
+        On 2026-10-07 `sim-study` was not flagged while a 22-hour-old `eza`
+        -- an aliased `ls` that never returned -- held its exit. `notes-session` hit the
         identical hang the day before. Neither contains a sleep.
         """
         self.assertFalse(self.u.immortal("eza --group-directories-first"))
@@ -562,7 +562,7 @@ class TheJsonCarriesWhoAsked(unittest.TestCase):
 
 
 class TheHoldFileIsADeclaration(unittest.TestCase):
-    """What replaces Cameron as the per-roll gate: a standing refusal, written
+    """What replaces the fleet's owner as the per-roll gate: a standing refusal, written
     once, rather than a decision taken again every time."""
     def setUp(self):
         self.cfg = FakeConfig()

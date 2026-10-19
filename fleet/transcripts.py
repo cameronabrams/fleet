@@ -86,7 +86,7 @@ def dedupe_paths(paths):
     One session can have its transcript in two project directories at once. It
     happens when a working directory is RENAMED: Claude Code opens a project
     directory for the new path and the old one keeps its copy. On 2026-10-02
-    `~/Sync/mendeley` became `~/Sync/library`, and three transcripts have existed
+    `~/notes/oldname` became `~/notes/newname`, and three transcripts have existed
     under both slugs since -- byte-identical, same sha256, different inodes.
 
     A file name is `<session uuid>.jsonl` and a uuid is unique to a session, so the

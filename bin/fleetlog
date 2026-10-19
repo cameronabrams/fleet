@@ -357,7 +357,7 @@ def load_all():
     # identical copies yield identical edges and `dedupe(edges)` collapses them,
     # which is why the graph was right -- but `sessions` is keyed by PATH, so the
     # table listed the same transcript once per project directory. Three rows of
-    # `library`'s appeared twice until 2026-10-08. Safe by a route that would not
+    # `notes-session`'s appeared twice until 2026-10-08. Safe by a route that would not
     # have survived the two copies differing is not the same as safe.
     for path in transcripts.dedupe_paths(glob.glob(f"{PROJECTS}/*/*.jsonl")):
         try:

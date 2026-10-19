@@ -148,9 +148,9 @@ class AgentLabel(unittest.TestCase):
         than be ignored -- an ignored second argument would read as still working
         while the fallback it asks for is gone."""
         with self.assertRaises(TypeError):
-            panes.agent_label("", "literature")
+            panes.agent_label("", "oldname")
         with self.assertRaises(TypeError):
-            panes.is_agent_pane("", "literature")
+            panes.is_agent_pane("", "oldname")
 
     def test_the_format_string_asks_for_the_one_label(self):
         self.assertEqual(panes.LABELS, "#{@agent}")

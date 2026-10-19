@@ -162,7 +162,7 @@ class RefusingAWatcherThatIsMidSet(unittest.TestCase):
     sharing a pid. When the first of them finishes, `fleetwatch` sends someone
     here with a clear command -- and the refusal said "stop the watcher first",
     which would forfeit the jobs still running. Reported 2026-10-06 from
-    pestifer-sweep, pid 645241 over three jobs with one completed.
+    sweep-session, pid 645241 over three jobs with one completed.
 
     Behavior is unchanged: still refused, still exit 3. Only what it tells you
     to do is different, and only when this pid holds other registrations.

@@ -329,7 +329,7 @@ class CwdAndParked(unittest.TestCase):
         """Paths are distinctive at the end. Two sessions under one project dir
         agree in the first components and differ in the last, so a right-hand cut
         makes the column widest exactly where it stops telling them apart."""
-        got = self.b.short_path("/mnt/storage1/cfa/research/cyanate-esters", 20)
+        got = self.b.short_path("/mnt/storage1/u/research/cyanate-esters", 20)
         self.assertEqual(len(got), 20)
         self.assertTrue(got.endswith("cyanate-esters"), got)
         self.assertTrue(got.startswith("…"), got)
@@ -401,7 +401,7 @@ class TheConfigurationIsReReadEachDraw(unittest.TestCase):
     `fleetboard --watch` redraws every N seconds for as long as it is left up.
     The configuration was read once, at import, so a session unparked after the
     board started stayed in the parked list for the life of the process. Found
-    2026-10-09 on a watcher 21h50m old: `drexiglas` had been unparked, was drawn
+    2026-10-09 on a watcher 21h50m old: `site-repo` had been unparked, was drawn
     correctly in the live table, and was still listed under `parked (10)`.
 
     **The `ALSO RUNNING` flag fired on it** -- which is the flag for a session

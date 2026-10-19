@@ -58,14 +58,14 @@ class UnlabelledPane(SnapshotDirectory):
         return self.manifest(repo="", **kw)["sessions"][0]
 
     def test_name_from_claude_agents(self):
-        s = self.session(agents=[{"pid": 200, "name": "literature"}])
-        self.assertEqual(s["label"], "literature")
+        s = self.session(agents=[{"pid": 200, "name": "oldname"}])
+        self.assertEqual(s["label"], "oldname")
         self.assertIn("claude agents", s["label_note"])
         self.assertEqual(s["membership_problems"][0]["kind"], "brief")   # named: normal checks
 
     def test_name_from_the_transcript_when_agents_cannot_be_read(self):
-        s = self.session(agents=None, transcript_name="literature")
-        self.assertEqual(s["label"], "literature")
+        s = self.session(agents=None, transcript_name="oldname")
+        self.assertEqual(s["label"], "oldname")
         self.assertIn("transcript", s["label_note"])
 
     def test_every_recorded_session_has_a_name(self):

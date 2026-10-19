@@ -118,8 +118,8 @@ class Survival(Base):
         self.assertEqual(len(msgs), 1)
 
     def test_the_sender_is_taken_from_the_envelope(self):
-        _, msgs, _, _ = self.scan(peer(sender="htpolynet-study"), turn())
-        self.assertEqual(msgs[0][0], "htpolynet-study")
+        _, msgs, _, _ = self.scan(peer(sender="sim-study"), turn())
+        self.assertEqual(msgs[0][0], "sim-study")
 
 
 if __name__ == "__main__":

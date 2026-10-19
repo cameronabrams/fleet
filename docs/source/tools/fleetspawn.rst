@@ -124,7 +124,7 @@ entire version spread was unparks rather than rolls. The auto-roll log recorded
 
 So ``--go`` appends one line to ``<state>/autoroll.log``::
 
-   2026-10-16T09:51:04-0400  installed=2.1.301 rolled=ycleptic-repo from=parked to=2.1.301 note=unpark
+   2026-10-16T09:51:04-0400  installed=2.1.301 rolled=lib-repo from=parked to=2.1.301 note=unpark
 
 It is the auto-roll's own log and not a new one, deliberately: a second file would
 have said ``rolled=none`` twice. ``from`` is ``parked`` for an unpark and ``new``

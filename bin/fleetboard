@@ -178,7 +178,7 @@ HOME = os.path.expanduser("~")
 def short_path(path, width):
     """`path` with $HOME as `~`, cut from the LEFT to fit `width`.
 
-    Paths are distinctive at the END -- two sessions under ~/drexiglas-project
+    Paths are distinctive at the END -- two sessions under ~/site-project
     differ in their last component and agree in the first three -- so a right-hand
     truncation would make the column widest exactly where it stops telling them
     apart.
@@ -211,7 +211,7 @@ def parked():
     """
     # Re-read on EVERY call, not from the module-level CFG. `--watch` redraws for
     # as long as the board is left up, and parking is a declaration a human
-    # changes underneath it: a watcher 21h50m old was still listing `drexiglas`
+    # changes underneath it: a watcher 21h50m old was still listing `site-repo`
     # as parked hours after it was unparked, and flagged it ALSO RUNNING -- a
     # disagreement between a live reading of tmux and a 22-hour-old reading of a
     # file, both of them this board's. A check that reports its own staleness as

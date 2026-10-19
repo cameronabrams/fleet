@@ -58,7 +58,7 @@ entries and makes you confirm the bump against this list.
   rare path: the fleet's entire version spread was unparks rather than rolls, and
   the auto-roll log said `rolled=none skipped=15` at 09:50 on 2026-10-16 while a
   session went onto an 18-hour-old release at 09:51. Reported by coord, from
-  Cameron asking where the new binary was soaking.
+  the fleet's owner asking where the new binary was soaking.
 
   One line into `<state>/autoroll.log`, which is the auto-roll's own log and not a
   new one: a second file would have said `rolled=none` twice. `to` is read from the
@@ -202,7 +202,7 @@ entries and makes you confirm the bump against this list.
 
   **Every failure was an empty result that reads as "nothing to do."**
   `fleetcontext` listed no sessions, `fleetnudge` and `fleetspawn` could find
-  none, and `fleetretire --park` answered *"no claude process named 'drexiglas' is
+  none, and `fleetretire --park` answered *"no claude process named 'site-repo' is
   running"* about a session sitting in a pane. All 16 were invisible. Surfaced by
   coord after a reboot restored the whole fleet on the pinned path; `fleetupgrade`
   and `fleetboard` were unaffected because they read panes and `claude agents`.
@@ -217,7 +217,7 @@ entries and makes you confirm the bump against this list.
   `--eligible` measured the age of the *newest* installed release against a 24-hour
   window, and releases land here about every 25 hours (median gap 25.2 h) — so each
   arrival reset the clock the gate was reading. Two fires, two days, zero sessions
-  eligible. Reported by coord 2026-10-17, from Cameron asking where the new binary
+  eligible. Reported by coord 2026-10-17, from the fleet's owner asking where the new binary
   was soaking.
 
   **The fleet now targets the newest release that has SOAKED, not the newest
@@ -369,7 +369,7 @@ entries and makes you confirm the bump against this list.
 
 - **`fleetboard --watch` held the configuration it started with, so an unparked
   session never left the parked list.** `CFG` was read at import. A watcher left up
-  for 21h50m was still listing `drexiglas` under `parked (10)` hours after it was
+  for 21h50m was still listing `site-repo` under `parked (10)` hours after it was
   unparked — correctly drawn in the live table at the same time, because names come
   from tmux and `claude agents` on every draw and only the declaration was frozen.
   Reported 2026-10-09.
@@ -388,7 +388,7 @@ entries and makes you confirm the bump against this list.
 
 - **`fleetcost` counted three sessions twice, and every figure it prints was
   inflated.** A working directory rename leaves one session's transcript in two
-  project directories — `~/Sync/mendeley` became `~/Sync/library` on 2026-10-02 —
+  project directories — `~/notes/oldname` became `~/notes/newname` on 2026-10-02 —
   and `scan()` globbed and summed per file. Reported 2026-10-08 by a session
   recounting a published figure.
 
@@ -412,7 +412,7 @@ entries and makes you confirm the bump against this list.
   is real growth rather than this artifact.
 
 - **`fleetlog sessions` listed a duplicated transcript once per project
-  directory** — 81 rows where there are 79, two of them `library`'s. Its *edges*
+  directory** — 81 rows where there are 79, two of them `notes-session`'s. Its *edges*
   were already right, because two identical copies yield identical edges and
   `dedupe(edges)` collapses them; measured invariant at 3,007 either way. **Safe by
   a route that would not survive the two copies differing is not the same as
@@ -474,7 +474,7 @@ entries and makes you confirm the bump against this list.
 
   The cause is a **renamed working directory**: Claude Code opens a project
   directory for the new path and the old one keeps its copy of the transcript, so
-  both are scanned. `~/Sync/mendeley` became `~/Sync/library`, and three
+  both are scanned. `~/notes/oldname` became `~/notes/newname`, and three
   transcripts existed under both slugs — byte-identical, identical mtimes,
   different inodes.
 
@@ -486,8 +486,8 @@ entries and makes you confirm the bump against this list.
 
 - **`fleetgantt`'s unplaced lane no longer claims its occupants never held a
   role.** The heading read `NOT A ROLE`. Reported 2026-10-07: four transcripts
-  named `literature` and two named `notebook` sit there, and those are the earlier
-  names of `library` and `abrams-group-website`. **Every placement decision under
+  named `oldname` and two named `notebook` sit there, and those are the earlier
+  names of `notes-session` and `web-repo`. **Every placement decision under
   that heading was right; the heading was the only thing making a claim, and the
   claim was false.**
 
@@ -513,8 +513,8 @@ entries and makes you confirm the bump against this list.
   earlier name — the 2026-09-22 guess wearing a label instead of a lane. Taking it
   from the directory is no better: a transcript's project directory is where its
   *file* sits, not where it ran, and one of the six records
-  `~/Git/mendeley-mirror` while its transcript lives under
-  `-home-cfa-Git-offprint`. Neither is sound, so the chart says nothing about
+  `~/Git/oldname-mirror` while its transcript lives under
+  `-home-u-repos-proj`. Neither is sound, so the chart says nothing about
   these beyond declining to place them — and now says that, instead of the
   opposite.
 
@@ -536,7 +536,7 @@ entries and makes you confirm the bump against this list.
     shortly after and its flagged child simply vanished — a stuck loop does not do
     that. The same false positive was reproducible here while writing the fix.
   - **False negative.** A 22-hour-old `eza` — an aliased `ls` that never returned —
-    held `htpolynet-study`'s `/exit` open and was never flagged, because it has no
+    held `sim-study`'s `/exit` open and was never flagged, because it has no
     sleep in it. Another session hit the identical hang the day before. A poll loop
     is one way to block an exit, not the definition.
 
@@ -615,7 +615,7 @@ entries and makes you confirm the bump against this list.
 
   while the watcher was alive and correctly polling the rest. **Both halves of the
   diagnosis were wrong**: the monitor will exit, and there is nothing to check.
-  Reported 2026-10-06 from `pestifer-sweep`, pid 645241 over 26433958/59/60.
+  Reported 2026-10-06 from `sweep-session`, pid 645241 over 26433958/59/60.
 
   The advice was worse than the alarm. `fleetregister --clear` refuses while the
   pid is alive — correctly — and said *"stop the watcher first"*, which here would
@@ -695,8 +695,8 @@ entries and makes you confirm the bump against this list.
   restore built a new window and renamed it to a name already on screen.
 
   Found in the 2026-10-05 reboot by the coordinator: 19 of 20 panes came back, and
-  the plan for the twentieth was to create a window and name it `drexiglas` while a
-  four-pane `drexiglas` was already open. That pane was placed by hand.
+  the plan for the twentieth was to create a window and name it `site-repo` while a
+  four-pane `site-repo` was already open. That pane was placed by hand.
 
   **The partial restore is the common case, not the edge one.** Liveness filtering
   turns every "one session died" into a partial restore, and the window that session

@@ -126,7 +126,7 @@ class AWatcherPartWayThroughItsSet(Base):
 
     while the watcher was alive and legitimately polling the other two. The
     diagnosis is wrong in both halves: the monitor WILL exit, and there is nothing
-    to check. Observed 2026-10-06 on pestifer-sweep, pid 645241 over
+    to check. Observed 2026-10-06 on sweep-session, pid 645241 over
     26433958/59/60, after 26433960 completed.
 
     The advice is worse than the alarm. `fleetregister --clear` refuses while the
@@ -427,7 +427,7 @@ class InformedRowsLeaveTheHoleReport(Delivery):
 
 
 class Clients(Base):
-    """Who is attached to the tmux server -- the question Cameron asked on
+    """Who is attached to the tmux server -- the question the fleet's owner asked on
     2026-09-23: someone who logs in as him and runs `tmux a -d` has every pane.
 
     This REPORTS; it does not guard. Whoever can attach can equally read the
@@ -436,15 +436,15 @@ class Clients(Base):
     """
     LISTED = ("/dev/pts/0\tcfa\t1790163444\t1790178714\n"
               "/dev/pts/9\tcfa\t1790170000\t1790170001\n")
-    WHO = ("cfa      pts/0        2026-09-23 07:37 (10.246.157.49)\n"
-           "cfa      seat0        2026-09-18 10:16\n"
-           "cfa      tty3         2026-09-18 10:16\n")
+    WHO = ("u      pts/0        2026-09-23 07:37 (198.51.100.23)\n"
+           "u      seat0        2026-09-18 10:16\n"
+           "u      tty3         2026-09-18 10:16\n")
 
     def test_origin_comes_from_who_and_the_tty_names_are_reconciled(self):
         # tmux says /dev/pts/0; who says pts/0
         cs = self.w.parse_clients(self.LISTED, self.WHO)
         self.assertEqual([c["tty"] for c in cs], ["/dev/pts/0", "/dev/pts/9"])
-        self.assertEqual(cs[0]["origin"], "10.246.157.49")
+        self.assertEqual(cs[0]["origin"], "198.51.100.23")
         self.assertEqual(cs[0]["created"], 1790163444)
         # a client `who` says nothing about is unknown, never assumed local
         self.assertEqual(cs[1]["origin"], "unknown")
@@ -486,7 +486,7 @@ class Clients(Base):
         one = self.out(self.w.parse_clients("/dev/pts/0\tcfa\t1790163444\t1790178714\n",
                                             self.WHO), None)
         self.assertNotIn("!!", one)
-        self.assertIn("10.246.157.49", one)
+        self.assertIn("198.51.100.23", one)
 
         two = self.out(self.w.parse_clients(self.LISTED, self.WHO), None)
         self.assertIn("!! MORE THAN ONE CLIENT", two)

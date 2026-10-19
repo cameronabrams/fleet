@@ -38,35 +38,35 @@ class Attribute(unittest.TestCase):
                                          place_named=False)[0], "remote title")
 
     def test_a_rename_needs_THIS_transcripts_own_record(self):
-        """Reported by carla-talk 2026-09-22 from a chart it was putting on a slide.
+        """Reported by talk-session 2026-09-22 from a chart it was putting on a slide.
 
         Auto-generated display names (`<project>-<short id>`) are NOT unique across
-        transcripts. The real htpolynet-repo ran as
-        ['htpolynet-30', 'htpolynet-8c', 'htpolynet-repo'], so the map correctly
-        learns htpolynet-8c -> htpolynet-repo. A one-off Cameron started by hand in
-        the same directory recorded only ['htpolynet-8c'] -- and inherited that
+        transcripts. The real sim-repo ran as
+        ['sim-30', 'sim-8c', 'sim-repo'], so the map correctly
+        learns sim-8c -> sim-repo. A one-off the fleet's owner started by hand in
+        the same directory recorded only ['sim-8c'] -- and inherited that
         lineage by bare name, drawn inside the role's lane and labeled
-        "renamed: 'htpolynet-8c' became 'htpolynet-repo'". It was never renamed and
+        "renamed: 'sim-8c' became 'sim-repo'". It was never renamed and
         was never that role. A confident label over an inference, and the record
         that carried it said `inferred: true` with an empty rename list in the same
         breath.
 
         A rename is one transcript's history. Applying it to another is a guess.
         """
-        roles, renames = {"htpolynet-repo"}, {"htpolynet-8c": "htpolynet-repo"}
-        owners = {"-git-htpolynet": "htpolynet-repo"}
+        roles, renames = {"sim-repo"}, {"sim-8c": "sim-repo"}
+        owners = {"-git-sim": "sim-repo"}
 
         # the transcript that really did pass through the name: corroborated
-        who, how, _ = ident.attribute("htpolynet-8c", "-git-htpolynet", roles, renames, owners,
-                                      own_seq=["htpolynet-30", "htpolynet-8c", "htpolynet-repo"])
-        self.assertEqual(who, "htpolynet-repo")
+        who, how, _ = ident.attribute("sim-8c", "-git-sim", roles, renames, owners,
+                                      own_seq=["sim-30", "sim-8c", "sim-repo"])
+        self.assertEqual(who, "sim-repo")
         self.assertIn("renamed", how)
 
         # a different transcript that merely ended up with the same auto name
-        who, how, _ = ident.attribute("htpolynet-8c", "-git-htpolynet", roles, renames, owners,
-                                      own_seq=["htpolynet-8c"], place_named=False)
+        who, how, _ = ident.attribute("sim-8c", "-git-sim", roles, renames, owners,
+                                      own_seq=["sim-8c"], place_named=False)
         self.assertNotIn("renamed", how)          # fails even if own_seq is ignored
-        self.assertEqual(who, "htpolynet-8c")     # so fleetgantt draws it unattached
+        self.assertEqual(who, "sim-8c")     # so fleetgantt draws it unattached
 
     def test_no_own_seq_keeps_the_cross_transcript_lineage(self):
         """fleetlog needs it: the message graph wants old messages under the role
@@ -91,16 +91,16 @@ class TheChartStillRefusesToPlace(unittest.TestCase):
     """
     def test_an_uncorroborated_rename_is_still_not_placed(self):
         who, how, inferred = ident.attribute(
-            "literature", "mendeley-mirror", {"library"},
-            {"literature": "library"}, {"mendeley-mirror": "library"},
-            place_named=False, own_seq=["literature"])
-        self.assertEqual(who, "literature")
-        self.assertNotEqual(who, "library")
+            "oldname", "oldname-mirror", {"newname"},
+            {"oldname": "newname"}, {"oldname-mirror": "newname"},
+            place_named=False, own_seq=["oldname"])
+        self.assertEqual(who, "oldname")
+        self.assertNotEqual(who, "newname")
 
     def test_a_corroborated_rename_is_placed_even_for_a_chart(self):
         who, how, inferred = ident.attribute(
-            "literature", "mendeley-mirror", {"library"},
-            {"literature": "library"}, {"mendeley-mirror": "library"},
-            place_named=False, own_seq=["literature", "library"])
-        self.assertEqual(who, "library")
+            "oldname", "oldname-mirror", {"newname"},
+            {"oldname": "newname"}, {"oldname-mirror": "newname"},
+            place_named=False, own_seq=["oldname", "newname"])
+        self.assertEqual(who, "newname")
         self.assertIn("renamed", how)

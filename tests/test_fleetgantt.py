@@ -115,8 +115,8 @@ class Gantt(unittest.TestCase):
 
         It happens when a working directory is RENAMED: Claude Code starts a
         project dir for the new path and the old one stays, holding a copy of the
-        same transcript. Found 2026-10-07 on the live fleet, where `~/Sync/mendeley`
-        became `~/Sync/library`: `--all` drew 100 segments from 97 uuids, three of
+        same transcript. Found 2026-10-07 on the live fleet, where `~/notes/oldname`
+        became `~/notes/newname`: `--all` drew 100 segments from 97 uuids, three of
         them doubled, while the default view drew 89 from 89. The default hides it
         because a project dir no role owns is dropped before it can be drawn --
         which is why this needs `all=True` to reproduce.

@@ -300,8 +300,8 @@ class PartialRestoreIntoAnExistingWindow(unittest.TestCase):
     called `deps` -- the restored session nowhere near the peers it belongs with.
 
     Found in the 2026-10-05 restore: 19 of 20 panes came back, and the plan for
-    the twentieth was to create a new window and rename it `drexiglas` while a
-    four-pane `drexiglas` was already on screen. The coordinator placed that pane
+    the twentieth was to create a new window and rename it `site-repo` while a
+    four-pane `site-repo` was already on screen. The coordinator placed that pane
     by hand. Partial restore is the COMMON case -- liveness filtering turns every
     "one session died" into one -- so this is the path most likely to be used.
     """

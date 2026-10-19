@@ -156,7 +156,7 @@ def resolve_label(label, title, proc, cwd, agents):
     `@agent` is the hand-set pane label and wins when it is there (corrected by the
     pane title, above). A pane launched as a bare `claude`, named later, has NO
     label -- OBSERVED 2026-09-18, when fleetsnap invented "(unlabeled %21)" for a
-    session fleetupgrade resolved as `literature`, and then asked the reader to
+    session fleetupgrade resolved as `oldname`, and then asked the reader to
     write a brief under that invented name. So fall back to the sources that carry
     a name the session answers to, and to None rather than to a fiction."""
     if label:

@@ -82,8 +82,8 @@ def dedupe_by_transcript(rows, owners):
 
     They arise when a working directory is RENAMED. Claude Code opens a project
     directory for the new path, the old one stays with its copy of the transcript,
-    and both are scanned. On 2026-10-07 `~/Sync/mendeley` had become
-    `~/Sync/library` and three transcripts existed under both slugs, byte-identical
+    and both are scanned. On 2026-10-07 `~/notes/oldname` had become
+    `~/notes/newname` and three transcripts existed under both slugs, byte-identical
     and with identical mtimes: `--all` drew 100 segments from 97 uuids. The default
     view drew 89 from 89 and hid it, because a project directory no role owns is
     dropped before anything is drawn.
@@ -186,8 +186,8 @@ def build(a):
     # that role, so a genuine one-off would be labeled that role's earlier name.
     # Caught by a test. Labeling from the directory instead is no better: a
     # transcript's project dir is where its FILE sits, which is not where it ran
-    # once a session has moved -- one of the six records cwd ~/Git/mendeley-mirror
-    # while its transcript lives under `-home-cfa-Git-offprint`. Neither label is
+    # once a session has moved -- one of the six records cwd ~/Git/oldname-mirror
+    # while its transcript lives under `-home-u-repos-proj`. Neither label is
     # sound, so the chart says nothing about these beyond declining to place them,
     # and the lane heading was changed to say that rather than "NOT A ROLE".
     renames = identity.rename_map([(r["project"], seq(r)) for r in newest_first], role_names, {})

@@ -257,7 +257,7 @@ def immortal(cmdline):
 
     * It missed anything hung that does not sleep. On 2026-10-07 a 22-hour-old
       `eza` -- an aliased `ls` that never returned -- held `/exit` open with no
-      sleep in it, and was not reported; `library` hit the same hang the day
+      sleep in it, and was not reported; `notes-session` hit the same hang the day
       before. A poll loop is ONE WAY to block an exit, not the definition.
     * It fired on work that was going perfectly. The fleet's documented way of
       waiting for a detached job is `until ! kill -0 $J; do sleep 30; done`, so

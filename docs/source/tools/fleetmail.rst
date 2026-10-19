@@ -39,7 +39,7 @@ A message is front matter and a short body:
 .. code-block:: text
 
    ---
-   from: north/literature
+   from: north/oldname
    to: south/coord
    thread: 2026-09-18-pet-cutinase
    kind: question

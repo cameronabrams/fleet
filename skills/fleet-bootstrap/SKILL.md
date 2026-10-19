@@ -59,7 +59,7 @@ Ask, in one batch:
 2. For each: is there production work — studies, sweeps, cluster campaigns — as well
    as code? Where does it run, and in which directory?
 3. What writing is in flight (papers, talks, docs), and where?
-3a. What shared resources should sessions consult or report into — a literature
+3a. What shared resources should sessions consult or report into — a oldname
    database, a lab notebook, a website — and who may write to each?
 4. Which projects depend on which (whose bugs surface in whose runs)?
 5. What must always come to the human: releases, pushes, spend, external email?
