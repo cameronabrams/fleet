@@ -161,19 +161,25 @@ Three mechanisms produce it.
 
   The practice, which costs one command: break it where the trigger cannot reach.
 
-      git ls-files -z | tar --null -T - -cf - | tar -x -C <scratch>/breakroom
+      git ls-files -z --cached --others --exclude-standard \
+        | tar --null -T - -cf - | tar -x -C <scratch>/breakroom
 
   The suite runs entirely inside that copy -- `tests/support.py` resolves `bin/`
   from the repository root it is invoked from -- so the live symlink never points
   at a broken file. Verified end to end on 2026-10-15: the full suite passes in the
   copy, a break there fails, and the live tool is untouched.
 
-  **This was first written as `git archive HEAD`, which is wrong and failed the
-  same day.** `git archive` ships the committed tree, and the change being proved
-  is the uncommitted one -- so it copies everything except the thing under test.
-  The copy then fails for reasons that have nothing to do with the guard, which is
-  the good outcome; the bad one is a guard that appears to bite against code that
-  is not the code you wrote. A rule written down is not a rule that has been run.
+  **This command has been wrong twice, the same way both times.** It was first
+  written as `git archive HEAD`, which ships the committed tree when the change
+  being proved is the uncommitted one. Corrected to `git ls-files -z`, which
+  lists only TRACKED files -- so on 2026-10-19 a brand-new test file was missing
+  from the copy and the suite could not import it. Each version copied everything
+  except the thing under test.
+
+  The failure is loud both times, which is the good outcome; the bad one is a
+  guard that appears to bite against code that is not the code you wrote. **A
+  rule written down is not a rule that has been run**, and a rule corrected once
+  is not a rule that is now right.
 
 - **A test that read a wrapped terminal.** The end-to-end proof that a restore
   launches the pinned release searched `capture-pane` output for the binary's
@@ -187,6 +193,28 @@ Three mechanisms produce it.
   into a log, so the check is `RAN 2.1.301` and not a path in a rendered pane.
   **Screen text is a rendering, not a fact**, and a test that reads one has a
   dependency on the window it ran in.
+
+- **Four tools silently found nothing, and nothing looked wrong.** Pinning
+  launches to a release by path (2026-10-17) changed every session's `argv[0]`
+  from `claude` to `.../claude/versions/2.1.302`, and `fleet.procs.claude_procs`
+  identified a session by `basename(argv[0]) == "claude"`. It returned an empty
+  list for two days. `fleetcontext` listed no sessions, `fleetnudge` and
+  `fleetspawn` could find none, and `fleetretire --park` answered *"no claude
+  process named 'drexiglas' is running"* about a session sitting in a pane.
+
+  **Every one of those is an empty result that reads as "nothing to do."** The
+  suite was green throughout: every test of the four callers supplied
+  `claude_procs`'s output as a fixture, so the one assumption they all rested on
+  was the one none of them checked. A shared helper mocked by everybody who uses
+  it is a helper nothing tests.
+
+  The missing test launches a REAL process with a real binary at a pinned path
+  and asks whether the fleet can see it. Writing it took three attempts: the
+  first set `argv[0]` to a pinned path while the process was really `python`, so
+  `/proc/<pid>/exe` said python and the test failed against the fix; a shell
+  script does not work either, because for `#!/bin/sh` the exe is the
+  interpreter. **A fixture for a process-identity bug has to get the process's
+  identity right.**
 
 ## The rule that covers them all
 

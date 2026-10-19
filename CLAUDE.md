@@ -18,11 +18,18 @@
 - **Break the guard in a throwaway copy, never in the working tree.** These tools
   are normally installed as symlinks into the tree, and at least one is driven by
   a timer, so a file broken for the two seconds of a test run is the installed
-  tool for those two seconds. Copy the tracked files AS THEY ARE -- `git ls-files
-  -z | tar --null -T - -cf - | tar -x -C <scratch>/breakroom` -- then run the suite
-  from there; it resolves `bin/` from wherever it is invoked. Not `git archive
-  HEAD`, which ships the committed tree: the change under test is the uncommitted
-  one, so that copies everything except the thing being proved.
+  tool for those two seconds. Copy the working tree's own files AS THEY ARE:
+
+      git ls-files -z --cached --others --exclude-standard \
+        | tar --null -T - -cf - | tar -x -C <scratch>/breakroom
+
+  then run the suite from there; it resolves `bin/` from wherever it is invoked.
+  **Every flag earns its place, and two were learned by the copy being wrong.**
+  Not `git archive HEAD`, which ships the committed tree when the change under
+  test is the uncommitted one. And not `git ls-files` alone, which lists only
+  TRACKED files -- so a brand-new test file is missing from the copy and the
+  suite fails to import it. Both mistakes copy everything except the thing being
+  proved.
 - Run the suite once with no configuration before pushing a test change --
   `env -u FLEET_CONFIG HOME=<empty dir> python3 -m unittest discover -s tests -t .`
   A test that reads the real `~/.config/fleet` passes on a machine that has one

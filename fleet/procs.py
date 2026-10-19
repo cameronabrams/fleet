@@ -6,6 +6,48 @@ and "is this the same process" have one answer.
 import os
 import subprocess
 
+from fleet import versions
+
+# What a claude binary is called when it is called anything. `claude` is the
+# installer's symlink and the npm wrapper; `claude.exe` is npm's on some layouts.
+_NAMES = ("claude", "claude.exe")
+
+
+def is_claude(argv0, pid):
+    """Whether the process at `pid` is a Claude Code session.
+
+    **Not `basename(argv[0]) == "claude"`.** That held while every session was
+    launched through the installer's symlink, and stopped holding on 2026-10-17
+    when this fleet began pinning launches to a release by path: `argv[0]` became
+    `.../claude/versions/2.1.302`, whose basename is `2.1.302`. Every tool reading
+    this -- `fleetcontext`, `fleetretire`, `fleetnudge`, `fleetspawn` -- then saw
+    an empty list, which is indistinguishable from an idle fleet. All 16 sessions
+    were invisible for two days and `fleetretire --park` answered "no claude
+    process named X is running".
+
+    `/proc/<pid>/exe` is the discriminator that survives both, because it is the
+    binary actually executing rather than the word used to start it: a bare
+    `claude` resolves THROUGH the symlink to the same versioned file a pinned
+    launch names directly.
+
+    `argv[0]` is still accepted, first and without a syscall, so a session whose
+    `/proc/<pid>/exe` cannot be read -- a permission this does not have, a
+    process exiting mid-scan -- is still found by the old route. The two together
+    fail toward FINDING a session, which is the only safe direction here: a false
+    positive is a strange row somebody notices, a false negative is a fleet that
+    reads as empty.
+    """
+    if os.path.basename(argv0 or "") in _NAMES:
+        return True
+    try:
+        exe = os.readlink("/proc/%s/exe" % pid)
+    except OSError:
+        return False
+    # ` (deleted)` when the binary was replaced under a running session.
+    exe = exe[:-len(" (deleted)")] if exe.endswith(" (deleted)") else exe
+    return os.path.basename(exe) in _NAMES or bool(versions.from_path(exe))
+
+
 def claude_procs():
     """(pid, cwd, argv) for every live claude process, from /proc -- not from any
     record, and not only from tmux: a session outside tmux still takes a name."""
@@ -18,7 +60,7 @@ def claude_procs():
             cwd = os.readlink(f"/proc/{d}/cwd")
         except OSError:
             continue
-        if argv and os.path.basename(argv[0]) == "claude":
+        if argv and is_claude(argv[0], d):
             out.append((int(d), cwd, [x for x in argv if x]))
     return out
 

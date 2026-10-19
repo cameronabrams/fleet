@@ -193,6 +193,26 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **Pinning launches made every session invisible to four tools, for two days.**
+  `fleet.procs.claude_procs` identified a session by `basename(argv[0]) ==
+  "claude"`. That held while every launch went through the installer's symlink and
+  stopped holding when this fleet began pinning launches to a release by path
+  (2026-10-17): `argv[0]` became `.../claude/versions/2.1.302`, whose basename is
+  `2.1.302`.
+
+  **Every failure was an empty result that reads as "nothing to do."**
+  `fleetcontext` listed no sessions, `fleetnudge` and `fleetspawn` could find
+  none, and `fleetretire --park` answered *"no claude process named 'drexiglas' is
+  running"* about a session sitting in a pane. All 16 were invisible. Surfaced by
+  coord after a reboot restored the whole fleet on the pinned path; `fleetupgrade`
+  and `fleetboard` were unaffected because they read panes and `claude agents`.
+
+  A session is now identified by `/proc/<pid>/exe` — the binary actually
+  executing, which a bare `claude` resolves *through* the symlink to and a pinned
+  launch names directly — with `argv[0]` still accepted first and without a
+  syscall. The two together fail toward **finding** a session: a false positive is
+  a strange row somebody notices, a false negative is a fleet that reads as empty.
+
 - **The soak gate could not open, and the log read as though it were waiting.**
   `--eligible` measured the age of the *newest* installed release against a 24-hour
   window, and releases land here about every 25 hours (median gap 25.2 h) — so each
