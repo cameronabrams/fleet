@@ -22,6 +22,7 @@ CFG = fc.load()
 # Set once in main(), before any pane is built. Bare `claude` until then, so an
 # import or a helper called out of order cannot silently launch something else.
 CLAUDE_CMD = "claude"
+launched = None
 
 STATE = fc.state_dir(CFG)
 
@@ -127,7 +128,16 @@ def windows_by_name(sess):
 
 
 def claude_cmd():
-    """(command, why) -- the binary to launch, and what that choice was.
+    """(command, version, why) -- the binary to launch, which release that is,
+    and what the choice was.
+
+    **The version is returned, not re-derived.** Writing `installed()` into the
+    adoption log while launching the target put a release into the fleet's only
+    durable adoption record that never ran here: on 2026-10-19 both restore lines
+    said `to=2.1.303` while all 16 sessions came up on 2.1.302. Plausible,
+    installed, and false, with nothing downstream able to tell. This is the "`to=`
+    becomes a choice rather than a readout" case, flagged when pinning was
+    designed and then got wrong in this file anyway.
 
     Shared intent with `fleetspawn`'s: the fleet runs the newest release that has
     SOAKED. Separate code because this one must never exec anything to find out --
@@ -136,12 +146,16 @@ def claude_cmd():
     """
     version, path = versions.target()
     if path and os.path.exists(path):
-        return shlex.quote(path), "%s, the newest soaked release" % version
+        return shlex.quote(path), version, "%s, the newest soaked release" % version
+    # Falling back: the sessions get whatever `claude` resolves to, so THAT is the
+    # version they come up on -- a different answer from the pinned branch, and
+    # the reason this is returned rather than worked out again at the call site.
+    bare = versions.installed(ask_binary=False)
     if version:
-        return "claude", (f"bare `claude` -- target {version} is gone from the "
-                          f"version store")
-    return "claude", ("bare `claude` -- nothing has soaked yet, or there is no "
-                      "version store on this machine")
+        return "claude", bare, (f"bare `claude` ({bare or '?'}) -- target "
+                                f"{version} is gone from the version store")
+    return "claude", bare, (f"bare `claude` ({bare or '?'}) -- nothing has soaked "
+                            f"yet, or there is no version store on this machine")
 
 
 def verify(sessions):
@@ -271,7 +285,7 @@ def main():
     # So it falls back to bare `claude`, and says which it did, because the manifest
     # a later reader compares against will say something else.
     global CLAUDE_CMD
-    CLAUDE_CMD, claude_why = claude_cmd()
+    CLAUDE_CMD, launched, claude_why = claude_cmd()
 
     age = time.time() - os.path.getmtime(MANIFEST)
     print(f"\n  coordinator: {m.get('coordinator','?')}")
@@ -342,8 +356,7 @@ def main():
     if a.go:
         was = sorted({x.get("version") for x in m["sessions"] if x.get("version")})
         problem = versions.record_adoption(
-            STATE, "%d-sessions" % len(m["sessions"]),
-            versions.installed(ask_binary=False),
+            STATE, "%d-sessions" % len(m["sessions"]), launched,
             was[0] if len(was) == 1 else ("mixed" if was else "?"),
             "restore INTENT -- %d planned, none verified yet" % len(m["sessions"]))
         if problem:
@@ -501,8 +514,9 @@ def main():
                 "not a version check)" % (n - len(bad), n) if checked
                 else "COULD NOT CHECK -- %s" % (bad[0][1] if bad else "no reason given"))
         problem = versions.record_adoption(
-            STATE, "%d-sessions" % n, versions.installed(ask_binary=False),
-            "restore", "restore DONE -- " + said)
+            STATE, "%d-sessions" % n, launched,
+            "restore", "restore DONE -- launched on %s; %s"
+                       % (launched or "?", said))
         if problem:
             print(f"  outcome not logged: {problem}")
     print(f"\n  After restore: run `fleetsnap` to re-capture, and ask each session to "

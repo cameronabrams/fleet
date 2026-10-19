@@ -193,6 +193,21 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **`fleetrestore`'s adoption lines named a release the fleet never ran.** `to=`
+  was `installed()` while the launch used `target()`, and those differ every day
+  by design — so on 2026-10-19 both restore lines said `to=2.1.303` while all 16
+  sessions came up on 2.1.302. Plausible, installed, and false, with nothing
+  downstream able to detect it. Reported by coord, who had flagged this exact
+  consequence when pinning was designed: `to=` stops being a readout and becomes a
+  choice. `fleetspawn` handled it by reading the running process; this file did
+  not.
+
+  `claude_cmd()` now returns the version it resolved, so both lines log what was
+  launched rather than deriving it again — the pinned release when pinned, and
+  what bare `claude` gives when falling back, which really is `installed` in that
+  branch. The outcome line says which release it launched on, beside its existing
+  note that it did not verify versions.
+
 - **Pinning launches made every session invisible to four tools, for two days.**
   `fleet.procs.claude_procs` identified a session by `basename(argv[0]) ==
   "claude"`. That held while every launch went through the installer's symlink and

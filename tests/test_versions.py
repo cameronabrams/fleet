@@ -428,10 +428,25 @@ class SomeCallersMayNotLaunchAProcess(unittest.TestCase):
         run.assert_called_once()
 
     def test_the_recovery_path_does_not_call_the_executing_form(self):
+        """Stated as the invariant, not as a count.
+
+        It was `count(...) == 2`, which broke the moment the two call sites were
+        collapsed into one -- for a change that did not touch this property at
+        all. A test that fails when correct code is rearranged gets loosened by
+        whoever is in a hurry, and then it guards nothing.
+        """
+        import ast
         src = open(os.path.join(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__))), "bin", "fleetrestore")).read()
-        self.assertEqual(src.count("versions.installed(ask_binary=False)"), 2)
-        self.assertNotIn("versions.installed()", src)
+        calls = [n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Call)
+                 and ast.unparse(n.func) == "versions.installed"]
+        self.assertTrue(calls, "fleetrestore stopped reading the installed version")
+        for c in calls:
+            kw = {k.arg: ast.literal_eval(k.value) for k in c.keywords
+                  if k.arg and isinstance(k.value, ast.Constant)}
+            self.assertIs(kw.get("ask_binary"), False,
+                          "the recovery path may not run `claude --version`: "
+                          + ast.unparse(c))
 
 
 class TheNewestVersionThatHasSoaked(unittest.TestCase):

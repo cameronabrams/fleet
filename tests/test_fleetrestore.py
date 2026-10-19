@@ -298,14 +298,14 @@ class TheRestoreLaunchesTheSoakedTarget(Plan):
         mod = load_tool("fleetrestore")
         with mock.patch.object(mod.versions, "target",
                                lambda *a, **k: ("2.1.301", "/gone/2.1.301")):
-            cmd, why = mod.claude_cmd()
+            cmd, _launched, why = mod.claude_cmd()
         self.assertEqual(cmd, "claude")
         self.assertIn("gone from the version store", why)
 
     def test_nothing_soaked_falls_back_and_names_the_reason(self):
         mod = load_tool("fleetrestore")
         with mock.patch.object(mod.versions, "target", lambda *a, **k: (None, None)):
-            cmd, why = mod.claude_cmd()
+            cmd, _launched, why = mod.claude_cmd()
         self.assertEqual(cmd, "claude")
         self.assertIn("nothing has soaked", why)
 
@@ -313,10 +313,63 @@ class TheRestoreLaunchesTheSoakedTarget(Plan):
         """So a run cannot start some sessions on one release and the rest on
         another because the installer moved underneath it."""
         src = open(TOOL).read()
-        self.assertLess(src.index("CLAUDE_CMD, claude_why = claude_cmd()"),
+        self.assertLess(src.index("CLAUDE_CMD, launched, claude_why = claude_cmd()"),
                         src.index("by_win = {}"))
         self.assertEqual(src.count("claude_cmd()"), 2)   # the def and the one call
 
     def test_it_never_runs_claude_to_decide_how_to_run_claude(self):
         src = open(TOOL).read()
         self.assertNotIn("versions.installed()", src)
+
+
+class TheAdoptionLineNamesWhatWasLaunched(Plan):
+    """`to=` used to be `installed()` while the launch used `target()`.
+
+    Those are different releases every day by design, so the fleet's only durable
+    adoption record logged a version that never ran: on 2026-10-19 both restore
+    lines said `to=2.1.303` while all 16 sessions came up on 2.1.302. Plausible,
+    installed, and false -- and nothing downstream can detect it, which is what
+    makes a wrong number in this file worse than a missing one.
+
+    This is the consequence flagged when pinning was designed -- "`to=` becomes a
+    CHOICE rather than a readout" -- implemented correctly in `fleetspawn`, which
+    reads the running process, and got wrong here.
+    """
+    def tool(self):
+        return load_tool("fleetrestore")
+
+    def test_the_pinned_version_is_what_is_logged(self):
+        mod = self.tool()
+        with mock.patch.object(mod.versions, "target",
+                               lambda *a, **k: ("2.1.302", "/v/2.1.302")), \
+             mock.patch.object(mod.os.path, "exists", lambda p: True), \
+             mock.patch.object(mod.versions, "installed",
+                               lambda *a, **k: "2.1.303"):
+            cmd, launched, why = mod.claude_cmd()
+        self.assertEqual(launched, "2.1.302",
+                         "logged the newest release, not the one launched")
+        self.assertIn("2.1.302", cmd)
+
+    def test_falling_back_logs_what_bare_claude_gives(self):
+        """A different answer from the pinned branch, and the reason the version
+        is returned rather than worked out again at the call site: when nothing
+        is pinned the sessions really do come up on `installed`."""
+        mod = self.tool()
+        with mock.patch.object(mod.versions, "target", lambda *a, **k: (None, None)), \
+             mock.patch.object(mod.versions, "installed", lambda *a, **k: "2.1.303"):
+            _cmd, launched, why = mod.claude_cmd()
+        self.assertEqual(launched, "2.1.303")
+        self.assertIn("2.1.303", why, "the fallback must name what it fell back to")
+
+    def test_both_lines_use_it_and_neither_re_derives_it(self):
+        src = open(TOOL).read()
+        body = src[src.index("def main("):]
+        self.assertEqual(body.count("versions.installed("), 0,
+                         "a line re-derived the version instead of using the "
+                         "one actually launched")
+        self.assertGreaterEqual(body.count("launched"), 4)  # unpack, both lines, note
+
+    def test_the_outcome_line_says_which_release_it_launched_on(self):
+        src = open(TOOL).read()
+        i = src.index("restore DONE")
+        self.assertIn("launched on %s", src[i:i + 120])

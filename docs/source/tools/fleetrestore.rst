@@ -89,6 +89,13 @@ all, ``verify`` returns a single row — counting that as one failed session wou
 log *14 of 15 matched* for a check that matched nothing, so it reads ``COULD NOT
 CHECK`` instead.
 
+``to=`` is **the release that was launched**, not the newest installed one. Those
+are different every day under a pinned launch, and logging the wrong one put a
+version into the fleet's only durable adoption record that never ran here
+(2026-10-19: both lines said ``to=2.1.303`` while all 16 sessions came up on
+``2.1.302``). When the pin falls back, ``to=`` is what bare ``claude`` gives,
+because in that branch that is genuinely what the sessions come up on.
+
 **Nothing is read per session and the launch loop is untouched.** Both lines use
 ``versions.installed(ask_binary=False)``, the form that will not run
 ``claude --version``: this is the recovery path, where nothing may need anything
