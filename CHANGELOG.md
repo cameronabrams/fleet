@@ -52,6 +52,27 @@ entries and makes you confirm the bump against this list.
   form on 2026-10-16 and the restore's end-to-end test caught it — its fake `claude`
   recorded a `--version` call that displaced a real launch.
 
+- **`fleetnudge --delivered` clears a delivery hole that is no longer one.** A
+  nudge that gave up stayed in `fleetwatch`'s report until it aged out of the
+  seven-day window, even when the result had reached its session another way.
+  `fleetmail` got both halves of this on 2026-10-15 — a record that the content
+  arrived another way, and a retry — and nudges got neither.
+
+  It appends, never edits, and carries who asserted it and why: weaker evidence
+  than a delivery, stronger than the inference `fleetwatch` refuses to draw from a
+  later nudge, so it suppresses where that only annotates. It refuses without a
+  reason and refuses when there is nothing to clear; the dry run lists the records
+  it would clear. `fleetwatch` counts them, dim rather than red.
+
+  **The rule for "is this still a hole" moved into `fleet.nudgelog`**, shared by
+  the tool that raises the alarm and the tool that clears it. The first version
+  restated it and its dry run offered to clear thirty ordinary retry lines where
+  the report flagged two.
+
+  The retry half is deliberately not built: a nudge has no recurring driver, so
+  "try again" has nowhere to live, and deciding whether nudges retry at all is a
+  judgment about what the delivery section is for.
+
 - **`fleetboard` shows this machine's pending software updates**, when an
   `[updates]` section points it at a file some other program derives them into.
   It reads and declares nothing, the same contract as its other sources. The path

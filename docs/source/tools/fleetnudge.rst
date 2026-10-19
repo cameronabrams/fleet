@@ -113,6 +113,43 @@ Call it by absolute path (``$HOME/bin/fleetnudge``). A unit's ``PATH`` holds onl
 system directories, so the tool puts ``~/.local/bin`` (where ``claude`` lives) in front
 of its own ``PATH``. ``tmux`` is expected in the system directories.
 
+Clearing a hole that is no longer one
+--------------------------------------
+
+::
+
+   fleetnudge SESSION JOB "how you know" --delivered [--go]
+
+A nudge that gave up stays in :doc:`fleetwatch`'s delivery section until it ages
+out of the window, even when the result reached its session by some other route —
+and it often does: the session reads the job's own output, or a peer tells it, or
+it writes the report on the episode itself. Until 2026-10-19 nothing could say so.
+:doc:`fleetmail` had both halves of this from 2026-10-15, a record that the
+content arrived another way and a retry on every fetch; nudges had neither,
+because a nudge has no recurring driver to retry from and had no verb for the
+recipient to answer with. This is the verb.
+
+It **appends, never edits**. The old record keeps saying the nudge failed,
+because it did; this is a new fact beside it, carrying who said so and why. That
+matters because it is weaker evidence than a delivery — nobody can check it — and
+stronger than the inference ``fleetwatch`` already refuses to draw from a later
+nudge about the same job. An ``informed`` record **suppresses** the hole where a
+later ordinary delivery only annotates it, and the difference is exactly that one
+is a statement about *this* result and the other is a guess.
+
+Because it silences an alarm, three things are deliberate:
+
+* **It refuses without a reason.** An unexplained assertion in the log is worse
+  than the alarm, since a later reader cannot weigh it.
+* **It refuses when there is nothing to clear**, rather than leaving a claim in
+  the log that would pre-authorise the next failure for that session and job.
+* **The dry run shows which records it would clear**, using the same rule
+  ``fleetwatch`` reports with (``fleet.nudgelog``) rather than its own. A tool
+  that offers to silence something has to show what, before it does it.
+
+``fleetwatch`` counts what was cleared this way — dim, not red — so the act stays
+visible for as long as the records it covers are in the window.
+
 Exit codes
 ----------
 

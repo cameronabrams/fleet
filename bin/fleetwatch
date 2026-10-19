@@ -36,6 +36,8 @@ import datetime, json, os, re, subprocess, sys, glob
 from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet.nudgelog import (DANGLING_AFTER, INFORMED_LEGACY,
+                            informed_times, lost_the_news, resolved_by_hand)
 from fleet import version_flag
 from fleet.procs import alive
 from fleet.panes import is_agent_pane
@@ -145,7 +147,6 @@ WATCHDIR = os.path.join(fc.state_dir(CFG), "watchers")
 NUDGELOG  = os.path.join(fc.state_dir(CFG), "nudges.log")
 MAILINDEX = os.path.join(fc.state_dir(CFG), "mail-delivered.json")
 NUDGE_DAYS = 7              # window for the delivery section; named in its output
-DANGLING_AFTER = 2 * 3600   # a retry loop still going is normal; this old, it was killed
 
 def registered():
     """AUTHORITATIVE: watchers that registered themselves, filtered by liveness.
@@ -337,40 +338,6 @@ def _reached_phone(rec):
     alarm that turns out to be nothing costs a look, the reverse costs the run."""
     return bool(re.match(r"push sent \(HTTP 2\d\d\)", str(rec.get("push", ""))))
 
-# A nudge that was not delivered is not automatically news that was LOST.
-# `fleetnudge` declines when it is running inside the session it would type into:
-# the in-session task doing the running already notifies it, so the content reaches
-# its reader by another route and nothing is missing.
-#
-# That is recorded structurally, as `notified_otherwise`, by the one program that
-# can know it. **Exit code cannot stand in for it.** The decline shares code 2 with
-# caller errors that ARE holes -- a line over the 200-character limit (2026-09-30),
-# a malformed job id (2026-10-04) -- so bucketing on the code would trade this
-# defect for its mirror image, and the mirror image is the dangerous one: a real
-# hole rendered as fine.
-#
-# LEGACY, and it is a parse of prose: records written before 2026-10-15 carry no
-# such field, only the sentence. The sentence is matched exactly and pinned by a
-# test against the string `fleetnudge` emits, so a reworded refusal fails loudly
-# here rather than silently becoming a hole again. `NUDGE_DAYS` is 7, so no record
-# in the window can predate the field after 2026-10-22 and this may then be
-# deleted along with its test.
-INFORMED_LEGACY = ("this is running inside the session itself; "
-                   "an in-session task already notifies it")
-
-
-def lost_the_news(r):
-    """Whether a `not delivered` record means nobody was told.
-
-    False only on positive evidence that the content arrived another way. An
-    absent field and an unrecognized reason both read as a hole, which is the
-    direction that keeps a real one visible.
-    """
-    if r.get("notified_otherwise") is not None:
-        return not r["notified_otherwise"]
-    return (r.get("reason") or "").strip() != INFORMED_LEGACY
-
-
 def nudge_holes(only=None, days=NUDGE_DAYS):
     """Lines that never reached a session, from <state>/nudges.log.
 
@@ -383,7 +350,8 @@ def nudge_holes(only=None, days=NUDGE_DAYS):
     first use. An unreadable or unparseable one is not, and is reported as itself,
     because "no rows" must never be something the check produced by failing.
     """
-    res = {"silent": [], "pushed": [], "dangling": [], "older": 0, "bad_lines": 0,
+    res = {"silent": [], "pushed": [], "dangling": [], "older": 0, "resolved": 0,
+           "bad_lines": 0,
            "unreadable": None, "days": days, "mail_stuck": 0, "mail_error": None,
            "log": NUDGELOG}
     if os.path.exists(MAILINDEX):
@@ -425,14 +393,21 @@ def nudge_holes(only=None, days=NUDGE_DAYS):
     for r in recs:
         last[(r.get("session"), str(r.get("job")))] = r
 
+    informed = informed_times(recs)
     for r in recs:
         if only and r.get("session") != only:
             continue
         t, out = _when(r), r.get("outcome")
         if t < cut:
-            res["older"] += int(out == "not delivered" and lost_the_news(r))
+            res["older"] += int(out == "not delivered" and lost_the_news(r)
+                                and not resolved_by_hand(r, informed))
             continue
-        if out == "not delivered" and lost_the_news(r):
+        if out == "not delivered" and lost_the_news(r) and resolved_by_hand(r, informed):
+            res["resolved"] += 1
+        elif out == "waiting" and resolved_by_hand(r, informed) and last.get(
+                (r.get("session"), str(r.get("job")))) is r:
+            res["resolved"] += 1
+        elif out == "not delivered" and lost_the_news(r):
             # A later nudge for the same session and job may have carried the news
             # anyway (seen 2026-09-17, 13:22 lost and 14:44 delivered). Annotate;
             # do NOT suppress -- a different message about the same job is not this
@@ -537,6 +512,13 @@ def print_delivery(h):
     if h["older"]:
         print("\n   (%d undelivered nudge(s) older than %d days, not shown)"
               % (h["older"], h["days"]))
+    # Dim and counted, not silent. Somebody asserting that a result arrived is
+    # weaker evidence than a delivery, so it leaves a mark a reader can audit in
+    # the log -- and it ages out of the window like everything else here rather
+    # than becoming a line that is always on the screen.
+    if h["resolved"]:
+        print("\n   (%d cleared by hand -- someone recorded that the result arrived"
+              " another way; see `informed` in %s)" % (h["resolved"], h["log"]))
     if h["mail_error"]:
         print("\n!! cannot read %s (%s) -- undelivered mail is not counted below."
               % (MAILINDEX, h["mail_error"]))

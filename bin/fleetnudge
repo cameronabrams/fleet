@@ -46,6 +46,7 @@ in the transcript).
 import argparse, contextlib, fcntl, glob, json, os, re, subprocess, sys, time, urllib.request
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import nudgelog
 from fleet import version_flag
 from fleet.agents import list_agents
 from fleet.panes import (is_agent_pane, CAPTURE, reconcile, screen_state,
@@ -275,6 +276,56 @@ def push(title, body):
 NO_PUSH_INFORMED = "not pushed: the session was notified by its own in-session task"
 
 
+# An outcome only a human or a session writes. `fleetnudge` itself never produces
+# it: it says the result reached its reader by a route this tool did not take.
+INFORMED_OUTCOME = "informed"
+
+
+def do_delivered(a, session, job, text):
+    """Record that a result reached its session by some route other than a nudge.
+
+    The gap this fills: `fleetmail` has had both halves since 2026-10-15 -- a
+    record that the content arrived another way, and a retry -- and nudges had
+    neither, so a nudge that gave up stayed an alarm until it aged out of the
+    window. The news had in fact arrived; nothing could say so.
+
+    **Appended, never edited.** The old record keeps saying the nudge failed,
+    because it did. This is a new fact beside it, carrying WHO said so and why,
+    so a reader can weigh it: it is weaker evidence than a delivery and stronger
+    than the inference `fleetwatch` already refuses to draw from a later nudge.
+    """
+    if not text:
+        print("\n  REFUSED: say how you know. --delivered writes an assertion "
+              "into the log\n  and silences an alarm; an unexplained one is worse "
+              "than the alarm.\n")
+        return 2
+    # The SAME rule the report uses, imported rather than restated. A tool that
+    # offers to clear a line must show the lines the report shows; a second
+    # implementation would drift and the dry run would then lie about what it is
+    # silencing. Restating it here listed thirty ordinary retry records as though
+    # each were a hole, when two were.
+    recs, _bad = nudgelog.read(LOG)
+    open_ = nudgelog.open_trouble(recs or [], session, job)
+    print(f"\n  record: {session} job {job} was told another way")
+    print(f"  how:    {text}")
+    if not open_:
+        print(f"\n  NOTHING TO CLEAR: no failed or stalled nudge for {session} "
+              f"job {job}.\n  Writing this anyway would assert something about "
+              f"nothing.\n")
+        return 3
+    for r in open_:
+        print("  clears: %s  %s -- %s" % (r.get("time"), r.get("outcome"),
+                                          str(r.get("reason"))[:60]))
+    if not a.go:
+        print("\n  plan only -- re-run with --go\n")
+        return 0
+    log(session=session, job=job, text=text, outcome=INFORMED_OUTCOME,
+        notified_otherwise=True, reason=text,
+        by=os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("USER") or "?")
+    print(f"\n  written to {LOG}\n")
+    return 0
+
+
 def give_up(code, session, job, text, reason, mail_from=None, informed=False):
     # ONE value, both channels. The phone push and the log field are the same claim
     # made to two audiences -- "nobody was told" -- so they are decided here, from
@@ -325,8 +376,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("session")
     ap.add_argument("job")
-    ap.add_argument("text")
+    ap.add_argument("text", nargs="?", default="")
     ap.add_argument("--go", action="store_true")
+    ap.add_argument("--delivered", action="store_true",
+                    help="do not nudge: record that this result reached SESSION by "
+                         "another route, clearing it from fleetwatch's holes. TEXT "
+                         "is how you know.")
     ap.add_argument("--wait", type=int, default=1800, help="seconds to keep retrying (default 1800)")
     ap.add_argument("--every", type=int, default=60, help="seconds between attempts (default 60)")
     ap.add_argument("--mail-from", metavar="FLEET/SESSION",
@@ -335,6 +390,8 @@ def main():
     a = ap.parse_args()
     session, job, text = a.session, a.job, a.text.strip()
     mail_from = a.mail_from
+    if a.delivered:
+        sys.exit(do_delivered(a, session, job, text))
     print(f"\n  nudge {session}: {tag(session, job, mail_from)} {text}")
 
     problems = static_problems(session, job, text, mail_from)

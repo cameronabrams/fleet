@@ -586,3 +586,95 @@ class NotDeliveredIsNotAlwaysLost(Base):
         self.assertEqual(code, 2, out)
         self.assertIn("REFUSED", out)
         self.assertEqual(self.pushes, [], "a plan sent a push")
+
+
+class RecordingThatTheNewsArrivedAnotherWay(Base):
+    """`--delivered` is the verb nudges never had.
+
+    A nudge that gave up stayed an alarm in `fleetwatch` until it aged out of the
+    seven-day window, even when the result had reached its session by another
+    route -- which it had: the session wrote the report on the episode the same
+    hour. `fleetmail` got both halves of this on 2026-10-15, a record that the
+    content arrived another way and a retry; nudges got neither.
+
+    It is a verb that SILENCES AN ALARM, so every guard here is about not letting
+    it do so quietly or by accident.
+    """
+    def deliver(self, *argv, go=False):
+        a = ["alpha", "123456", *argv, "--delivered"]
+        if go:
+            a.append("--go")
+        return self.run_main(*a)
+
+    def failed_nudge(self):
+        """A real code-4 give-up in the log, from the harness's own nudge path."""
+        self.lands = False
+        self.go()
+        self.lands = True
+        self.calls.clear()
+        self.pushes.clear()
+
+    def test_it_refuses_without_a_reason(self):
+        """An unexplained assertion in the log is worse than the alarm: a later
+        reader cannot weigh it, and weighing it is the only thing that makes
+        this weaker-than-a-delivery evidence usable at all."""
+        self.failed_nudge()
+        code, out = self.deliver("", go=True)
+        self.assertEqual(code, 2, out)
+        self.assertIn("say how you know", out)
+
+    def test_it_refuses_when_there_is_nothing_to_clear(self):
+        """Writing it anyway would assert something about nothing, and would sit
+        in the log pre-authorising the next failure for that session and job."""
+        code, out = self.deliver("I just think so", go=True)
+        self.assertEqual(code, 3, out)
+        self.assertIn("NOTHING TO CLEAR", out)
+
+    def test_the_plan_shows_what_it_would_clear_and_writes_nothing(self):
+        """A verb that silences an alarm has to show what it silences BEFORE it
+        does it -- otherwise the safe-looking way to use it is to run it and
+        see."""
+        self.failed_nudge()
+        before = len(self.log())
+        code, out = self.deliver("it told me directly")
+        self.assertEqual(code, 0, out)
+        self.assertIn("clears:", out)
+        self.assertIn("plan only", out)
+        self.assertEqual(len(self.log()), before, "a dry run wrote to the log")
+
+    def test_go_appends_an_informed_record_and_edits_nothing(self):
+        """Appended, never edited. The old record keeps saying the nudge failed,
+        because it did; this is a new fact beside it."""
+        self.failed_nudge()
+        before = self.log()
+        code, out = self.deliver("it told me directly", go=True)
+        self.assertEqual(code, 0, out)
+        after = self.log()
+        self.assertEqual(after[:len(before)], before, "an existing record changed")
+        self.assertEqual(after[-1]["outcome"], "informed")
+        self.assertIs(after[-1]["notified_otherwise"], True)
+        self.assertEqual(after[-1]["reason"], "it told me directly")
+
+    def test_the_record_says_who_asserted_it(self):
+        """Weaker evidence than a delivery, so it has to be attributable."""
+        self.failed_nudge()
+        self.deliver("it told me directly", go=True)
+        self.assertTrue(self.log()[-1].get("by"), "no author on the assertion")
+
+    def test_it_sends_no_keys_and_no_push(self):
+        """It is a record, not a delivery. Typing anything here would be the tool
+        doing the thing it is being told is unnecessary."""
+        self.failed_nudge()
+        self.deliver("it told me directly", go=True)
+        self.assertEqual([c for c in self.calls if "send-keys" in c], [],
+                         "a record wrote keys into a pane")
+        self.assertEqual(self.pushes, [])
+
+    def test_the_hole_is_gone_afterwards(self):
+        """End to end, through the rule the report uses."""
+        from fleet import nudgelog
+        self.failed_nudge()
+        recs = self.log()
+        self.assertTrue(nudgelog.open_trouble(recs, "alpha", "123456"))
+        self.deliver("it told me directly", go=True)
+        self.assertEqual(nudgelog.open_trouble(self.log(), "alpha", "123456"), [])

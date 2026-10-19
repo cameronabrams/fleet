@@ -257,11 +257,20 @@ Three mechanisms produce it.
   the same end state as a check that fails toward reassurance, reached from the
   other side, which is why it belongs in this file.
 
-  Whenever it is worth fixing, the shape is known: a `fleetnudge --delivered
-  SESSION JOB` that writes `notified_otherwise` on the matching record, usable by
-  the session that got the news; and either a driver that retries, or an explicit
-  decision that nudges do not retry and the window is the only clearing mechanism.
-  Deciding the second is the real work; the first is an afternoon.
+  **Built on 2026-10-19**, the same day it was written down, because the owner's
+  answer to "they expire on their own" was *"I don't like looking at them and I
+  don't like not resolving them"* -- which is the whole argument above, from the
+  person the alarm is for. `fleetnudge --delivered SESSION JOB "how you know"`
+  appends an assertion that the result arrived another way; `fleetwatch` honours
+  it and counts it. The retry half is still undecided and is the harder question:
+  a nudge has no recurring driver, so "try again" has nowhere to live.
+
+  One thing the building taught, which is the reason this entry is longer than the
+  fix: the first version restated the hole-or-not rule inside the clearing tool,
+  and its dry run offered to clear **thirty** ordinary retry lines where the report
+  flagged two. A tool that silences an alarm and a tool that raises it cannot hold
+  separate copies of what the alarm means. The rule now lives in `fleet.nudgelog`
+  and both import it.
 
 ## The rule that covers them all
 
