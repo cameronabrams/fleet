@@ -184,10 +184,15 @@ the feature on the day it arrived.
 ``reboot_needed`` is flagged in the **header**, beside the clock, rather than in
 the footer with the aged sources. It is the one fact here that is true *now* and
 is about the fleet rather than about a package list: a reboot ends every session
-on the machine. It is raised only from a source the board could actually read —
-a failed or unknown check may still carry the fields of its last good run, and
-a flag raised from a document just declared unreliable would be the board
-vouching for something it cannot read.
+on the machine.
+
+It is raised **even when the check itself failed**. The producer derives it
+independently of the package preview — from the running kernel and ``zypper
+needs-rebooting``, outside the branch that can fail — precisely so that it
+survives one. Withholding it on ``ok: false`` would hide a true, current,
+fleet-ending fact at exactly the moment the other half of the check broke. Only
+an *unknown* source withholds it, because there the document could not be
+interpreted at all.
 
 Absence is rendered ``?``, never as a pass
 ------------------------------------------

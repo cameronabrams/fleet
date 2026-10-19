@@ -332,7 +332,19 @@ def draw(full=False, auto=False):
     # A reboot ends every session on this machine, so it is the one fact here that
     # belongs beside the clock rather than in the footer with the aged sources: it
     # is true NOW, and it is about the fleet rather than about a package list.
-    if u_state in ("ok", "stale") and u_data.get("reboot_needed"):
+    #
+    # Raised even when the CHECK failed, which is the opposite of what this first
+    # did. The reasoning for suppressing it -- "a failed check may still carry the
+    # fields of its last good run" -- was about stale data and this field is not
+    # that: the producer derives it independently of the package preview, outside
+    # the branch that can fail, precisely so it survives one. Suppressing it would
+    # hide a true, current, fleet-ending fact exactly when the other half of the
+    # check broke. Found by reading the producer instead of my own fixture.
+    #
+    # Only an UNKNOWN source withholds it, because there the document could not be
+    # interpreted at all -- a schema this board has not been taught may mean
+    # something else by the same word.
+    if u_state in ("ok", "stale", "failed") and u_data.get("reboot_needed"):
         head += f"   {C['red']}REBOOT NEEDED{C['r']}"
     print(head)
     if a is None:

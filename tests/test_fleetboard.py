@@ -670,23 +670,47 @@ class PendingUpdatesAreASourceLikeAnyOther(unittest.TestCase):
         out = self.draw(self.fresh(total=5, reboot_needed=False))
         self.assertNotIn("REBOOT NEEDED", out)
 
-    def test_a_failed_check_does_not_claim_a_reboot_from_stale_fields(self):
-        """`reboot_needed` is carried in the fixture ON PURPOSE. A failed check
-        may still hold the fields of its last successful run, and a header flag
-        raised from a document the board has just declared unreliable would be
-        the board vouching for something it cannot read. A version of this with
-        no `reboot_needed` in the fixture proved nothing: the flag was absent
-        either way."""
-        out = self.draw({"schema": 1, "ok": False, "error": "repo unreachable",
-                         "reboot_needed": True})
-        self.assertNotIn("REBOOT NEEDED", out)
-        self.assertIn("THE CHECK FAILED", out)
+    def test_a_failed_check_still_reports_a_reboot(self):
+        """The opposite of what this board first did, and the fix came from
+        reading the producer rather than trusting the fixture.
 
-    def test_an_unknown_source_does_not_claim_a_reboot_either(self):
-        out = self.draw({"schema": 9, "ok": True, "reboot_needed": True,
-                         "checked_epoch": time.time()})
+        `reboot_needed` is derived OUTSIDE the branch that can fail -- the
+        producer computes it from the running kernel and `zypper
+        needs-rebooting`, deliberately so that it survives a failed package
+        preview. Suppressing it on `ok: false` hid a true, current,
+        fleet-ending fact at exactly the moment the other half of the check
+        broke. The earlier reasoning -- "a failed check may carry fields from
+        its last good run" -- is sound about STALE data and wrong about this
+        field, which is fresh every run.
+        """
+        out = self.draw({"schema": 1, "ok": False, "error": "repo unreachable",
+                         "reboot_needed": True,
+                         "reboot_reasons": ["core libraries updated"]})
+        self.assertIn("REBOOT NEEDED", out)
+        self.assertIn("THE CHECK FAILED", out,
+                      "the failure must still be reported beside it")
+
+    def test_a_failed_check_with_no_reboot_does_not_invent_one(self):
+        out = self.draw({"schema": 1, "ok": False, "error": "repo unreachable",
+                         "reboot_needed": False})
         self.assertNotIn("REBOOT NEEDED", out)
+
+    def test_an_unknown_source_withholds_the_reboot_flag(self):
+        """The one state that does, and the fixture has to be the one where the
+        fields SURVIVE to the renderer.
+
+        An unknown `schema` is rejected before the document is kept, so its
+        `reboot_needed` never reaches the header and a test using it passes
+        whatever the guard says. The undatable document is the discriminating
+        case: well-formed, schema 1, every field present, and no timestamp -- so
+        the board holds the whole document at arm's length rather than picking
+        the one field it likes out of a source it has just called unknown.
+        """
+        d = {"schema": 1, "ok": True, "total": 3, "reboot_needed": True}
+        self.assertNotIn("checked_epoch", d)
+        out = self.draw(d)
         self.assertIn("UNKNOWN", out)
+        self.assertNotIn("REBOOT NEEDED", out)
 
     def test_the_count_and_the_age_are_both_shown(self):
         out = self.draw(self.fresh(total=214, kernel_update=["kernel-default-7.2"],

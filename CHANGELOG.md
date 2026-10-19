@@ -68,8 +68,10 @@ entries and makes you confirm the bump against this list.
 
   `reboot_needed` is flagged in the header beside the clock: it is the one fact
   here that is true *now* and about the fleet rather than a package list, since a
-  reboot ends every session. It is raised only from a source that could be read,
-  because a failed check may still carry the fields of its last good run.
+  reboot ends every session. It is raised **even when the check failed** — the
+  producer derives it outside the branch that can fail, so that it survives one,
+  and withholding it would hide a fleet-ending fact at exactly the moment the
+  other half of the check broke. Only an unknown source withholds it.
 
 - **`fleetspawn --go` logs the adoption, because every launch is one.** There is no
   version argument and none is wanted, so a spawn — and an **unpark** — puts a
