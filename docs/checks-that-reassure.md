@@ -327,6 +327,24 @@ Three mechanisms produce it.
   Nothing was committed — the damage was found by reading the result rather than by
   the check. That is the part worth not repeating.
 
+- **Thirty-one tests green in both places they were run, red where it counted.**
+  The suite was run two ways -- in place, and with `HOME` pointed at an empty
+  directory to keep it off the real configuration. The second is also how CI runs,
+  and an empty `HOME` means an empty `~/.local/share/claude/versions`: so every
+  test of the version pinning took the no-version-store fallback, expected bare
+  `claude`, and passed. On a machine that actually has a version store, thirty-one
+  of them fail.
+
+  Nothing caught it until `scripts/release.sh` ran the suite **in the working
+  tree** and refused to release (2026-10-20). CI could never have caught it: CI
+  has no claude installed, so CI is permanently in the branch that passes.
+
+  **An isolation measure is also a blindfold.** Emptying `HOME` is right for
+  keeping tests off a real configuration and wrong as the only way the suite is
+  ever run, because it empties everything else that lives there too. Run it both
+  ways; and a test about which binary gets launched must SAY which it expects
+  rather than inheriting whatever the host happens to have.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and

@@ -30,10 +30,19 @@
   TRACKED files -- so a brand-new test file is missing from the copy and the
   suite fails to import it. Both mistakes copy everything except the thing being
   proved.
-- Run the suite once with no configuration before pushing a test change --
-  `env -u FLEET_CONFIG HOME=<empty dir> python3 -m unittest discover -s tests -t .`
-  A test that reads the real `~/.config/fleet` passes on a machine that has one
-  and nowhere else, which is the environment the rule exists for.
+- Run the suite BOTH ways before pushing a test change, because each way hides
+  what the other catches:
+
+      python3 -m unittest discover -s tests -t .                      # in place
+      env -u FLEET_CONFIG HOME=<empty dir> python3 -m unittest discover -s tests -t .
+
+  With the real `HOME`, a test that reads `~/.config/fleet` passes here and
+  nowhere else. With an empty one, `~/.local/share/claude/versions` is empty too
+  -- so every test of the version pinning fell back to bare `claude` and passed,
+  **and so did CI, which has no claude installed at all.** Thirty-one tests were
+  green in both places and red in the only one that runs the suite in place:
+  `scripts/release.sh`, which refused the release. A test must say which binary
+  it expects rather than inheriting the host's.
 - Read-only by default; anything that changes tmux or launches sessions previews
   unless `--go`. Never answer the folder-trust prompt, in code or by hand.
 - **Try a tool that creates panes or launches sessions on a throwaway tmux

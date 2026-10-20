@@ -30,8 +30,21 @@ class Plan(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmux); self.cfg.close()
 
-    def run_tool(self, *args):
-        env = dict(os.environ, TMUX_TMPDIR=self.tmux); env.pop("TMUX", None)
+    def run_tool(self, *args, claude_home=None):
+        """Runs the real tool, so HOME decides which binary it pins.
+
+        `claude_home` defaults to an empty directory: no version store, so bare
+        `claude`, which is the fallback the launch assertions here are written
+        against. **This used to inherit the real HOME**, so on a machine with a
+        version store every one of those assertions failed, while on CI -- which
+        has no claude installed -- they passed. The suite was green in both
+        places it was run and red in the one that mattered:
+        `scripts/release.sh`, which runs it in the working tree.
+        """
+        env = dict(os.environ, TMUX_TMPDIR=self.tmux)
+        env.pop("TMUX", None)
+        env["HOME"] = claude_home or os.path.join(self.tmux, "nohome")
+        os.makedirs(env["HOME"], exist_ok=True)
         return subprocess.run([TOOL, *args], capture_output=True, text=True, env=env)
 
     def manifest(self):
@@ -174,8 +187,21 @@ class RetiredAllFlag(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmux); self.cfg.close()
 
-    def run_tool(self, *args):
-        env = dict(os.environ, TMUX_TMPDIR=self.tmux); env.pop("TMUX", None)
+    def run_tool(self, *args, claude_home=None):
+        """Runs the real tool, so HOME decides which binary it pins.
+
+        `claude_home` defaults to an empty directory: no version store, so bare
+        `claude`, which is the fallback the launch assertions here are written
+        against. **This used to inherit the real HOME**, so on a machine with a
+        version store every one of those assertions failed, while on CI -- which
+        has no claude installed -- they passed. The suite was green in both
+        places it was run and red in the one that mattered:
+        `scripts/release.sh`, which runs it in the working tree.
+        """
+        env = dict(os.environ, TMUX_TMPDIR=self.tmux)
+        env.pop("TMUX", None)
+        env["HOME"] = claude_home or os.path.join(self.tmux, "nohome")
+        os.makedirs(env["HOME"], exist_ok=True)
         return subprocess.run([TOOL, *args], capture_output=True, text=True, env=env)
 
     def test_all_names_its_replacement(self):

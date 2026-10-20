@@ -184,7 +184,7 @@ class TheVersionColumn(unittest.TestCase):
         with mock.patch.object(self.b, "panes", lambda: panes), \
              mock.patch.object(self.b, "agents", lambda: agents), \
              mock.patch.object(self.b, "load_cache", lambda: None), \
-             mock.patch.object(self.b.versions, "installed", lambda *a: installed), \
+             mock.patch.object(self.b.versions, "installed", lambda *a, **k: installed), \
              mock.patch.object(self.b.versions, "target",
                                lambda *a, **k: (target, "/v/%s" % target)), \
              mock.patch.object(self.b.versions, "of_pid", lambda pid: per_pid.get(pid)):
@@ -303,7 +303,7 @@ class CwdAndParked(unittest.TestCase):
              mock.patch.object(self.b, "load_cache", lambda: None), \
              mock.patch.object(self.b.shutil, "get_terminal_size",
                                lambda d=None: os.terminal_size((cols, 24))), \
-             mock.patch.object(self.b.versions, "installed", lambda *a: "2.1.0"), \
+             mock.patch.object(self.b.versions, "installed", lambda *a, **k: "2.1.0"), \
              mock.patch.object(self.b.versions, "of_pid", lambda pid: "2.1.0"):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
@@ -430,7 +430,7 @@ class TheConfigurationIsReReadEachDraw(unittest.TestCase):
         with mock.patch.object(self.b, "panes", lambda: panes), \
              mock.patch.object(self.b, "agents", lambda: agents), \
              mock.patch.object(self.b, "load_cache", lambda: None), \
-             mock.patch.object(self.b.versions, "installed", lambda *a: "2.1.0"), \
+             mock.patch.object(self.b.versions, "installed", lambda *a, **k: "2.1.0"), \
              mock.patch.object(self.b.versions, "of_pid", lambda pid: "2.1.0"):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
@@ -508,7 +508,7 @@ class TheStampCarriesTheDate(unittest.TestCase):
         with mock.patch.object(self.b, "panes", lambda: {}), \
              mock.patch.object(self.b, "agents", lambda: {}), \
              mock.patch.object(self.b, "load_cache", lambda: None), \
-             mock.patch.object(self.b.versions, "installed", lambda *a: "2.1.0"):
+             mock.patch.object(self.b.versions, "installed", lambda *a, **k: "2.1.0"):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 self.b.draw()

@@ -228,7 +228,26 @@ class Resume(unittest.TestCase):
 
     def test_resume_launch_has_no_first_prompt(self):
         a = SimpleNamespace(name="alpha", resume=UP)
-        self.assertEqual(self.spawn.launch_cmd(a, "brief.md"), f"claude --name alpha --resume {UP}")
+        # Says which binary it expects. Without the patch this reads the HOST's
+        # version store, so it passed on CI -- which has no claude installed --
+        # and failed on any machine that has one.
+        with mock.patch.object(self.spawn.versions, "target",
+                               lambda *a, **k: (None, None)):
+            self.assertEqual(self.spawn.launch_cmd(a, "brief.md"),
+                             f"claude --name alpha --resume {UP}")
+
+    def test_a_resume_launch_pins_the_target_when_there_is_one(self):
+        """The other half, which no test asserted: with a soaked release the
+        resume launch names it. Both directions, because the fallback passing is
+        what hid the pin for a day."""
+        a = SimpleNamespace(name="alpha", resume=UP)
+        with mock.patch.object(self.spawn.versions, "target",
+                               lambda *a, **k: ("2.1.303", "/v/2.1.303")), \
+             mock.patch.object(self.spawn.os.path, "exists", lambda p: True):
+            cmd = self.spawn.launch_cmd(a, "brief.md")
+        self.assertIn("/v/2.1.303", cmd)
+        self.assertNotIn("claude --name", cmd)
+        self.assertIn("--resume %s" % UP, cmd)
 
     def test_resume_mode_prompt_is_the_humans(self):
         self.assertEqual(self.spawn.screen_state(
