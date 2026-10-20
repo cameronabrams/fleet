@@ -52,6 +52,13 @@ entries and makes you confirm the bump against this list.
   form on 2026-10-16 and the restore's end-to-end test caught it — its fake `claude`
   recorded a `--version` call that displaced a real launch.
 
+- **`fleetspawn --socket`**, so a tool that creates panes and launches sessions can
+  be tried somewhere other than the live fleet. `fleetrestore` has had it since it
+  grew an end-to-end test; `fleetspawn` had not, so exercising `--go` by hand on
+  2026-10-20 put two real sessions into the fleet, which every other tool then
+  counted as members. `$TMUX` is no longer inherited either: a run from inside a
+  pane could otherwise build on that pane's server.
+
 - **`fleetinit`: create a configuration, so a fresh machine has something to run
   against.** `install` exits 2 without a `fleet.toml`, so this was the step that
   blocked every other step — built first for that reason rather than because it was

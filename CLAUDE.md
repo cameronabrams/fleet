@@ -36,6 +36,15 @@
   and nowhere else, which is the environment the rule exists for.
 - Read-only by default; anything that changes tmux or launches sessions previews
   unless `--go`. Never answer the folder-trust prompt, in code or by hand.
+- **Try a tool that creates panes or launches sessions on a throwaway tmux
+  server, never the live one.** `fleetspawn` and `fleetrestore` take `--socket`,
+  and with `TMUX_TMPDIR` pointed at a scratch directory the whole run is isolated
+  -- which is how `tests/test_fleetrestore_e2e.py` builds a real fleet safely.
+  Exercising `fleetspawn --go` by hand against the default server on 2026-10-20
+  left two real sessions in the fleet, which every other tool then counted as
+  members: `fleetsnap` demanded a brief and a colour for them and the auto-roll
+  would have offered to roll one. `--go` previewing is not protection when the
+  thing you are testing is what `--go` does.
 - Nothing personal in this repo: no people, hosts, accounts or project sessions.
   Those belong in configuration (`~/.config/fleet`), never here. **This repository
   is public**, and it applies to tracked prose as much as to code -- a CHANGELOG

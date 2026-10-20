@@ -289,6 +289,23 @@ Three mechanisms produce it.
   it guards or merely reports, and "verify afterwards" reads exactly like
   "verify" right up until something is invoked in the window.
 
+- **Testing the tool that changes things, by changing things.** Exercising
+  `fleetspawn --go` by hand on 2026-10-20 spawned two real sessions onto the
+  default tmux server. Every other tool then counted them as fleet members --
+  `fleetsnap` asked for a brief and a colour for each, and the auto-roll would
+  have offered to roll one, since nothing it reads says whose fleet a session
+  belongs to.
+
+  The tool had no way to be tried anywhere else: `fleetrestore` grew `--socket`
+  when it got an end-to-end test, and `fleetspawn` never did. So the careless
+  option was the only option, and `--go` previewing is no protection when the
+  behaviour under test *is* what `--go` does.
+
+  **A tool that changes the live system needs somewhere other than the live
+  system to be tried.** Giving `fleetspawn` the same `--socket` was the actual
+  fix; the discipline on its own would have held exactly as long as attention
+  did.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and

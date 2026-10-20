@@ -89,8 +89,23 @@ def running_agents():
         items = items.get("agents", [])
     return {a["name"]: a.get("cwd") for a in items if a.get("name")}
 
+# Which tmux server this tool builds on. `fleetrestore` has had this since it
+# grew an end-to-end test; `fleetspawn` had not, which is why exercising it by
+# hand meant spawning real sessions onto the live fleet -- two of them, on
+# 2026-10-20, which then appeared to every other tool as members of a fleet they
+# do not belong to. A tool that creates panes and launches sessions needs
+# somewhere other than the fleet to be tried out.
+SOCKET = None
+
+
 def tmux(*a):
-    r = subprocess.run(["tmux", *a], capture_output=True, text=True)
+    argv = ["tmux"] + (["-L", SOCKET] if SOCKET else []) + list(a)
+    # `$TMUX` is set inside any pane, so a run from a pane on ANOTHER server would
+    # silently build there. Clearing it makes tmux use the socket a plain shell
+    # would, which is where the fleet lives; TMUX_TMPDIR still selects a directory.
+    env = dict(os.environ)
+    env.pop("TMUX", None)
+    r = subprocess.run(argv, capture_output=True, text=True, env=env)
     return r.returncode, r.stdout.strip(), r.stderr.strip()
 
 def preflight(a, brief):
@@ -412,10 +427,16 @@ def main():
                     help="seconds to wait for the new session to go idle before typing /color")
     ap.add_argument("--no-color", action="store_true",
                     help="do not type /color; print the line to type by hand instead")
+    ap.add_argument("--socket", metavar="NAME",
+                    help="build on the tmux server at this socket (tmux -L NAME) "
+                         "instead of the default one -- the way to try this tool "
+                         "out without spawning into the live fleet")
     ap.add_argument("--go", action="store_true")
     ap.add_argument("--check", action="store_true", help="verify only; change nothing")
     ap.add_argument("--resume", metavar="UUID", help="resume a parked session's transcript")
     a = ap.parse_args()
+    global SOCKET
+    SOCKET = a.socket
     a.dir = os.path.realpath(os.path.expanduser(a.dir))
     if a.check:
         sys.exit(check(a))

@@ -13,6 +13,14 @@ Usage
    fleetspawn --check NAME DIR
    fleetspawn NAME DIR --beside PANE --resume UUID [--go]
 
+``--socket NAME`` builds on the tmux server at that socket instead of the default
+one, and ``$TMUX`` is never inherited so a run from inside a pane cannot silently
+build on that pane's server. With ``TMUX_TMPDIR`` pointed at a scratch directory
+the whole run is isolated — **which is how to try this tool out without spawning
+into the live fleet.** Without it, exercising ``--go`` by hand put two real
+sessions into a fleet they did not belong to, where every other tool counted them
+as members.
+
 Scaffolding, so the refusals become offers
 ------------------------------------------
 

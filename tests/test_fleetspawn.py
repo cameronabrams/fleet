@@ -620,3 +620,66 @@ class ScaffoldingTheStepsBeforeASpawn(unittest.TestCase):
         self.assertNotIn("fc.colors(CFG)", body,
                          "a color is read from the import-time configuration")
         self.assertIn("fc.colors(fc.load())", body)
+
+
+class SomewhereOtherThanTheFleetToTryItOut(unittest.TestCase):
+    """`fleetspawn` creates panes and launches sessions, and had no way to do
+    that anywhere but the live fleet.
+
+    `fleetrestore` has had `--socket` since it grew an end-to-end test, for
+    exactly this reason. `fleetspawn` had not -- so exercising it by hand on
+    2026-10-20 spawned two real sessions onto the default tmux server, where every
+    other tool then counted them as members of a fleet they do not belong to:
+    `fleetsnap` demanded a brief and a color for them, and the auto-roll would have
+    offered to roll one.
+
+    **A tool that changes the live system needs somewhere else to be tried.** The
+    absence of that is what turned a careless test into a fleet with two strangers
+    in it.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.spawn = load_tool("fleetspawn")
+        self.addCleanup(self.cfg.close)
+
+    def test_the_socket_reaches_every_tmux_call(self):
+        """One place builds the argv, so a tool cannot talk to two servers in one
+        run -- which would create the pane on one and label it on the other."""
+        calls = []
+        with mock.patch.object(self.spawn.subprocess, "run",
+                               side_effect=lambda argv, **k: calls.append(argv) or
+                               mock.Mock(returncode=0, stdout="", stderr="")):
+            self.spawn.SOCKET = "probe-server"
+            try:
+                self.spawn.tmux("has-session")
+                self.spawn.tmux("list-panes", "-a")
+            finally:
+                self.spawn.SOCKET = None
+        self.assertTrue(calls)
+        for argv in calls:
+            self.assertEqual(argv[:3], ["tmux", "-L", "probe-server"], argv)
+
+    def test_no_socket_means_the_default_server(self):
+        calls = []
+        with mock.patch.object(self.spawn.subprocess, "run",
+                               side_effect=lambda argv, **k: calls.append(argv) or
+                               mock.Mock(returncode=0, stdout="", stderr="")):
+            self.spawn.SOCKET = None
+            self.spawn.tmux("has-session")
+        self.assertEqual(calls[0], ["tmux", "has-session"])
+
+    def test_the_callers_server_is_never_inherited(self):
+        """`$TMUX` is set inside any pane, so a run from a pane on another server
+        would silently build there -- the same fault `fleetrestore` names."""
+        seen = {}
+        with mock.patch.object(self.spawn.subprocess, "run",
+                               side_effect=lambda argv, **k: seen.update(k) or
+                               mock.Mock(returncode=0, stdout="", stderr="")):
+            self.spawn.tmux("has-session")
+        self.assertNotIn("TMUX", seen.get("env", {}))
+
+    def test_the_flag_is_wired_before_anything_is_built(self):
+        import inspect
+        main = inspect.getsource(self.spawn.main)
+        self.assertIn("SOCKET = a.socket", main)
+        self.assertLess(main.index("SOCKET = a.socket"), main.index("preflight("))
