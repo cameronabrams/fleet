@@ -44,12 +44,14 @@ from fleet import config as fc
 from fleet import version_flag
 from fleet.agents import by_session_prefix, list_agents
 from fleet.procs import alive, ancestors, children, claude_procs, ppid, starttime
-from fleet.panes import (CAPTURE, is_agent_pane, input_line, reconcile, screen_state,
+from fleet.panes import (CAPTURE, fleet_label, is_agent_pane, ours_agent_pane,
+                         input_line, reconcile, screen_state,
                          strip_escapes,
                          state_problem, type_line)
 from fleet.transcripts import agent_color, compactions, context_stats, session_name
 
 CFG = fc.load()
+OURS = fc.fleet_name(CFG)   # which fleet this one is; "" before fleetinit has run
 CTX = fc.context(CFG)
 STATE = fc.state_dir(CFG)
 # The session running a tool exports its own id to child processes.
@@ -74,17 +76,22 @@ def panes():
     windows too. This tool compacts sessions, so acting on one of those would be
     acting on somebody's unrelated work. Membership is the `@agent` label
     fleetspawn stamps; see fleet.panes.is_agent_pane."""
-    fmt = "\t".join(["#{pane_id}", "#{pane_pid}", "#{@agent}", "#{session_name}"])
+    fmt = "\t".join(["#{pane_id}", "#{pane_pid}", "#{@agent}", "#{session_name}", "#{@fleet}"])
     rc, out, _ = tmux("list-panes", "-a", "-F", fmt)
     found, outside = {}, []
     for row in out.splitlines() if rc == 0 else []:
         p = row.split("\t")
-        if len(p) != 4 or not p[1].isdigit():
+        if len(p) != 5 or not p[1].isdigit():
             continue
-        if is_agent_pane(p[2]):
+        if ours_agent_pane(p[2], p[4], OURS):
             found[int(p[1])] = p[0]
         else:
-            outside.append({"pane": p[0], "pane_pid": int(p[1]), "tmux_session": p[3]})
+            # Both labels. This tool COMPACTS a session and resets its color, so a
+            # pane it maps by mistake is a pane another fleet's owner finds
+            # compacted without having asked.
+            outside.append({"pane": p[0], "pane_pid": int(p[1]), "tmux_session": p[3],
+                            "why": "no @agent" if not is_agent_pane(p[2])
+                                   else "@fleet=%s" % (fleet_label(p[4]) or "(unlabeled)")})
     return found, outside
 
 def screen(pane):

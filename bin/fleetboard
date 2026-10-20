@@ -82,9 +82,14 @@ def run_json(cmd, timeout=120):
     except ValueError:
         return None
 
-# Filled by `panes()` each draw: sessions this fleet is NOT responsible for, and
-# ones whose membership is being assumed rather than read.
-foreign, unlabeled = [], []
+# Filled by `panes()` each draw: sessions this fleet is NOT responsible for.
+#
+# There was a second list beside it, `unlabeled`, for panes whose membership was
+# being ASSUMED rather than read -- `belongs` counted an unstamped pane as ours
+# and this board put that assumption on the screen. Membership went strict on
+# 2026-10-20, so an unstamped pane is now simply not ours and lands in `foreign`
+# with an empty name; there is no assumption left to display.
+foreign = []
 
 
 def panes():
@@ -92,7 +97,7 @@ def panes():
                "\t".join(["#{window_index}","#{window_name}","#{pane_id}", LABELS,
                           "#{?window_silence_flag,quiet,active}","#{?window_active,cur,}"])], 5)
     rows = {}
-    del foreign[:], unlabeled[:]
+    del foreign[:]
     if out is None:
         return None
     # Re-read each draw, like the parked list and for the same reason: `--watch`
@@ -111,15 +116,15 @@ def panes():
         # it caught it on the day it arrived.
         if len(f) < 7 or not is_agent_pane(f[3]):
             continue
-        # Another fleet's pane is not this fleet's business. `belongs` includes
-        # the unlabeled, because zero panes carried `@fleet` when this landed and
-        # excluding them would have emptied the board at once -- but unlabeled is
-        # COUNTED, so the assumption is on the screen rather than inside it.
+        # Another fleet's pane is not this fleet's business, and since the flip
+        # an UNSTAMPED pane is not this fleet's business either: a pane no tool
+        # has labeled is a pane no tool is known to own. Both land here, and the
+        # label is rendered so the two can be told apart on the screen -- the
+        # fixes differ, since an unstamped pane may be one of ours labeled by a
+        # tool too old to say so.
         if not belongs(f[4], ours):
             foreign.append((agent_label(f[3]), fleet_label(f[4])))
             continue
-        if ours and not fleet_label(f[4]):
-            unlabeled.append(agent_label(f[3]))
         rows[agent_label(f[3])] = {"win":f[0], "winname":f[1], "pane":f[2],
                                    "fleet":f[4],
                                    "quiet":f[5] == "quiet", "current":f[6] == "cur"}
@@ -436,12 +441,15 @@ def draw(full=False, auto=False):
               f"configuration{C['r']}")
     if foreign:
         print(f"\n  {C['dim']}not this fleet ({len(foreign)}): "
-              + ", ".join("%s@%s" % (n, f) for n, f in sorted(foreign))
+              + ", ".join("%s@%s" % (n, f or "(no @fleet)") for n, f in sorted(foreign))
               + f"{C['r']}")
-    if unlabeled:
-        print(f"\n  {C['dim']}{len(unlabeled)} pane(s) carry no @fleet and are "
-              f"assumed ours: {', '.join(sorted(unlabeled))}{C['r']}")
-    elif pk:
+    # `if`, not the `elif` this was. The parked ROWS live in this block, so while
+    # the branch above it was live, a single unstamped pane would have taken the
+    # entire parked section off the board -- heading and all -- for a reason that
+    # had nothing to do with parking. Never reached in practice, and wrong in the
+    # way this board is least allowed to be wrong: a kind of thing vanishing in
+    # silence because of an unrelated dim line.
+    if pk:
         # A rule, not a blank line: the rows below are a different KIND of thing
         # -- declared, not observed -- and the two must not read as one list that
         # happens to have quiet entries at the bottom.

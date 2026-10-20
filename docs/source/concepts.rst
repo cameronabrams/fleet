@@ -93,14 +93,29 @@ path is a pointer to be checked, not a quotation. That is also why mail from
 another fleet arrives as a file plus one line rather than as the message itself
 (:doc:`tools/fleetmail`).
 
-**What counts as the fleet** is the tmux pane option ``@agent``, the session's
-name, which :doc:`tools/fleetspawn` stamps on every pane it creates.
+**What counts as the fleet** is *two* tmux pane options, read together:
+``@agent``, the session's name, and ``@fleet``, the name of the fleet it belongs
+to. :doc:`tools/fleetspawn` stamps both on every pane it creates, and
+:doc:`tools/fleetrestore` stamps both on every pane it rebuilds.
 ``tmux list-panes -a`` crosses tmux *sessions* and returns every pane on the
-server, so a tool that does not check the label will happily include a window
-that has nothing to do with the fleet — and then act on it. Tools report the panes
-they exclude rather than dropping them silently: a fleet pane that lost its label
-must not disappear from a roll without a word. Relabel one with
-``tmux set -p -t <pane> @agent <name>``.
+server — and it crosses *fleets* too, because two fleets can share a machine and a
+tmux server. A tool that checks neither label will include a window that has
+nothing to do with the fleet; a tool that checks only ``@agent`` will include
+another fleet's sessions, and then act on them.
+
+Both questions, never either. ``fleet.panes.ours_agent_pane`` is the one place
+that asks them together, and it exists because the fleet answer was wired into
+``fleetboard`` — which draws a screen — and nowhere else for most of a day, while
+every tool that restarts, retires or types into a session still asked only about
+``@agent``. A correct rule reachable from the one place where being wrong costs
+nothing reads like the gap is closed.
+
+Tools report the panes they exclude rather than dropping them silently, and say
+*which* label was missing, because the fixes differ: a pane with no ``@agent`` is
+not a session, while a pane with no ``@fleet`` may well be one of ours stamped by
+a tool too old to say so. A fleet pane that lost a label must not disappear from a
+roll without a word. Relabel one with ``tmux set -p -t <pane> @agent <name>`` and
+``tmux set -p -t <pane> @fleet <fleet>``.
 
 Until 2026-10-01 membership was a *pair*: ``@repo``, the name, and ``@fleet``, a
 group. Both are gone. ``@repo`` named a session after a repository, which is wrong

@@ -60,29 +60,46 @@ def fleet_label(fleet):
 def belongs(fleet, ours):
     """Whether a pane labeled `fleet` is a member of the fleet named `ours`.
 
-    Three cases, and the middle one is the only thing this adds:
+    Three cases:
 
     * labeled with OUR name -- ours.
     * labeled with ANOTHER name -- **not ours.** Positive evidence that somebody
       else's tools own that pane, and the whole point.
-    * **unlabeled -- ours**, which is the fleet as it stands today: zero panes
-      carried `@fleet` when this landed, so excluding the unlabeled would have
-      emptied every tool at once. `fleetsnap` would see no fleet,
-      `fleetupgrade` nothing to roll, `fleetretire` no such session. A correct
-      end state reached in the wrong order is an outage.
+    * **unlabeled -- not ours either**, once we have a name of our own. A pane
+      that no tool has stamped is a pane no tool is known to own, and the fleet
+      that can name itself is the one that can say so.
 
-    Callers must therefore COUNT the unlabeled and say so, rather than letting
-    them pass silently -- an assumption that is right today and wrong the moment
-    a second fleet is spawned by a tool too old to label it.
+    That last case was the opposite until 2026-10-20, and the order mattered more
+    than the answer. When `@fleet` landed, ZERO panes carried it, so excluding the
+    unlabeled would have emptied every tool at once -- `fleetsnap` seeing no
+    fleet, `fleetupgrade` nothing to roll, `fleetretire` no such session. So the
+    permissive answer shipped first, every pane was stamped, and the flip came
+    after: 15 of 15 labeled and 0 unlabeled, checked against the CONFIGURED name
+    rather than against each other, because agreeing panes still vanish if
+    `[fleet].name` disagrees with all of them. A correct end state reached in the
+    wrong order is an outage.
 
     With no name of our own, everything is ours: a fleet that has never been
     named cannot say which panes are not its own, and guessing in the excluding
-    direction would hide real members.
+    direction would hide real members. This is the one branch that still fails
+    toward inclusion, and it is reachable only before `fleetinit` has run.
     """
-    f = fleet_label(fleet)
-    if not f or not ours:
+    if not ours:
         return True
-    return f == ours
+    return fleet_label(fleet) == ours
+
+
+def ours_agent_pane(agent, fleet, ours):
+    """Whether a pane is an agent pane AND one of ours: both labels, one answer.
+
+    Tools that ACT on a pane -- restarting it, retiring it, typing into it,
+    demanding a brief for it -- must ask both questions, and asking only the first
+    is what let a second fleet's sessions count as this one's. `belongs` alone was
+    wired into `fleetboard` and nowhere else for most of a day, which reads like
+    the gap is closed while every tool that does something still cannot tell whose
+    pane it is.
+    """
+    return is_agent_pane(agent) and belongs(fleet, ours)
 
 
 def is_agent_pane(agent):

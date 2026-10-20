@@ -367,6 +367,55 @@ Three mechanisms produce it.
   the tag instead of after it. Confirmed reachable by restoring the old docstring
   in a scratch copy: three warnings, exit 1.
 
+- **A membership rule wired into the one tool that only draws a screen.**
+  `belongs` was written to tell this fleet's panes from another fleet's, tested
+  three ways, and imported by `fleetboard` and nothing else (2026-10-20). Every
+  tool that ACTS -- `fleetsnap`, `fleetupgrade`, `fleetretire`, `fleetcontext`,
+  `fleetnudge`, `fleetwatch`, `fleetwaiting`, `fleetrestore` -- still gated on
+  `@agent` alone. The rule was correct, the tests were real, and the auto-roll
+  could still have restarted a stranger's session.
+
+  It reads as closed because the hard part looks done. **Ask which callers a new
+  rule has, not whether it is right**: a correct answer reachable from one display
+  is a correct answer nothing acts on. Found by grepping for the importers before
+  flipping the rule, not by any test -- a per-tool suite cannot notice a function
+  its tool never calls.
+
+- **A fixture that could not reach the branch under test.** The strict flip and
+  all eight tools went green first time. `belongs` returns True for everything
+  when the fleet has no name of its own, and `tests/support.py` `BASE_TOML`
+  declared no `[fleet].name` -- so `fleet_name(cfg)` was `""` in every test, every
+  pane passed, and the exclusion never ran once. The suite was exercising the
+  include-everything branch and reporting a pass on the other one.
+
+  The arity errors that *did* fail were the giveaway: fixtures were short a
+  column, which proves the format changed and says nothing about the filter.
+  **A test that fails for the shape of its input has not yet tested the logic.**
+  Fixed by naming the fixture's fleet, which turned 0 failures into 20.
+
+- **The flip was safe for the panes that existed and not for the ones to come.**
+  Preconditions were measured honestly -- 15 of 15 labeled, 0 unlabeled, checked
+  against the configured name rather than against each other, since unanimous
+  panes still vanish if `[fleet].name` disagrees with all of them. All true, and
+  all about the present tense. `fleetrestore` stamped `@agent` and not `@fleet`,
+  so the next power cycle would have rebuilt every session correctly and left all
+  15 invisible to every tool.
+
+  **A precondition over current state does not cover the code that creates new
+  state.** The failure would have arrived at a reboot, in the recovery path, and
+  looked like the reboot had eaten the fleet. Caught by an end-to-end test that
+  builds a real tmux fleet and then looks for it -- the only test in the suite
+  that exercises creation and membership in the same run.
+
+- **`.strip()` ate the field whose absence was the point.** `@fleet` is the last
+  column, an unset pane option renders empty, so the last row of `list-panes`
+  ends in a tab; `.strip()` removed it, the row came up one field short, failed
+  its arity guard and was dropped in silence. The enumeration's whole purpose is
+  that nothing vanishes without a word, and the pane it silently dropped was the
+  one carrying no fleet label -- the single most interesting case. Only the LAST
+  pane was affected, so it would have been found by a human noticing one missing
+  session, not by a test. `.strip("\n")` now.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and

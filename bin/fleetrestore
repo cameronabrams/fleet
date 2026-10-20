@@ -2,7 +2,8 @@
 """fleetrestore - rebuild the agent fleet from the last fleetsnap manifest.
 
 Prints the plan and does nothing unless given --go. Restores tmux layout, @agent
-labels, working directories, and resumes each session by transcript UUID.
+and @fleet labels, working directories, and resumes each session by transcript
+UUID.
 
 It deliberately does NOT restart any compute. Local jobs died with the power cycle
 and whether to rerun them is a judgement call, not a recovery step.
@@ -16,9 +17,10 @@ import json, os, subprocess, sys, argparse, time, shlex
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
-from fleet.panes import LABELS, agent_label
+from fleet.panes import LABEL_FIELDS, LABELS, agent_label, belongs
 from fleet import versions
 CFG = fc.load()
+OURS = fc.fleet_name(CFG)   # which fleet this one is; "" before fleetinit has run
 # Set once in main(), before any pane is built. Bare `claude` until then, so an
 # import or a helper called out of order cannot silently launch something else.
 CLAUDE_CMD = "claude"
@@ -177,7 +179,7 @@ def verify(sessions):
     have = {}
     for row in r.stdout.splitlines():
         f = row.split("\t")
-        if len(f) == 4 and agent_label(f[0]):
+        if len(f) == 4 and agent_label(f[0]) and belongs(f[1], OURS):
             have[agent_label(f[0])] = (f[2], f[3])
     out = []
     for s_ in sessions:
@@ -251,7 +253,12 @@ def main():
     try:
         out = tmux_run(["list-panes", "-a", "-F", LABELS],
                        capture_output=True, text=True, timeout=5).stdout
-        live = {agent_label(l.split("\t")[0]) for l in out.splitlines()}
+        # Only ours counts as already-running. Another fleet's session sharing a
+        # name with one of ours would otherwise read as ours being up, and the
+        # session we failed to relaunch is the one nobody notices is missing --
+        # this list exists to SUPPRESS work, so a false entry suppresses silently.
+        live = {agent_label(f[0]) for f in (l.split("\t") for l in out.splitlines())
+                if len(f) >= LABEL_FIELDS and belongs(f[1], OURS)}
         live.discard("")
     except Exception:
         pass
@@ -478,6 +485,17 @@ def main():
                           f"manifest says {s_['cwd']!r}. NOT launching it.")
                     continue
             run(["tmux", "set", "-p", "-t", target, "@agent", s_["label"]], a.go)
+            # `@fleet` TOO, and this is the one that would have been an outage.
+            # Membership went strict on 2026-10-20 -- an unlabeled pane is nobody's
+            # -- while this tool stamped `@agent` alone. A restore after a power
+            # cycle would have rebuilt all 15 sessions correctly and left every one
+            # of them invisible: fleetsnap seeing no fleet, fleetupgrade nothing to
+            # roll, fleetwaiting nobody blocked. The flip was checked against the
+            # panes that EXIST; this is the path that creates new ones, and it is
+            # the recovery path, so the failure would arrive at the worst moment
+            # and look like the reboot had eaten the fleet.
+            if OURS:
+                run(["tmux", "set", "-p", "-t", target, "@fleet", OURS], a.go)
             # --name pins the peer-visible session name to the role label, so a
             # restart no longer changes how other sessions address this one.
             # Verified 2026-08-26: `claude --name X` appears verbatim in ListAgents.

@@ -40,10 +40,11 @@ from fleet.nudgelog import (DANGLING_AFTER, INFORMED_LEGACY, informed_times,
                             last_nudge_word, lost_the_news, resolved_by_hand)
 from fleet import version_flag
 from fleet.procs import alive
-from fleet.panes import is_agent_pane
+from fleet.panes import is_agent_pane, ours_agent_pane
 from fleet.transcripts import session_name
 
 CFG     = fc.load()
+OURS    = fc.fleet_name(CFG)   # which fleet this one is; "" before fleetinit has run
 CLUSTER = fc.cluster(CFG)
 JOB_RE  = re.compile(r"\b(" + CLUSTER["job_id_re"] + r")\b")
 HELD    = tuple(CLUSTER.get("held_reasons", ["JobHeldUser", "JobHeldAdmin"]))
@@ -221,8 +222,9 @@ def watchers():
     # stranger's poll loop is advertised as an unregistered watcher of our work.
     panes = [r.split("\t")[0] for r in
              sh("tmux", "list-panes", "-a", "-F",
-                "#{pane_pid}\t#{@agent}").splitlines()
-             if len(r.split("\t")) == 2 and is_agent_pane(r.split("\t")[1])]
+                "#{pane_pid}\t#{@agent}\t#{@fleet}").splitlines()
+             if len(r.split("\t")) == 3
+             and ours_agent_pane(r.split("\t")[1], r.split("\t")[2], OURS)]
     for sp in panes:
         for c in sh("pgrep", "-P", sp).split():
             try:

@@ -23,7 +23,10 @@ Behavior
 - Sessions whose resume uuid is listed in ``[parked]`` or ``[retired]`` are not
   relaunched, whatever manifest is read. A later session that reuses the name has a
   different uuid and restores normally.
-- Sessions whose ``@agent`` label is already on a live pane are skipped.
+- Sessions whose ``@agent`` label is already on a live pane **of this fleet**
+  are skipped. Another fleet's session sharing a name with one of ours would
+  otherwise read as ours being up, and this list exists to *suppress* work, so a
+  false entry suppresses in silence.
 - Unverified resume handles are listed before the plan.
 - Windows are created in manifest order and the real window index is read back
   from tmux. Panes are addressed by the ``%N`` pane id tmux reports as each one is
@@ -45,7 +48,7 @@ Behavior
 - Each window this tool creates is named and ``automatic-rename`` turned off, so the
   next snapshot records the real name. A recorded name of ``claude`` is warned
   about, not applied.
-- Each pane gets ``@agent`` and is sent
+- Each pane gets ``@agent`` **and** ``@fleet`` and is sent
   ``[spawn].env claude --name <label> --resume <uuid>``.
 - A name that the manifest does not hold is refused, rather than restoring the
   rest: a typo would otherwise read as a successful partial restore.
@@ -82,7 +85,10 @@ restore is exactly the one worth having a record of. The second line completes i
 when there is an outcome to report.
 
 The outcome deliberately does **not** say a version was adopted. ``verify``
-compares each pane's ``@agent`` label and directory against the manifest, which is
+compares each pane's ``@agent`` label and directory against the manifest, counting
+only panes of this fleet — a foreign pane with the right name in the right place
+would otherwise report a session as restored that was never restored at all,
+which is the one nobody looks at again. The comparison is
 a different question from which binary came up, and a line claiming the stronger
 fact would be the same overstatement one step along. When tmux cannot be listed at
 all, ``verify`` returns a single row — counting that as one failed session would

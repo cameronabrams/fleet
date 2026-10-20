@@ -19,6 +19,15 @@ BASE_TOML = """
 [paths]
 state = "{state}"
 
+# A NAME, because the fleet-membership rule is unreachable without one. `belongs`
+# includes everything when the fleet has no name of its own, so a fixture with no
+# `[fleet].name` tests the permissive branch and only that -- every pane passes,
+# the exclusion never runs, and the suite reports a pass on a guard it never
+# reached. Added 2026-10-20 with the strict flip, after the flip's own tests went
+# green against a nameless fixture.
+[fleet]
+name = "testfleet"
+
 [colors]
 alpha = "red"
 beta  = "blue"

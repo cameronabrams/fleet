@@ -276,13 +276,19 @@ class WhoseFleetAPaneIsIn(unittest.TestCase):
         the whole point of writing it down."""
         self.assertFalse(panes.belongs("teaching", "abrams"))
 
-    def test_an_unlabeled_pane_belongs_for_now(self):
-        """Zero panes carried `@fleet` when this landed, so excluding the
-        unlabeled would have emptied every tool at once -- `fleetsnap` seeing no
-        fleet, `fleetupgrade` nothing to roll. A correct end state reached in the
-        wrong order is an outage. Callers must COUNT these and say so."""
-        self.assertTrue(panes.belongs("", "abrams"))
-        self.assertTrue(panes.belongs(None, "abrams"))
+    def test_an_unlabeled_pane_does_not_belong(self):
+        """The flip, 2026-10-20. It shipped permissive first and on purpose: zero
+        panes carried `@fleet` when `belongs` landed, so excluding the unlabeled
+        would have emptied every tool at once -- `fleetsnap` seeing no fleet,
+        `fleetupgrade` nothing to roll. A correct end state reached in the wrong
+        order is an outage.
+
+        The preconditions for flipping were checked against the CONFIGURED name,
+        not against each other: 15 of 15 panes labeled, 0 unlabeled, and
+        `fleet_name(cfg)` equal to the label they all carry. Panes that agree
+        unanimously still vanish if `[fleet].name` disagrees with all of them."""
+        self.assertFalse(panes.belongs("", "abrams"))
+        self.assertFalse(panes.belongs(None, "abrams"))
 
     def test_with_no_name_of_our_own_everything_belongs(self):
         """A fleet that has never been named cannot say which panes are not its
@@ -291,8 +297,37 @@ class WhoseFleetAPaneIsIn(unittest.TestCase):
         self.assertTrue(panes.belongs("teaching", ""))
 
     def test_whitespace_is_not_a_label(self):
-        self.assertTrue(panes.belongs("   ", "abrams"))
+        self.assertFalse(panes.belongs("   ", "abrams"))
         self.assertEqual(panes.fleet_label("  abrams  "), "abrams")
+
+
+class BothLabelsOneQuestion(unittest.TestCase):
+    """`ours_agent_pane` exists because `belongs` alone was wired into exactly one
+    tool -- `fleetboard`, which draws a screen -- for most of a day, while every
+    tool that ACTS still gated on `@agent` alone. A correct membership rule
+    reachable from one display reads like the gap is closed."""
+
+    def test_our_agent_pane(self):
+        self.assertTrue(panes.ours_agent_pane("alpha", "abrams", "abrams"))
+
+    def test_another_fleets_agent_pane_is_not(self):
+        self.assertFalse(panes.ours_agent_pane("alpha", "teaching", "abrams"))
+
+    def test_an_unlabeled_fleet_is_not_ours(self):
+        self.assertFalse(panes.ours_agent_pane("alpha", "", "abrams"))
+
+    def test_a_pane_with_no_agent_is_not_ours_however_it_is_labeled(self):
+        """Both questions, not either. A pane carrying `@fleet=abrams` and no
+        `@agent` is not a session; it is the owner's own window in a fleet-labeled
+        tmux session, and typing into it is the failure this guards."""
+        self.assertFalse(panes.ours_agent_pane("", "abrams", "abrams"))
+
+    def test_with_no_name_of_our_own_an_agent_pane_is_ours(self):
+        """Degrades to the pre-`@fleet` rule, which is what a tool running before
+        `fleetinit` needs: `fleetwaiting` loads its configuration with
+        `required=False` and must not answer by hiding the fleet."""
+        self.assertTrue(panes.ours_agent_pane("alpha", "", ""))
+        self.assertTrue(panes.ours_agent_pane("alpha", "teaching", ""))
 
 
 class NoToolDecidesMembershipAlone(unittest.TestCase):

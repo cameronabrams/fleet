@@ -85,7 +85,7 @@ class AttachedBackground(Upgrade):
     def resolve(self, agent_list):
         from tests.test_agents import SAMPLE
         up = self.up
-        with mock.patch.object(up, "sh", return_value="%1\t100\ttitle\t/home/u/work\tcoord\tcoord\t0\n"), \
+        with mock.patch.object(up, "sh", return_value="%1\t100\ttitle\t/home/u/work\talpha\talpha\ttestfleet\n"), \
              mock.patch.object(up, "claude_pid", return_value=("200", "claude attach b20bc72b")), \
              mock.patch.object(up, "agents", return_value=agent_list), \
              mock.patch.object(up, "foreign_claude", return_value=[("543137", "x"), ("543125", "y")]), \
@@ -114,7 +114,7 @@ class SessionDirectory(Upgrade):
     moves: on 2026-09-18 the hand-off said ~/.config/fleet for a session running in
     ~/.local/state/fleet, where --resume would have found no transcript."""
     def rows(self, pane_path="/home/u/somewhere-else", proc="/home/u/work"):
-        with mock.patch.object(self.up, "sh", return_value=f"%1\t100\ttitle\t{pane_path}\tcoord\tcoord\t0\n"), \
+        with mock.patch.object(self.up, "sh", return_value=f"%1\t100\ttitle\t{pane_path}\talpha\talpha\ttestfleet\n"), \
              mock.patch.object(self.up, "claude_pid", return_value=("200", f"claude --name a --resume {U1}")), \
              mock.patch.object(self.up, "proc_cwd", side_effect=lambda pid: proc), \
              mock.patch.object(self.up, "agents", return_value=[]), \
@@ -318,9 +318,9 @@ class OtherTmuxSessions(unittest.TestCase):
     rather than silently dropped: a fleet pane that lost its labels would
     otherwise vanish from a roll with no warning, which is the worse direction.
     """
-    # pane_id, pane_pid, pane_title, pane_current_path, @agent, session_name
-    PANES = ("%1\t100\tcoord\t/home/u/work\tcoord\t0\n"
-             "%26\t200\tsidebar\t/home/u\t\tsidebar\n")
+    # pane_id, pane_pid, pane_title, pane_current_path, @agent, session_name, @fleet
+    PANES = ("%1\t100\talpha\t/home/u/work\talpha\t0\ttestfleet\n"
+             "%26\t200\tsidebar\t/home/u\t\tsidebar\ttestfleet\n")
 
     def setUp(self):
         self.cfg = FakeConfig()
@@ -350,10 +350,26 @@ class OtherTmuxSessions(unittest.TestCase):
         self.assertEqual([o["pane"] for o in self.up.OUTSIDE], ["%26"])
         self.assertEqual(self.up.OUTSIDE[0]["tmux_session"], "sidebar")
 
+    def test_another_fleets_pane_is_not_rolled(self):
+        """The one that was about to act. The auto-roll reads this list, and a
+        session two versions from OUR target is exactly what its canary clause
+        prefers -- so the first thing a second fleet on this machine would have
+        got was an unasked-for restart of its most active session."""
+        self.PANES = "%9\t300\tx\t/home/u\tdelta\tother\tteaching\n"
+        rows = self.rows()
+        self.assertEqual([r["pane"] for r in rows], [])
+        self.assertEqual([(o["pane"], o["why"]) for o in self.up.OUTSIDE],
+                         [("%9", "@fleet=teaching")])
+
+    def test_an_unlabeled_pane_is_not_rolled_either(self):
+        self.PANES = "%9\t300\tx\t/home/u\tdelta\tother\t\n"
+        self.assertEqual([r["pane"] for r in self.rows()], [])
+        self.assertEqual(self.up.OUTSIDE[0]["why"], "@fleet=(unlabeled)")
+
     def test_a_pane_labelled_by_hand_is_ours(self):
         """A pane in another tmux session that carries `@agent` counts, whoever
         set it. Membership is the label, never the tmux session it sits in."""
-        self.PANES = "%26\t200\tx\t/home/u\trecords\tother\n"
+        self.PANES = "%26\t200\tx\t/home/u\tbeta\tother\ttestfleet\n"
         self.assertEqual([r["pane"] for r in self.rows()], ["%26"])
         self.assertEqual(self.up.OUTSIDE, [])
 

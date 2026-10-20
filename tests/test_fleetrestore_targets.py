@@ -91,12 +91,27 @@ class Verify(unittest.TestCase):
         return [{"label": l, "cwd": c} for l, c in pairs]
 
     @staticmethod
-    def row(label, cwd, pane, fleet=""):
+    def row(label, cwd, pane, fleet="testfleet"):
         """A pane row in the format `verify` asks for: LABELS is TWO columns now
         -- the agent and its fleet -- so the fixture carries both. Written as a
         helper rather than inline tuples so the next column added has one place
-        to go, instead of four."""
+        to go, instead of four.
+
+        The default is OUR fleet's name, matching `BASE_TOML`. It was `""` until
+        membership went strict on 2026-10-20, at which point every row in this
+        class became somebody else's pane and `verify` correctly reported that
+        nothing had been restored."""
         return (label, fleet, cwd, pane)
+
+    def test_another_fleets_pane_does_not_count_as_a_restored_session(self):
+        """The pane carries the right label in the right directory, and is not
+        ours. `verify` is what says the restore worked, so a foreign pane
+        satisfying it means a session we failed to restore is reported as
+        restored -- and the one nobody looks at again."""
+        with self.panes([self.row("alpha", "/w/a", "%1", fleet="teaching")]):
+            out = self.r.verify(self.sessions(("alpha", "/w/a")))
+        self.assertEqual([l for l, _ in out], ["alpha"])
+        self.assertIn("@agent", out[0][1])
 
     def test_a_matching_restore_reports_nothing(self):
         with self.panes([self.row("alpha", "/w/a", "%1"), self.row("beta", "/w/b", "%2")]):

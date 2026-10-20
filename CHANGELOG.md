@@ -30,7 +30,60 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Changed
+
+- **An unlabeled pane is no longer assumed to be ours.** `fleet.panes.belongs`
+  shipped permissive on purpose: zero panes carried `@fleet` when it landed, so
+  excluding the unlabeled would have emptied every tool at once. Every pane is
+  stamped now, so the exclusion is strict. The precondition was checked against
+  the **configured** name, not against the panes alone — 15 of 15 labeled, 0
+  unlabeled, and `[fleet].name` equal to the label they all carried, because panes
+  that agree unanimously still vanish if the configuration disagrees with all of
+  them. With no name of its own a fleet still counts everything as its own; that
+  branch is reachable only before `fleetinit` has run.
+
+- **Every tool that ACTS now asks whose fleet a pane is in.** `belongs` was wired
+  into `fleetboard` and nowhere else, so the rule was correct in the one place
+  where being wrong costs nothing, while `fleetsnap`, `fleetupgrade`,
+  `fleetretire`, `fleetcontext`, `fleetnudge`, `fleetwatch`, `fleetwaiting` and
+  `fleetrestore` all still gated on `@agent` alone. New
+  `fleet.panes.ours_agent_pane` asks both questions in one place. Each tool
+  reports what it excluded and **which label was missing**, since a pane with no
+  `@agent` is not a session while a pane with no `@fleet` may be one of ours
+  stamped by a tool too old to say so.
+
 ### Fixed
+
+- **`fleetrestore` now stamps `@fleet`, which is what kept the flip from being an
+  outage.** It stamped `@agent` alone. With membership strict, a restore after a
+  power cycle would have rebuilt all 15 sessions correctly and left every one of
+  them invisible to every tool — and it would have arrived at the worst possible
+  moment, looking like the reboot had eaten the fleet. The flip was checked
+  against the panes that exist; this is the path that creates new ones.
+
+- **A trailing empty `@fleet` was eaten by `.strip()`.** `@fleet` is the last
+  column and an unset pane option renders as an empty field, so the last row of
+  `list-panes` output ends in a tab. `.strip()` removed it, that row came up one
+  field short, failed its arity guard and was dropped **in silence** — the one
+  outcome the exclusion reporting exists to prevent, on exactly the pane that most
+  needed reporting. Only the last pane was affected, which is why it would have
+  been found by a human rather than by a test. Now `.strip("\n")`, in `fleetsnap`,
+  `fleetupgrade` and `fleetwaiting`.
+
+- **The test fixture had no fleet name**, so `fleet_name(cfg)` was `""` in every
+  test, `belongs` took its include-everything branch and the exclusion never ran.
+  The first version of this work went green against a fixture that could not
+  reach the code it was testing. `tests/support.py` `BASE_TOML` declares
+  `[fleet].name` now.
+
+- **Two real session names in a public test fixture.** `tests/test_fleetupgrade.py`
+  used live session names where the placeholder vocabulary belongs; replaced with
+  `alpha`/`beta`/`delta`. Not named here, because naming them in the changelog
+  puts them back in the repository the scrub was for.
+
+- **`fleetinit` was the only tool in `bin/` with no `~/bin` symlink** — `install`
+  globs `bin/*`, so it simply had not been re-run since the tool landed.
+
 
 - **The documentation build, and the hole that let it break unnoticed.**
   `fleet.history.scan`'s docstring is a column-aligned key table; RST reads that

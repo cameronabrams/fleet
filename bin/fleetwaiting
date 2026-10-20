@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
-from fleet.panes import LABELS, agent_label
+from fleet.panes import LABELS, agent_label, belongs
 from fleet.transcripts import project_slug
 
 PROJECTS = os.path.expanduser("~/.claude/projects")
@@ -47,7 +47,11 @@ def patterns(cfg):
     )""".replace("WHO", who), re.I | re.X)
     return blocked, resolved
 
-BLOCKED, RESOLVED = patterns(fc.load(required=False))
+_CFG = fc.load(required=False)
+BLOCKED, RESOLVED = patterns(_CFG)
+# "" when there is no configuration, and `belongs` then includes everything:
+# a tool that runs without config must not answer by hiding the fleet.
+OURS = fc.fleet_name(_CFG)
 
 def sh(*a):
     return subprocess.run(a, capture_output=True, text=True).stdout
@@ -56,12 +60,22 @@ def live_sessions():
     """pane label -> transcript path, for sessions running right now."""
     out = {}
     fmt = LABELS + "\t#{pane_pid}\t#{pane_current_path}"
-    for row in sh("tmux", "list-panes", "-a", "-F", fmt).strip().splitlines():
+    # `.strip("\n")`, NOT `.strip()`. `@fleet` is the last column and an unset
+    # pane option renders as an empty field, so the last row ends in a tab --
+    # which `.strip()` eats, leaving that row one field short. It then fails the
+    # arity guard and is dropped in SILENCE, which is the one outcome this
+    # enumeration is built to avoid: the pane that most needs reporting is the
+    # one carrying no fleet label. Only the last pane is affected, which is why
+    # it would have been found by a human and not by a test.
+    for row in sh("tmux", "list-panes", "-a", "-F", fmt).strip("\n").splitlines():
         p = row.split("\t")
         if len(p) < 4:
             continue
         label, ppid, cwd = agent_label(p[0]), p[2], p[3]
-        if not label:
+        # `list-panes -a` crosses fleets as well as tmux sessions. A stranger's
+        # session reported as blocked on THIS fleet's owner is a question he
+        # cannot answer and a pane he should not be looking at.
+        if not label or not belongs(p[1], OURS):
             continue
         pids = [ppid] + sh("pgrep", "-P", ppid).split()
         uuid = None

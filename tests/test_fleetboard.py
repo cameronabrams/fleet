@@ -347,6 +347,23 @@ class CwdAndParked(unittest.TestCase):
         start = head.index("cwd")
         self.assertEqual(row[start:start + 42].strip(), "", repr(row))
 
+    def test_parked_survives_another_fleets_panes_being_on_screen(self):
+        """The parked ROWS live in the same block as their heading, and that block
+        used to be an `elif` on a dim line about panes with no `@fleet` -- so one
+        unstamped pane would have taken the whole parked section off the board,
+        heading and all, for a reason that had nothing to do with parking.
+
+        Honest about what this proves: by the time the coupling was found the
+        branch above it was already unreachable, because strict membership means
+        there is no "assumed ours" line left to print. This is a guard against
+        putting the coupling back, not a reproduction of a live failure."""
+        self.b.foreign[:] = [("stranger", "teaching"), ("nameless", "")]
+        out = self.board(self.LIVE)
+        self.assertIn("parked (", out)
+        self.assertIn("not this fleet (2)", out)
+        self.assertIn("nameless@(no @fleet)", out,
+                      "an unstamped pane must not render as a fleet named ''")
+
     def test_parked_sessions_appear_under_a_rule(self):
         out = self.board(self.LIVE)
         lines = out.splitlines()

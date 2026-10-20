@@ -14,10 +14,12 @@ class SnapshotDirectory(unittest.TestCase):
         self.cfg.close()
 
     def manifest(self, proc_cwd="/home/u/work", repo="alpha", title="title",
-                 agents=None, transcript_name=None):
-        # ten fields: one label, `@agent`; the grouping and the old name retired
+                 agents=None, transcript_name=None, fleet="testfleet"):
+        # eleven fields: two labels, `@agent` and `@fleet`. `@fleet` is LAST
+        # because appending is what keeps the older indices where their readers
+        # expect them -- this unpack has been left behind by a moving format twice.
         row = ["fleet", "1", "win", "0", "%1", repo, title,
-               "/home/u/somewhere-else", "100", "80x40"]
+               "/home/u/somewhere-else", "100", "80x40", fleet]
         proc = {"pid": 200, "version": "2.1.276", "resume_uuid": None, "started": "",
                 "argv": ["claude", "--name", "alpha"]}
         sn = self.snap
@@ -38,10 +40,30 @@ class SnapshotDirectory(unittest.TestCase):
              mock.patch.object(sn, "rotate"), \
              mock.patch.object(sn.sys, "argv", ["fleetsnap"]):
             import contextlib, io, json
-            with contextlib.redirect_stdout(io.StringIO()):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
                 sn.main()
+            # Kept rather than discarded: what this tool PRINTS about the panes it
+            # skipped is half of what it is for, and a test that only reads the
+            # manifest cannot tell a reported omission from a silent one.
+            self.out = buf.getvalue()
             with open(os.path.join(self.cfg.state, "manifest.json")) as f:
                 return json.load(f)
+
+    def test_another_fleets_pane_is_not_snapshotted(self):
+        """A snapshot that quietly omits a session is a RESTORE that quietly omits
+        it. Here the omission is right -- the pane is not ours -- and it still has
+        to be said out loud, because the unlabeled case is indistinguishable from a
+        session of ours stamped by a tool too old to label it."""
+        snap = self.manifest(fleet="teaching")
+        self.assertEqual(snap["sessions"], [])
+        self.assertIn("not this fleet's panes", self.out)
+        self.assertIn("@fleet=teaching", self.out)
+
+    def test_an_unlabeled_pane_is_not_snapshotted_and_is_named(self):
+        snap = self.manifest(fleet="")
+        self.assertEqual(snap["sessions"], [])
+        self.assertIn("@fleet=(unlabeled)", self.out)
 
     def test_cwd_comes_from_the_process(self):
         self.assertEqual(self.manifest()["sessions"][0]["cwd"], "/home/u/work")
@@ -394,10 +416,11 @@ class FormatMatchesItsUnpack(unittest.TestCase):
         field twice now -- the grouping, then the old name -- and each time every
         index after it moved."""
         row = ["0", "1", "win", "0", "%1", "alpha",
-               "title", "/w", "123", "80x24"]
+               "title", "/w", "123", "80x24", "testfleet"]
         (sess, win, winname, pidx, pane,
-         agent, title, path, ppid, size) = row[:10]
+         agent, title, path, ppid, size, fleet) = row[:11]
         self.assertEqual(self.s.agent_label(agent), "alpha")
+        self.assertEqual(self.s.fleet_label(fleet), "testfleet")
         self.assertEqual((title, path, size), ("title", "/w", "80x24"),
                          "a shifted unpack shows up here first")
 

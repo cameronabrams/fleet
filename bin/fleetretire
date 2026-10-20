@@ -29,12 +29,13 @@ import argparse, glob, json, os, re, shlex, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
-from fleet.panes import LABELS, agent_label
+from fleet.panes import LABELS, agent_label, belongs
 from fleet.procs import alive, ancestors, children, claude_procs, named, ppid, starttime
 from fleet.agents import background_named, list_agents
 from fleet.transcripts import resume_handle, session_name
 
 CFG = fc.load()
+OURS = fc.fleet_name(CFG)   # which fleet this one is; "" before fleetinit has run
 STATE = fc.state_dir(CFG)
 BIN = os.path.dirname(os.path.realpath(__file__))
 
@@ -79,6 +80,11 @@ def pane_of(pid):
     for row in out.splitlines():
         p = row.split("\t")
         if len(p) == 6 and p[1].isdigit() and int(p[1]) in (pid, parent):
+            # Whose fleet, before this tool parks or retires the pane. Matching on
+            # pid alone would find another fleet's session just as readily, and
+            # retiring one is not a display error anybody can scroll past.
+            if not belongs(p[5], OURS):
+                return None
             return {"pane": p[0], "window": p[2], "panes": int(p[3] or 0),
                     "label": agent_label(p[4])}
     return None

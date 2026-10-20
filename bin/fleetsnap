@@ -13,10 +13,11 @@ from fleet import config as fc
 from fleet import versions
 from fleet import version_flag
 from fleet.agents import list_agents
-from fleet.panes import agent_label, is_agent_pane
+from fleet.panes import agent_label, belongs, fleet_label, is_agent_pane
 from fleet.procs import proc_cwd
 from fleet.transcripts import agent_color, newest_transcript, resume_handle, session_name
 CFG = fc.load()
+OURS = fc.fleet_name(CFG)       # which fleet this one is; "" before fleetinit has run
 
 STATE = fc.state_dir(CFG)
 
@@ -106,8 +107,16 @@ def pane_rows():
     fmt = "\t".join(["#{session_name}", "#{window_index}", "#{window_name}",
                      "#{pane_index}", "#{pane_id}",
                      "#{@agent}", "#{pane_title}",
-                     "#{pane_current_path}", "#{pane_pid}", "#{pane_width}x#{pane_height}"])
-    return [r.split("\t") for r in sh("tmux", "list-panes", "-a", "-F", fmt).strip().splitlines()]
+                     "#{pane_current_path}", "#{pane_pid}", "#{pane_width}x#{pane_height}",
+                     "#{@fleet}"])
+    # `.strip("\n")`, NOT `.strip()`. `@fleet` is the last column and an unset
+    # pane option renders as an empty field, so the last row ends in a tab --
+    # which `.strip()` eats, leaving that row one field short. It then fails the
+    # arity guard and is dropped in SILENCE, which is the one outcome this
+    # enumeration is built to avoid: the pane that most needs reporting is the
+    # one carrying no fleet label. Only the last pane is affected, which is why
+    # it would have been found by a human and not by a test.
+    return [r.split("\t") for r in sh("tmux", "list-panes", "-a", "-F", fmt).strip("\n").splitlines()]
 
 def claude_proc(pane_pid):
     pids = [pane_pid] + sh("pgrep", "-P", pane_pid).split()
@@ -281,19 +290,25 @@ def main():
             # session resumes that transcript, via --resume in its process argv or
             # via a descendant executing from its scratchpad path.
             "authority": CFG.get("authority", {})}
-    outside = []
+    outside, foreign = [], []
     for r in pane_rows():
         # Must match the unpack below. It said 11 while the unpack took 12: a row
         # of exactly 11 would pass this and raise in the next statement.
-        if len(r) < 10:
+        if len(r) < 11:
             continue
-        # One label: `@agent`. 2026-10-01: this unpack was left behind twice while
+        # Two labels now: `@agent` and `@fleet`. 2026-10-01: this unpack was left behind twice while
         # the format moved -- once holding the AGENT NAME in a variable named
         # `fleet`, so one snapshot recorded fourteen sessions in fourteen fleets.
         # A positional format and its consumer are one thing; changing either
         # alone is the bug. The arity test below is what makes that structural.
         (sess, win, winname, pidx, pane,
-         agent, title, pane_path, ppid, size) = r[:10]
+         agent, title, pane_path, ppid, size, fleet) = r[:11]
+        # Whose fleet, before anything expensive. `@fleet` was appended to the END
+        # of the format for exactly this reason: a new column that shifts the old
+        # ones is the bug this unpack has already had twice.
+        if not belongs(fleet, OURS):
+            foreign.append((pane, agent_label(agent) or "(unnamed)", fleet_label(fleet)))
+            continue
         label = agent_label(agent)
         proc = claude_proc(ppid)
         if not proc:
@@ -382,6 +397,20 @@ def main():
         print("    If one of these SHOULD be in the fleet it is missing its label, "
               "and it is missing from recovery too:")
         print("      tmux set -p -t <pane> @agent <name>")
+
+    if foreign:
+        # Counted and named, never dropped in silence. A snapshot that quietly
+        # omits a session is a recovery that quietly omits it too, and the whole
+        # reason this tool prints what it skipped is that the omission is the
+        # expensive half. An unlabeled pane reaching here is the interesting case:
+        # it is either somebody else's, or ours and stamped by a tool too old to
+        # say so -- and the second needs a human, not a default.
+        print(f"  not this fleet's panes, so not snapshotted (we are {OURS!r}):")
+        for pane, who, whose in foreign:
+            print(f"    {pane} {who}  @fleet={whose or '(unlabeled)'}")
+        print("    If one of these SHOULD be in the fleet it is missing its label, "
+              "and it is missing from recovery too:")
+        print(f"      tmux set -p -t <pane> @fleet {OURS}")
 
     # No per-fleet manifests. There is one fleet, so there is one manifest; the
     # grouping they split by agreed with the window name only by accident and could

@@ -199,22 +199,23 @@ Whose fleet a pane is in
 
 Two fleets can share a machine. A pane labeled with **another** fleet's
 ``@fleet`` is listed separately as *not this fleet* and takes no part in anything
-else the board says. A pane with **no** ``@fleet`` is counted as ours — and
-**said so, on the screen**, because that is an assumption rather than a reading:
+else the board says. Since 2026-10-20 a pane with **no** ``@fleet`` is treated the
+same way: a pane no tool has stamped is a pane no tool is known to own.
 
-.. code-block:: text
-
-   3 pane(s) carry no @fleet and are assumed ours: alpha, beta, gamma
-
-Including the unlabeled is deliberate and temporary. Zero panes carried ``@fleet``
-when this landed, so excluding them would have emptied every tool at once. The
-order is: :doc:`fleetinit` ``--label-panes``, then the exclusion can be tightened.
-Until then the count is the honest form of the assumption — visible rather than
-buried.
+That is the opposite of how it shipped, and the order mattered more than the
+answer. Zero panes carried ``@fleet`` when the label landed, so excluding the
+unlabeled would have emptied every tool at once — ``fleetsnap`` seeing no fleet,
+``fleetupgrade`` nothing to roll. The permissive rule shipped first, every pane
+was stamped by :doc:`fleetinit` ``--label-panes``, and the flip came after, on a
+precondition checked against the **configured** name rather than against the panes
+alone: 15 of 15 labeled, 0 unlabeled, and ``[fleet].name`` equal to the label they
+all carried. Unanimous panes still vanish if the configuration disagrees with all
+of them.
 
 With no name of its own, a fleet counts everything as its own: one that has never
 been named cannot say which panes are not its, and guessing in the excluding
-direction would hide real members.
+direction would hide real members. That is the one branch that still fails toward
+inclusion, and it is reachable only before :doc:`fleetinit` has run.
 
 Absence is rendered ``?``, never as a pass
 ------------------------------------------
