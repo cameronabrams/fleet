@@ -272,6 +272,23 @@ Three mechanisms produce it.
   separate copies of what the alarm means. The rule now lives in `fleet.nudgelog`
   and both import it.
 
+- **A check that was right and too late.** Designing a tool that appends one line
+  to the human's `fleet.toml`, the proposed safeguard was "write it, then re-parse
+  to confirm it is still valid". The check detects the damage correctly and
+  prevents none of it: the broken file already exists while it runs, every tool
+  parses that file at startup, and anything invoked in between simply dies. A
+  duplicate key raises `TOMLDecodeError` and takes the whole fleet's tooling down
+  at once, which was measured rather than assumed (2026-10-20).
+
+  The correct form writes a temp file in the same directory, parses **that**, reads
+  the value back from it, and only then `os.replace`. Same check, same code,
+  different position in the sequence -- and the difference is between a failure
+  made unreachable and a failure made legible after the fact.
+
+  **Where a check sits is part of the check.** Nothing about its logic says whether
+  it guards or merely reports, and "verify afterwards" reads exactly like
+  "verify" right up until something is invoked in the window.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and
