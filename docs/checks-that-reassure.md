@@ -306,6 +306,27 @@ Three mechanisms produce it.
   fix; the discipline on its own would have held exactly as long as attention
   did.
 
+- **An assertion whose two sides came from the same broken parser.** Tidying the
+  changelog's duplicate heading blocks, the safeguard was "count the entries
+  before, count them after, assert they match". The splitter recognised an entry
+  by `- **`, and the released sections write theirs as plain `- ` — so it found
+  none, the assertion compared **0 == 0**, and the rewrite emitted the headings
+  with all 103 lines of `[0.2.0]` deleted beneath them. It passed (2026-10-20).
+
+  The same blindness had already run over `[Unreleased]`, reporting 49 before and
+  49 after while 13 plain entries would have gone. Both numbers were true about
+  the parser and said nothing about the file.
+
+  **A check and the thing it checks must not share a dependency.** The repair was
+  to verify against something the splitter does not produce: the multiset of every
+  non-heading, non-blank LINE, before and against after, per section and again
+  over the whole file. A line is content the format cannot argue about, so a merge
+  that preserves every one of them has preserved the entries whatever an entry
+  turns out to be.
+
+  Nothing was committed — the damage was found by reading the result rather than by
+  the check. That is the part worth not repeating.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and
