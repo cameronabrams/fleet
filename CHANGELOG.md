@@ -30,6 +30,8 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-20
+
 
 ### Added
 
