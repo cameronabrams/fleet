@@ -30,7 +30,20 @@ SK=$HOME/.claude/skills
 STAMP=$(date +%Y%m%d-%H%M%S)
 AWAY=$HOME/.local/state/fleet/displaced-$STAMP
 
-[ -f "$CFG/fleet.toml" ] || { echo "no $CFG/fleet.toml -- copy examples/fleet.example.toml there first"; exit 2; }
+# The fresh-machine blocker: nothing else can run without a configuration, so say
+# the command that makes one rather than the file to copy. Naming a file to copy
+# leaves the human to edit TOML by hand, which is the step `fleetinit` exists to
+# remove.
+if [ ! -f "$CFG/fleet.toml" ]; then
+  echo "no $CFG/fleet.toml yet. Create one:"
+  echo
+  echo "    $APP/bin/fleetinit --go                       # from the shipped example"
+  echo "    $APP/bin/fleetinit --from <a fleet.toml> --go  # from a fleet you already have"
+  echo
+  echo "  The second carries your own defaults -- name, clusters, thresholds -- and"
+  echo "  leaves out the other fleet's roster and history. Run it, then run this again."
+  exit 2
+fi
 
 plan() {   # plan <target> <source>
   local tgt=$1 src=$2

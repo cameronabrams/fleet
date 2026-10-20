@@ -13,6 +13,39 @@ Usage
    fleetspawn --check NAME DIR
    fleetspawn NAME DIR --beside PANE --resume UUID [--go]
 
+Scaffolding, so the refusals become offers
+------------------------------------------
+
+Preflight already names every missing piece precisely and then refuses. These
+make it offer instead:
+
+``--color C``
+   declares ``NAME = "C"`` under ``[colors]`` if it is not declared yet. The human
+   still chooses — they typed it here — and the tool only writes it where the
+   declaration lives. **Appended and verified, never rewritten**: see
+   ``fleet.config.declare``, which refuses a file that does not already parse,
+   refuses unless exactly one line is exactly ``[colors]``, refuses to change a
+   declaration that exists, and proves the result parses in a temporary file
+   before it replaces anything. A duplicate key would otherwise stop every tool at
+   once, since each parses this file when it runs.
+
+``--create-dir``
+   creates ``DIR``. The folder-trust prompt still stops the spawn afterwards, so
+   the grant stays the human's.
+
+``--brief-from-example``
+   copies the brief template into place and **stops**. It does not spawn.
+   ``[spawn].first_prompt`` tells a session to read its brief and follow it, so a
+   template brief is a session told that its role is to fill itself in — and that
+   fails *quietly*, as a session behaving plausibly and owning nothing in
+   particular, where a missing brief fails loudly at preflight. **Scaffolding the
+   file is a kindness; writing its content is the thing the refusal exists to
+   force.**
+
+Scaffolding runs before preflight, so preflight judges what will exist rather than
+what did — and every read of the color re-loads the configuration rather than using
+the copy from import, because ``--color`` may have written it seconds earlier.
+
 Other options: ``--brief PATH`` (default ``<config>/briefs/NAME.md``), ``--wait
 SECONDS`` for startup (default 60), ``--color-wait SECONDS`` for the pane to go idle
 before ``/color`` is typed (default 300), and ``--no-color`` to leave the color to

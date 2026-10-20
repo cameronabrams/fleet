@@ -51,6 +51,9 @@ version: they are released together.
    * - :doc:`fleetgantt`
      - every session's life as a Gantt chart
      - writes a page
+   * - :doc:`fleetinit`
+     - create a configuration so the other tools can run
+     - writes <config>/
    * - :doc:`fleetboard`
      - one screen: who is working, who is blocked, what is wrong
      - writes a cache
@@ -82,6 +85,7 @@ Most tools read ``~/.claude/projects/`` (transcripts), ``/proc`` and
    fleetlog
    fleetcost
    fleetgantt
+   fleetinit
    fleetboard
    fleetcontext
    fleetnudge

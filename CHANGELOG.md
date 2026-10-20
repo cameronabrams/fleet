@@ -52,6 +52,37 @@ entries and makes you confirm the bump against this list.
   form on 2026-10-16 and the restore's end-to-end test caught it — its fake `claude`
   recorded a `--version` call that displaced a real launch.
 
+- **`fleetinit`: create a configuration, so a fresh machine has something to run
+  against.** `install` exits 2 without a `fleet.toml`, so this was the step that
+  blocked every other step — built first for that reason rather than because it was
+  smallest.
+
+  **The repository ships the schema and the questions, never the answers.** Defaults
+  travel from an existing configuration (`--from`), which copies how someone likes
+  fleets to work — `[human]`, `[paths]`, `[spawn]`, `[context]`, `[notify]`,
+  `[mail]`, every `[cluster.*]` — and leaves behind what belongs to one fleet.
+  Measured on a live 313-line config: 99 lines travel. `[colors]` and `[owners]` are
+  **emptied rather than deleted**, since every fleet has a roster; `[parked.*]`,
+  `[retired.*]`, `[authority]` and `[updates]` are dropped. Prompts and CLI flags
+  cover a machine with nothing personal to hand, and `--save-profile` writes the
+  shareable subset out to keep.
+
+  Copied as **text**: there is no comment-preserving TOML writer in the standard
+  library, and the comments are why a configuration is worth reading. An existing
+  `fleet.toml` is never overwritten.
+
+- **`fleetspawn --color`, `--create-dir`, `--brief-from-example`** — the refusals
+  preflight already names, turned into offers. `--color` appends the declaration
+  through `fleet.config.declare`; `--brief-from-example` copies the template and
+  **stops**, because a template brief is a session told its role is to fill itself
+  in, which fails quietly where a missing brief fails loudly.
+
+- **`fleet.config.declare` and `write_verified`** — a tool may append a declaration
+  a human supplied; it may never regenerate, reorder or remove. The write is proved
+  in a temporary file and only then `os.replace`d: a duplicate key raises
+  `TOMLDecodeError` and stops every tool at once, so "write then re-parse" detects
+  that correctly and prevents none of it.
+
 - **`fleetnudge --delivered` clears a delivery hole that is no longer one.** A
   nudge that gave up stayed in `fleetwatch`'s report until it aged out of the
   seven-day window, even when the result had reached its session another way.

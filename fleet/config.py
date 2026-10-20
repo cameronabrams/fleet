@@ -18,6 +18,7 @@ installed before it can read its own configuration fails at exactly the moment
 it is needed.
 """
 import os
+import tempfile
 import re
 import tomllib
 
@@ -219,6 +220,106 @@ def context(cfg):
     if not isinstance(focus, str) or "\n" in focus:
         raise ConfigError("[context] compact_focus must be one line of text")
     return out
+
+def write_verified(path, text, check=None):
+    """Replace `path` with `text`, but only once the new content is known good.
+
+    (ok, reason). Writes a temp file beside the target, parses THAT, runs
+    `check(doc)` on the result, and only then `os.replace`. The live file is
+    never in a broken state on disk.
+
+    **The order is the whole point.** The obvious design -- write, then re-parse
+    to confirm -- detects the damage correctly and prevents none of it: every tool
+    parses this file when it runs, so anything invoked between the write and the
+    check simply dies. A duplicate key raises `TOMLDecodeError` and takes the
+    whole fleet's tooling down at once, which was measured rather than assumed
+    (2026-10-20). Same check, same code, different position in the sequence, and
+    the difference is between a failure made unreachable and one made legible
+    afterwards.
+    """
+    d = os.path.dirname(path) or "."
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(dir=d, prefix=".fleet-write-")
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        with open(tmp, "rb") as f:
+            doc = tomllib.load(f)
+        if check is not None:
+            why = check(doc)
+            if why:
+                return False, why
+        os.replace(tmp, path)
+        tmp = None
+        return True, None
+    except tomllib.TOMLDecodeError as e:
+        return False, "the result would not parse, so nothing was written (%s)" % e
+    except OSError as e:
+        return False, "could not write beside %s (%s)" % (path, e.strerror or e)
+    finally:
+        if tmp and os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+_HEADER = "[%s]"
+
+
+def declare(path, table, key, value):
+    """Append `key = "value"` under an existing `[table]`. (ok, reason).
+
+    **Appends; never regenerates.** There is no comment-preserving TOML writer in
+    the standard library and this repository may not add a dependency, so a tool
+    that rewrote this file would destroy the comments that say why each value is
+    what it is -- 53 of 313 lines on the fleet this was written for. One inserted
+    line touches nothing else.
+
+    Refuses rather than guessing, in four ways, because the file it edits is the
+    one every tool parses at startup:
+
+    * a file that does not already parse is not touched -- a tool must not be
+      what discovers somebody else's broken file by adding to it;
+    * the header must match exactly one LINE that is exactly `[table]`, so a
+      mention inside a comment or a string cannot be taken for the table;
+    * an existing key with the same value succeeds and changes nothing;
+    * an existing key with a DIFFERENT value refuses -- changing a declaration is
+      not appending one, and the human made that one.
+    """
+    try:
+        with open(path, "rb") as f:
+            doc = tomllib.load(f)
+    except tomllib.TOMLDecodeError as e:
+        return False, "%s does not parse now; refusing to add to it (%s)" % (path, e)
+    except OSError as e:
+        return False, "cannot read %s (%s)" % (path, e.strerror or e)
+
+    have = doc.get(table) or {}
+    if key in have:
+        if have[key] == value:
+            return True, "already declared as %r" % (have[key],)
+        return False, ("%s is already %r under [%s]; changing a declaration is not "
+                       "appending one" % (key, have[key], table))
+
+    with open(path) as f:
+        lines = f.readlines()
+    want = _HEADER % table
+    at = [i for i, l in enumerate(lines) if l.strip() == want]
+    if len(at) != 1:
+        return False, ("found %d lines that are exactly %s; refusing to guess where "
+                       "to put it" % (len(at), want))
+    i = at[0] + 1
+    new = lines[:i] + ['%s = "%s"\n' % (key, value)] + lines[i:]
+
+    def reads_back(d):
+        if (d.get(table) or {}).get(key) != value:
+            return "the inserted line did not read back as intended"
+        return None
+
+    ok, why = write_verified(path, "".join(new), reads_back)
+    return ok, why or ("%s = %r added under [%s]" % (key, value, table))
+
 
 def updates(cfg):
     """`[updates]` -- a file some other program derives this machine's pending

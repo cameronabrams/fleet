@@ -226,3 +226,122 @@ class Events(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AppendingADeclaration(unittest.TestCase):
+    """A tool may append a declaration a human supplied; it may never regenerate.
+
+    The rule began as "never write a file a human authors", justified by there
+    being no comment-preserving TOML writer in the standard library. That
+    justification rules out REGENERATING a file and does not rule out appending a
+    line -- a peer argued it and was right (2026-10-20).
+
+    The hazard it was really protecting against is not comments. `fc.load()`
+    parses at call time and every tool calls it, so a duplicate key takes the
+    whole fleet's tooling down at once rather than the feature that wrote it.
+    Which is why every guard below is a refusal, and why the write is verified in
+    a temp file before it replaces anything.
+    """
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, "fleet.toml")
+        self.write('# how colors work here\n[colors]\nalpha = "red"\n\n[owners]\n')
+
+    def write(self, text):
+        with open(self.path, "w") as f:
+            f.write(text)
+
+    def test_a_new_key_is_appended_and_nothing_else_changes(self):
+        before = open(self.path).read()
+        ok, why = fc.declare(self.path, "colors", "beta", "blue")
+        self.assertTrue(ok, why)
+        after = open(self.path).read()
+        self.assertEqual(fc.colors(self.load())["beta"], "blue")
+        self.assertEqual(before.count("#"), after.count("#"))
+        self.assertEqual([l for l in after.splitlines()
+                          if l not in before.splitlines()], ['beta = "blue"'])
+
+    def load(self):
+        with open(self.path, "rb") as f:
+            import tomllib
+            return tomllib.load(f)
+
+    def test_the_same_value_again_succeeds_and_changes_nothing(self):
+        before = open(self.path).read()
+        ok, why = fc.declare(self.path, "colors", "alpha", "red")
+        self.assertTrue(ok, why)
+        self.assertEqual(open(self.path).read(), before)
+
+    def test_a_different_value_is_refused(self):
+        """Changing a declaration is not appending one, and the human made that
+        one."""
+        ok, why = fc.declare(self.path, "colors", "alpha", "blue")
+        self.assertFalse(ok)
+        self.assertIn("already", why)
+        self.assertEqual(fc.colors(self.load())["alpha"], "red")
+
+    def test_a_header_in_a_comment_is_not_the_table(self):
+        """The ambiguity that bit a hand-written regex on 2026-10-19: it matched
+        by shape, and the shape appears in prose too."""
+        self.write('# put the color under [colors]\n[colors]\nalpha = "red"\n')
+        ok, why = fc.declare(self.path, "colors", "beta", "blue")
+        self.assertTrue(ok, why)
+        self.assertEqual(fc.colors(self.load())["beta"], "blue")
+
+    def test_a_missing_table_is_refused_rather_than_guessed(self):
+        self.write('[human]\nname = "A"\n')
+        ok, why = fc.declare(self.path, "colors", "beta", "blue")
+        self.assertFalse(ok)
+        self.assertIn("refusing to guess", why)
+
+    def test_a_file_that_does_not_parse_is_not_touched(self):
+        """A tool must not be what discovers somebody else's broken file by
+        adding to it."""
+        self.write('[colors]\nalpha = "red"\nalpha = "blue"\n')
+        before = open(self.path).read()
+        ok, why = fc.declare(self.path, "colors", "beta", "blue")
+        self.assertFalse(ok)
+        self.assertIn("does not parse", why)
+        self.assertEqual(open(self.path).read(), before)
+
+
+class AWriteVerifiedBeforeItLands(unittest.TestCase):
+    """Where the check sits is part of the check.
+
+    "Write it, then re-parse to confirm" detects the damage correctly and
+    prevents none of it: the broken file already exists while the check runs,
+    every tool parses it at startup, and anything invoked in between dies.
+    """
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, "fleet.toml")
+        with open(self.path, "w") as f:
+            f.write('[human]\nname = "A"\n')
+
+    def test_content_that_would_not_parse_never_lands(self):
+        before = open(self.path).read()
+        ok, why = fc.write_verified(self.path, '[human]\nname = "A"\nname = "B"\n')
+        self.assertFalse(ok)
+        self.assertIn("would not parse", why)
+        self.assertEqual(open(self.path).read(), before,
+                         "a broken file was left on disk, if only briefly")
+
+    def test_a_failing_check_stops_it_too(self):
+        ok, why = fc.write_verified(self.path, '[human]\nname = "B"\n',
+                                    lambda d: "not what was asked for")
+        self.assertFalse(ok)
+        self.assertEqual(fc.load()["human"]["name"] if False else
+                         open(self.path).read(), '[human]\nname = "A"\n')
+
+    def test_no_temp_file_is_left_behind_either_way(self):
+        fc.write_verified(self.path, '[human]\nname = "B"\n')
+        fc.write_verified(self.path, 'nope = =\n')
+        self.assertEqual([f for f in os.listdir(self.tmp.name)
+                          if f.startswith(".fleet-write-")], [])
+
+    def test_a_good_write_lands(self):
+        ok, why = fc.write_verified(self.path, '[human]\nname = "B"\n')
+        self.assertTrue(ok, why)
+        self.assertIn('name = "B"', open(self.path).read())

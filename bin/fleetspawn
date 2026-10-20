@@ -32,7 +32,7 @@ an agent read, edit and execute there; that is the human's decision, and on
 2026-09-12 the coordinator answered it for a new session before reading that it
 should not. If the prompt appears, this stops and says which pane to look at.
 """
-import argparse, json, os, shlex, subprocess, sys, time
+import argparse, json, os, shlex, shutil, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
@@ -43,6 +43,8 @@ from fleet.procs import claude_procs, named
 from fleet.transcripts import agent_color, registry_uuid, session_name, uuid_from_descendants
 CFG = fc.load()
 STATE = fc.state_dir(CFG)
+APP = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+BRIEF_EXAMPLE = os.path.join(APP, "examples", "brief.example.md")
 
 # Imported, not restated. This file kept its own identical copy of the tuple, and
 # a marker with two homes is a marker that drifts: the two in fleet/panes.py
@@ -97,7 +99,7 @@ def preflight(a, brief):
         problems.append(f"directory does not exist: {a.dir} (create it, and git init if it is a repo)")
     if not os.path.isfile(brief):
         problems.append(f"no brief at {brief} -- write one first (examples/brief.example.md)")
-    if not fc.colors(CFG).get(a.name):
+    if not fc.colors(fc.load()).get(a.name):
         problems.append(f'no color declared -- add  {a.name} = "<color>"  under [colors] '
                         f"in fleet.toml ({', '.join(fc.COLORS)})")
     rc, _, _ = tmux("has-session")
@@ -278,6 +280,65 @@ def apply_color(pane, name, pid, color, idle_wait, confirm_wait=COLOR_CONFIRM_WA
     return (f"typed it, but transcript {uuid[:8]} still records "
             f"{agent_color(uuid) or 'no color'} after {confirm_wait}s")
 
+def declare_color(a):
+    """Put `NAME = "<color>"` under [colors] if it is not there already.
+
+    This is the refusal `fleetspawn` hands back most often, and the fix was a hand
+    edit of the one file every tool parses at startup. The human still chooses the
+    color -- they typed it on this command line; the tool only writes it where the
+    declaration lives.
+
+    **Appended and verified, never rewritten.** `fleet.config.declare` refuses a
+    file that does not already parse, refuses unless exactly one line is exactly
+    `[colors]`, refuses to change a declaration that is already there, and proves
+    the result parses in a temp file before it replaces anything.
+    """
+    if a.color not in fc.COLORS:
+        sys.exit("\n  REFUSED: %r is not a color /color accepts (%s)\n"
+                 % (a.color, ", ".join(fc.COLORS)))
+    path = os.path.join(fc.config_dir(), "fleet.toml")
+    if not a.go:
+        have = fc.colors(fc.load()).get(a.name)
+        print("  color  would declare %s = %r under [colors]%s"
+              % (a.name, a.color,
+                 "" if not have else "  (already %r)" % have))
+        return
+    ok, why = fc.declare(path, "colors", a.name, a.color)
+    print("  color  %s" % why)
+    if not ok:
+        sys.exit("\n  the color was not declared, so the spawn would fail preflight.\n"
+                 "  Fix it by hand and re-run.\n")
+
+
+def do_brief_from_example(a, brief):
+    """Copy the brief template into place and STOP.
+
+    Scaffolding the FILE is a kindness; writing its content is the thing the
+    refusal exists to force. `[spawn].first_prompt` tells a session to read its
+    brief and follow it, so a template brief is a session told that its role is
+    "fill me in" -- and that fails QUIETLY, as a session which behaves plausibly
+    and owns nothing in particular, where a missing brief fails at preflight.
+    """
+    if os.path.exists(brief):
+        print("\n  brief already exists: %s\n  Not overwritten.\n" % brief)
+        return 2
+    if not a.go:
+        print("\n  would copy %s\n            -> %s\n\n  plan only -- re-run with --go\n"
+              % (BRIEF_EXAMPLE, brief))
+        return 0
+    try:
+        os.makedirs(os.path.dirname(brief), exist_ok=True)
+        shutil.copyfile(BRIEF_EXAMPLE, brief)
+    except OSError as e:
+        print("\n  could not copy the template: %s\n" % (e.strerror or e))
+        return 4
+    print("\n  copied %s\n      -> %s" % (BRIEF_EXAMPLE, brief))
+    print("\n  NOT SPAWNED. Edit that file first -- it is a template, and a session")
+    print("  launched against it is told its role is to fill itself in. Then:")
+    print("    fleetspawn %s %s --window <title> --go\n" % (a.name, a.dir))
+    return 0
+
+
 def adoption_kind(resume):
     """(from, note) for the adoption line: an unpark and a fresh spawn are
     different events and the log has to tell them apart.
@@ -337,6 +398,15 @@ def main():
     ap.add_argument("--split", choices=("v", "h"), default="v",
                     help="with --beside: v = below (default), h = to the right")
     ap.add_argument("--brief", help="default: <config>/briefs/NAME.md")
+    ap.add_argument("--color", metavar="C",
+                    help="declare this color for NAME under [colors] if it is not "
+                         "declared yet (appended, never rewritten)")
+    ap.add_argument("--create-dir", action="store_true",
+                    help="create DIR if it does not exist. The folder-trust prompt "
+                         "still stops the spawn, so the grant stays the human's.")
+    ap.add_argument("--brief-from-example", action="store_true",
+                    help="copy the brief template into place and STOP. It does not "
+                         "spawn: a template brief is a role nobody has written.")
     ap.add_argument("--wait", type=int, default=60, help="seconds to wait for startup")
     ap.add_argument("--color-wait", type=int, default=COLOR_IDLE_WAIT, metavar="S",
                     help="seconds to wait for the new session to go idle before typing /color")
@@ -353,10 +423,30 @@ def main():
         ap.error("one of --beside/--window is required")
     brief = os.path.expanduser(a.brief or os.path.join(fc.config_dir(), "briefs", f"{a.name}.md"))
 
+    # Scaffolding runs BEFORE preflight, so preflight judges what will exist
+    # rather than what did. Each step is reported; none is silent.
+    if a.create_dir and not os.path.isdir(a.dir):
+        if a.go:
+            try:
+                os.makedirs(a.dir, exist_ok=True)
+                print(f"  created {a.dir}")
+            except OSError as e:
+                sys.exit(f"\n  could not create {a.dir}: {e.strerror or e}\n")
+        else:
+            print(f"  would create {a.dir}")
+    if a.brief_from_example:
+        sys.exit(do_brief_from_example(a, brief))
+    if a.color:
+        declare_color(a)
+
     problems = preflight(a, brief)
     print(f"\n  spawn {a.name}  in {a.dir}")
     print(f"  brief {brief}")
-    declared = fc.colors(CFG).get(a.name)
+    # Re-read, because --color may have just declared it. The module-level CFG is
+    # the state of the file at import, and this line is printed after the
+    # scaffolding has run -- the same staleness that had a watched board listing a
+    # session as parked 22 hours after it was unparked (f5c7201).
+    declared = fc.colors(fc.load()).get(a.name)
     print(f"  color {declared or 'NOT DECLARED'}"
           + ("" if not declared else
              "  (left to be typed by hand)" if a.no_color else
@@ -441,7 +531,18 @@ def main():
     else:
         print(f"  adoption logged: {a.name} on {ran or '?'}")
 
-    color = fc.colors(CFG)[a.name]
+    # Re-read, and tolerate its absence. `--color` may have declared it minutes
+    # ago, after the module-level CFG was loaded -- and this line runs AFTER the
+    # pane is made and the session launched, so a KeyError here kills the tool
+    # with a live session already up. Found by a test asserting no color is read
+    # from the import-time configuration; the end-to-end run before it passed
+    # only because an earlier run had left the declaration in place.
+    color = fc.colors(fc.load()).get(a.name)
+    if not color:
+        print(f"  color: not declared for {a.name}; the session is up and unlabeled.")
+        print(f"         Declare it, then type /color yourself in pane {pane}.")
+        print("  next: ListAgents to confirm the name; then fleetsnap (it checks the color)\n")
+        return
     if a.no_color:
         print(f"  color: not typed (--no-color). Type  /color {color}  in pane {pane} once idle.")
     else:

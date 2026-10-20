@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""fleetinit - create a fleet's configuration directory so the other tools can run.
+
+  fleetinit                      show the plan; change nothing (the default)
+  fleetinit --go                 create <config>/, <config>/briefs/ and fleet.toml
+  fleetinit --from PATH --go     take the shareable parts of an existing config
+  fleetinit --save-profile PATH  write those parts out, and stop
+
+On a fresh machine nothing else can run: `install` exits 2 without a fleet.toml,
+so this is the step that blocks every other step. That is why it exists and why
+it comes first.
+
+**The repository ships the schema and the questions, never the answers.** A name,
+a cluster, an ssh host and an account code are a person's and a site's; this
+package may not contain them (CLAUDE.md), so defaults cannot live here. They
+travel one of two ways:
+
+  --from <an existing fleet.toml>   copies the parts that are about how someone
+                                    likes fleets to work -- [human], [paths],
+                                    [spawn], [context], [notify], [mail] and every
+                                    [cluster.*] -- and drops the parts that are
+                                    about one particular fleet.
+  the prompts                       asked when a value is missing and there is a
+                                    terminal to ask at; `--name` and friends
+                                    answer them non-interactively.
+
+So the fresh-machine path is: clone this repository, fetch your own configuration
+from wherever you keep it, `fleetinit --from <it> --go`. With nothing personal to
+hand, the prompts and the example file still produce a working configuration.
+
+**Copied as TEXT, not parsed and re-emitted.** There is no comment-preserving TOML
+writer in the standard library, and the comments are the reason a configuration is
+worth reading: they say why each value is what it is. Whole sections are deleted
+by line; nothing else is touched; and the result is parsed before it replaces
+anything.
+
+It never overwrites an existing fleet.toml. A configuration that is already there
+is somebody's work.
+"""
+import argparse, os, re, shutil, sys, tomllib
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from fleet import config as fc
+from fleet import version_flag
+
+APP = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+EXAMPLE = os.path.join(APP, "examples", "fleet.example.toml")
+BRIEF_EXAMPLE = os.path.join(APP, "examples", "brief.example.md")
+
+# What belongs to ONE fleet rather than to how a person likes fleets to work --
+# and it divides in two, which an end-to-end run found and no unit test would
+# have.
+#
+# EMPTIED, header and comments kept: every fleet HAS a roster, so `[colors]` and
+# `[owners]` are per-fleet in their CONTENTS, not in their existence. Deleting
+# the header outright left a config that `fleetspawn --color` then refused to
+# add to -- correctly, since it will not guess where a missing section goes.
+EMPTY = ("colors", "owners")
+# DROPPED outright: `[parked.*]` and `[retired.*]` are history a new fleet has
+# none of; `[authority]` is a statement about one grant to one set of sessions;
+# `[updates]` names a host. A copy carrying any of them describes a fleet that
+# does not exist on the new machine -- twelve parked entries naming transcripts
+# that are not on that disk.
+DROP = ("parked", "retired", "authority", "updates")
+PER_FLEET = EMPTY + DROP
+
+# Asked in this order, and each says what it is for rather than naming a key.
+QUESTIONS = [
+    ("human", "name", "Your name, as sessions should address you", None),
+    ("human", "timezone", "Your timezone (e.g. America/New_York)", None),
+    ("mail", "fleet", "A short name for THIS fleet (used in cross-fleet mail)", ""),
+]
+
+
+def kind_of(name):
+    """"empty", "drop" or None for a section name."""
+    top = name.split(".")[0]
+    if top in EMPTY:
+        return "empty"
+    return "drop" if top in DROP else None
+
+
+def strip_per_fleet(text):
+    """(text, emptied, dropped) with per-fleet content removed, by line.
+
+    An emptied section keeps its header and the comment paragraph above it: that
+    paragraph says what the section is for, which a fresh fleet needs more than
+    an established one does.
+
+    A dropped section takes that paragraph with it -- otherwise the copy keeps
+    prose explaining a section that is no longer there, which is worse than
+    keeping both or dropping both.
+    """
+    lines = text.splitlines(keepends=True)
+    keep, emptied, dropped, i = [], [], [], 0
+    while i < len(lines):
+        m = re.match(r"\s*\[\[?([^\]]+)\]\]?\s*$", lines[i].rstrip("\n"))
+        k = kind_of(m.group(1)) if m else None
+        if k == "empty":
+            emptied.append(m.group(1))
+            keep.append(lines[i])                 # the header stays, its entries do not
+            i += 1
+            while i < len(lines) and not re.match(r"\s*\[", lines[i]):
+                i += 1
+            keep.append("\n")
+            continue
+        if k == "drop":
+            dropped.append(m.group(1))
+            while keep and keep[-1].lstrip().startswith("#"):
+                keep.pop()
+            while keep and not keep[-1].strip():
+                keep.pop()
+            i += 1
+            while i < len(lines) and not re.match(r"\s*\[", lines[i]):
+                i += 1
+            continue
+        keep.append(lines[i])
+        i += 1
+    return "".join(keep).rstrip("\n") + "\n", emptied, dropped
+
+
+def set_value(text, table, key, value):
+    """Set `key` under `[table]`, by line, whether or not it is already there.
+
+    Only ever touches the one line. A key that is absent is appended under its
+    header; one that is present has its value replaced and its comment kept.
+    """
+    lines = text.splitlines(keepends=True)
+    head = [i for i, l in enumerate(lines) if l.strip() == "[%s]" % table]
+    if not head:
+        return text + '\n[%s]\n%s = "%s"\n' % (table, key, value)
+    start = head[0] + 1
+    end = start
+    while end < len(lines) and not re.match(r"\s*\[", lines[end]):
+        end += 1
+    for i in range(start, end):
+        m = re.match(r"(\s*)%s(\s*)=\s*(.*?)(\s*#.*)?$" % re.escape(key),
+                     lines[i].rstrip("\n"))
+        if m:
+            lines[i] = '%s%s%s= "%s"%s\n' % (m.group(1), key, m.group(2) or " ",
+                                             value, m.group(4) or "")
+            return "".join(lines)
+    lines.insert(start, '%s = "%s"\n' % (key, value))
+    return "".join(lines)
+
+
+def ask(prompt, default):
+    """Ask, or return the default when there is nobody to ask."""
+    if not sys.stdin.isatty():
+        return default
+    shown = " [%s]" % default if default else ""
+    try:
+        got = input("  %s%s: " % (prompt, shown)).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return default
+    return got or default
+
+
+def build(a, source_text, source_name):
+    """(text, notes) for the fleet.toml this would write."""
+    notes = []
+    text, emptied, dropped = strip_per_fleet(source_text)
+    if emptied:
+        notes.append("emptied (kept the header, dropped the entries): %s"
+                     % ", ".join(sorted(set(emptied))))
+    if dropped:
+        notes.append("dropped %d per-fleet section(s) from %s: %s"
+                     % (len(dropped), source_name, ", ".join(sorted(set(dropped)))))
+    try:
+        have = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        have = {}
+    for table, key, prompt, fallback in QUESTIONS:
+        given = getattr(a, key.replace("-", "_"), None)
+        current = (have.get(table) or {}).get(key)
+        value = given or (current if a.keep else None)
+        if value is None:
+            value = ask(prompt, current or fallback)
+        if value:
+            text = set_value(text, table, key, value)
+            notes.append("[%s] %s = %r" % (table, key, value))
+        elif current is None:
+            notes.append("[%s] %s left unset -- edit it before spawning" % (table, key))
+    return text, notes
+
+
+def main():
+    version_flag()
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--from", dest="source", metavar="PATH",
+                    help="an existing fleet.toml to take the shareable parts from")
+    ap.add_argument("--name", help="[human] name")
+    ap.add_argument("--timezone", help="[human] timezone")
+    ap.add_argument("--fleet", help="[mail] fleet -- this fleet's own short name")
+    ap.add_argument("--keep", action="store_true",
+                    help="with --from: keep the source's answers; ask nothing")
+    ap.add_argument("--save-profile", metavar="PATH",
+                    help="write the shareable parts of --from to PATH and stop")
+    ap.add_argument("--go", action="store_true")
+    a = ap.parse_args()
+
+    cfg = fc.config_dir()
+    target = os.path.join(cfg, "fleet.toml")
+    briefs = os.path.join(cfg, "briefs")
+
+    src = a.source or EXAMPLE
+    if not os.path.isfile(src):
+        sys.exit("\n  no such file: %s\n" % src)
+    with open(src) as f:
+        source_text = f.read()
+
+    # --save-profile is about the SOURCE, not about this machine's configuration,
+    # so it neither reads nor writes <config>/ at all.
+    if a.save_profile:
+        text, emptied, dropped = strip_per_fleet(source_text)
+        print("\n  profile from %s -> %s" % (src, a.save_profile))
+        print("  empties: %s" % (", ".join(sorted(set(emptied))) or "nothing"))
+        print("  drops:   %s" % (", ".join(sorted(set(dropped))) or "nothing"))
+        if not a.go:
+            print("\n  plan only -- re-run with --go\n")
+            return
+        ok, why = fc.write_verified(a.save_profile, text)
+        print("\n  %s\n" % (why or "written"))
+        sys.exit(0 if ok else 4)
+
+    print("\n  config   %s" % cfg)
+    print("  from     %s%s" % (src, "" if a.source else "  (the shipped example)"))
+    if os.path.exists(target):
+        print("\n  REFUSED: %s already exists. A configuration that is already there"
+              "\n  is somebody's work; this tool will not overwrite it.\n" % target)
+        sys.exit(2)
+
+    text, notes = build(a, source_text, os.path.basename(src))
+    for n in notes:
+        print("  %s" % n)
+    print("\n  would create:")
+    print("    %s" % target)
+    print("    %s/" % briefs)
+    if not a.go:
+        print("\n  plan only -- re-run with --go\n")
+        return
+
+    try:
+        os.makedirs(briefs, exist_ok=True)
+    except OSError as e:
+        sys.exit("\n  could not create %s: %s\n" % (briefs, e.strerror or e))
+    ok, why = fc.write_verified(target, text)
+    if not ok:
+        sys.exit("\n  %s\n" % why)
+    print("\n  created %s" % target)
+    print("  created %s/" % briefs)
+    print("\n  next: write a brief for the first session --")
+    print("    cp %s %s/<name>.md" % (BRIEF_EXAMPLE, briefs))
+    print("    $EDITOR %s/<name>.md" % briefs)
+    print("  then:  install --go   and   fleetspawn <name> <dir> --window <title> --go\n")
+
+
+if __name__ == "__main__":
+    main()

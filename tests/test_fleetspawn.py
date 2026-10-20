@@ -551,3 +551,72 @@ class LaunchingTheSoakedTargetNotTheNewest(unittest.TestCase):
             with mock.patch.object(self.spawn.os.path, "exists", lambda p: True):
                 cmd, _ = self.spawn.claude_cmd()
         self.assertIn("'/a dir/2.1.301'", cmd)
+
+
+class ScaffoldingTheStepsBeforeASpawn(unittest.TestCase):
+    """`fleetspawn` already named every missing piece in preflight and then
+    refused instead of offering. These flags offer.
+
+    The boundary that matters: scaffolding a FILE is a kindness, writing its
+    CONTENT is the thing the refusal exists to force.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.spawn = load_tool("fleetspawn")
+        self.addCleanup(self.cfg.close)
+
+    def src(self):
+        return open(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "bin", "fleetspawn")).read()
+
+    def test_a_template_brief_stops_rather_than_spawning(self):
+        """`[spawn].first_prompt` tells a session to read its brief and follow
+        it, so a template brief is a session told its role is to fill itself in.
+        That fails QUIETLY -- a session behaving plausibly and owning nothing in
+        particular -- where a missing brief fails at preflight."""
+        body = self.src()
+        i = body.index("def do_brief_from_example")
+        fn = body[i:body.index("\ndef ", i + 10)]
+        self.assertIn("NOT SPAWNED", fn)
+        self.assertIn("return 0", fn)
+        # it is dispatched before anything launches, and exits
+        main = body[body.index("def main("):]
+        self.assertIn("sys.exit(do_brief_from_example(a, brief))", main)
+        self.assertLess(main.index("do_brief_from_example"),
+                        main.index("plan only -- re-run with --go"))
+
+    def test_it_does_not_overwrite_a_brief_that_exists(self):
+        body = self.src()
+        i = body.index("def do_brief_from_example")
+        self.assertIn("Not overwritten", body[i:i + 600])
+
+    def test_the_color_is_checked_against_the_accepted_set(self):
+        """A color `/color` will not accept is a declaration that can never be
+        satisfied, and `fleetsnap` would flag the mismatch forever."""
+        body = self.src()
+        i = body.index("def declare_color")
+        fn = body[i:body.index("\ndef ", i + 10)]
+        self.assertIn("fc.COLORS", fn)
+
+    def test_a_failed_declaration_stops_the_spawn(self):
+        """Rather than launching into a preflight that is now certain to fail."""
+        body = self.src()
+        i = body.index("def declare_color")
+        fn = body[i:body.index("\ndef ", i + 10)]
+        self.assertIn("sys.exit", fn)
+
+    def test_scaffolding_runs_before_preflight_judges(self):
+        """So preflight judges what will exist rather than what did."""
+        main = self.src()[self.src().index("def main("):]
+        for flag in ("a.create_dir", "a.color"):
+            self.assertLess(main.index(flag), main.index("problems = preflight("),
+                            flag)
+
+    def test_preflight_rereads_the_config_rather_than_the_import_time_copy(self):
+        """`--color` may have just written it. The module-level CFG is the file
+        as it was at import -- the staleness that had a watched board listing a
+        session as parked 22 hours after it was unparked."""
+        body = self.src()
+        self.assertNotIn("fc.colors(CFG)", body,
+                         "a color is read from the import-time configuration")
+        self.assertIn("fc.colors(fc.load())", body)
