@@ -1,10 +1,19 @@
-# Example fleet configuration. Copy to ~/.config/fleet/fleet.toml and edit.
-# (or set FLEET_CONFIG to the directory holding it)
+# Example fleet configuration. `fleetinit --go` copies this into place and
+# fills in the few answers it needs; `fleetinit --from <another fleet.toml>`
+# takes your own defaults instead. Copying it by hand still works.
+# (FLEET_CONFIG sets the directory holding it)
 #
 # This file holds what a human DECLARES about a fleet. Anything the tools OBSERVE
 # at runtime -- manifests, watcher registrations, re-arm ledgers -- lives under
 # [paths].state instead. Keep those apart: a record of observed state kept by
 # hand is exactly what rots.
+
+# THIS FLEET'S OWN NAME. It labels every pane fleetspawn creates (@fleet) so that
+# two fleets sharing a machine can tell their sessions apart -- without it, one
+# fleet's tools count the other's sessions as members. It is also the namespace
+# cross-fleet mail addresses use, so [mail].fleet is kept in step with it.
+[fleet]
+name = "myfleet"
 
 # How sessions refer to the human they work for. fleetwaiting builds its "blocked
 # on the human" patterns from these; "the human" and "the user" always count.

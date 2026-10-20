@@ -33,6 +33,47 @@ A complete example is in ``examples/fleet.example.toml``:
 Sections
 --------
 
+``[fleet]``
+^^^^^^^^^^^
+
+``name`` is this fleet's own short name::
+
+   [fleet]
+   name = "myfleet"
+
+:doc:`tools/fleetspawn` stamps it on every pane it creates, as the ``@fleet``
+option beside ``@agent``, and :doc:`tools/fleetboard` and the membership rule in
+``fleet.panes.belongs`` read it back. **Two fleets can share a machine**, and
+until this existed nothing could tell them apart: membership was "a pane with
+``@agent`` on the default tmux server", so one fleet's tools counted the other's
+sessions as members — demanding a brief and a colour for a stranger's session,
+and offering to restart it.
+
+``fleet.config.fleet_name`` falls back to ``[mail].fleet`` when this is unset, so
+a fleet that was named for mail before this section existed is already
+recognisable. :doc:`tools/fleetinit` writes both and keeps them equal: one
+identity with two readers, and a fleet called one thing by its panes and another
+by its mail is worse than one with no name.
+
+A fleet with no name counts every pane as its own, because it cannot say which
+are not — and guessing in the excluding direction would hide real members.
+Existing panes are labelled once with ``fleetinit --label-panes``.
+
+``[updates]``
+^^^^^^^^^^^^^
+
+Where some other program derives this machine's pending software updates::
+
+   [updates]
+   status = "/var/lib/<host>-updates/status.json"
+   stale_hours = 36     # a daily producer may miss one day and no more
+
+:doc:`tools/fleetboard` **reads** this and declares nothing, the same contract it
+holds for every other source. The path lives in configuration because it names a
+host, and the application may not. Absent, the board says nothing about updates —
+which is silence by choice, and distinguishable from a configured source that
+could not be read.
+
 ``[human]``
 ~~~~~~~~~~~
 

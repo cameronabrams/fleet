@@ -24,11 +24,25 @@ fleet is not installed with ``pip``. Clone it and link it into place:
 Configure
 ---------
 
+:doc:`tools/fleetinit` creates the directory and the file, so nothing has to be
+copied or edited by hand first:
+
 .. code-block:: bash
 
-   $ mkdir -p ~/.config/fleet/briefs
-   $ cp examples/fleet.example.toml ~/.config/fleet/fleet.toml        # then edit
+   $ bin/fleetinit --go                              # from the shipped example
    $ cp examples/conventions.example.md ~/.config/fleet/conventions.md
+
+**If you already run a fleet somewhere**, take your own defaults from it instead —
+your name, your clusters, your thresholds, with the other fleet's roster and
+history left behind:
+
+.. code-block:: bash
+
+   $ bin/fleetinit --from /path/to/another/fleet.toml --go
+
+That is the whole fresh-machine path: clone this repository, fetch the
+configuration you keep privately, run one command. ``install`` refuses to run
+without a ``fleet.toml`` and names these commands when it does.
 
 See :doc:`configuration` for every setting. Put the configuration directory under
 version control of its own — privately; it names your hosts, accounts and sessions
