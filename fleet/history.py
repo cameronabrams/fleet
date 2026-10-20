@@ -30,16 +30,18 @@ def _text(content):
 def scan(path):
     """dict for one transcript, or None if it has no timestamped record.
 
-    names     [(epoch or None, name)] from agent-name records and ListAgents
-              self-reports, in file order
-    first, last, bins (sorted bin indices with any timestamped record)
-    clear     started by /clear (a /clear command among the first user records)
-    compact   [epoch], merged within COMPACT_MERGE
-    renames   [(epoch, old, new)] where the agent-name changes; an agent-name record
-              carries no timestamp, so the last timestamp before it is used
-    sent      SendMessage tool_uses; received: cross-session messages delivered
-    versions  [first, last] claude version seen; version_seen {version: first epoch}
-    cwd       the first recorded working directory
+    The keys::
+
+        names     [(epoch or None, name)] from agent-name records and ListAgents
+                  self-reports, in file order
+        first, last, bins (sorted bin indices with any timestamped record)
+        clear     started by /clear (a /clear command among the first user records)
+        compact   [epoch], merged within COMPACT_MERGE
+        renames   [(epoch, old, new)] where the agent-name changes; an agent-name
+                  record carries no timestamp, so the last timestamp before it is used
+        sent      SendMessage tool_uses; received: cross-session messages delivered
+        versions  [first, last] claude version seen; version_seen {version: first epoch}
+        cwd       the first recorded working directory
     """
     r = {"uuid": os.path.basename(path)[:-6],
          "project": os.path.basename(os.path.dirname(path)),

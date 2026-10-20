@@ -32,8 +32,21 @@ jobs:
           PYTHONDONTWRITEBYTECODE: "1"
         run: python -m unittest discover -s tests -t .
 
+  docs:
+    # Duplicated from docs.yml rather than shared: a release gate that reads
+    # correctly on its own page is worth eight lines of yaml. v0.3.0 was tagged
+    # green with a docs build that was already red.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r docs/requirements.txt
+      - run: python -m sphinx -b html -W --keep-going docs/source docs/build/html
+
   publish:
-    needs: test          # never release a tag whose tests did not pass
+    needs: [test, docs]  # never release a tag whose tests or docs did not pass
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

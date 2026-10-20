@@ -1,0 +1,45 @@
+# Build the documentation the way Read the Docs builds it, before the push lands.
+#
+# This is the one workflow that installs packages, and the exception is narrow:
+# the tools and their tests stay stdlib-only (see tests.yml), but the docs have
+# always needed Sphinx -- `docs/requirements.txt` is what Read the Docs installs.
+# Nothing here imports those packages into the tools.
+#
+# `-W` is the point. Read the Docs sets `fail_on_warning: true`, so any Sphinx
+# warning turns the README badge red; without this job the first thing that
+# parses a docstring as RST runs AFTER the tag, and the result reaches the author
+# as a badge color. Mirror .readthedocs.yaml: same Python, same requirements,
+# same conf.py, same fail-on-warning.
+name: docs
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sphinx:
+    runs-on: ubuntu-24.04        # as .readthedocs.yaml
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"      # as .readthedocs.yaml
+
+      - name: Install the Sphinx toolchain
+        run: pip install -r docs/requirements.txt
+
+      - name: Build with warnings as errors
+        # --keep-going so one warning does not hide the rest: a build that stops
+        # at the first problem makes a ten-warning push look like a one-line fix.
+        run: python -m sphinx -b html -W --keep-going docs/source docs/build/html

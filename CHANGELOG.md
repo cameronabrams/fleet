@@ -30,6 +30,25 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The documentation build, and the hole that let it break unnoticed.**
+  `fleet.history.scan`'s docstring is a column-aligned key table; RST reads that
+  as a definition list and warns three times, and Read the Docs sets
+  `fail_on_warning`. It had never been parsed before, because autodoc reads a
+  module's docstrings only once that module has an `api/` page — `fleet.history`
+  got its first one in 0.3.0, so adding the API pages is what exposed it. The
+  docstring is a literal block now, which renders as it already reads in source.
+
+### Added
+
+- **`docs.yml` builds the documentation with `-W`** on every push to `main`, every
+  pull request and every tag, mirroring `.readthedocs.yaml` (same Python, same
+  requirements, same `conf.py`). `release.yaml` grows a matching `docs` job that
+  `publish` depends on, so a tag cannot ship documentation that will not build.
+  This is the one workflow that installs packages; the tools and their tests stay
+  stdlib-only.
+
 ## [0.3.0] - 2026-10-20
 
 

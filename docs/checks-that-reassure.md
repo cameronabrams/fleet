@@ -345,6 +345,28 @@ Three mechanisms produce it.
   ways; and a test about which binary gets launched must SAY which it expects
   rather than inheriting whatever the host happens to have.
 
+- **A green release gate over a red docs build.** `tests.yml` and `release.yaml`
+  were both green on the v0.3.0 tag while the Read the Docs badge in the same
+  README turned red (2026-10-20). Nothing in the repository builds the
+  documentation, so the only thing that ever parses a docstring as RST runs after
+  the push, on a service whose verdict reaches the author as a badge color.
+
+  The broken docstring was old and until that day unreachable. `fleet.history.scan`
+  documents its return value as a column-aligned key table, which RST reads as a
+  definition list and then trips over the continuation lines. No check had ever
+  objected, because no check had ever read it: autodoc parses a module's docstrings
+  only once that module has an `api/` page, and `fleet.history` got its first page
+  in that release. **Documentation coverage is also error coverage.** An
+  undocumented module's docstrings are unchecked text, and the day they are finally
+  covered is the day they break the build — so the release that adds API pages is
+  exactly the one most likely to fail this way, and was.
+
+  Fixed in two places: the docstring is a literal block now, and `docs.yml` builds
+  with `-W`, the flag Read the Docs already sets, on every push and pull request.
+  `release.yaml` has a `docs` job that `publish` needs, so the gate is red before
+  the tag instead of after it. Confirmed reachable by restoring the old docstring
+  in a scratch copy: three warnings, exit 1.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and
