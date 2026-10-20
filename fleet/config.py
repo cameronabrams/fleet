@@ -377,6 +377,29 @@ def ntfy_topic(path):
     first = next((l.strip() for l in text.splitlines() if l.strip()), "")
     return first if re.fullmatch(r"[A-Za-z0-9_-]+", first) else None
 
+def fleet_name(cfg):
+    """This fleet's own name, or None.
+
+    `[fleet].name` if declared, else `[mail].fleet` -- which has carried a fleet's
+    identity since mail needed a namespace, and is the only place one was ever
+    written down. Reading both means an established fleet keeps working with no
+    edit while a new one gets the name in the place it belongs.
+
+    It exists because **two fleets can share a machine and nothing could tell**.
+    Membership was "a pane with `@agent` on the default tmux server", so a second
+    fleet's sessions counted as this one's: `fleetsnap` asked for a brief and a
+    color for them, and the roll would have offered to restart one (2026-10-20).
+
+    None when neither is set. A fleet that has never been named cannot say which
+    panes are not its own, and the tools must then include everything rather than
+    exclude everything -- see `fleet.panes.belongs`.
+    """
+    name = (cfg.get("fleet", {}).get("name")
+            or cfg.get("mail", {}).get("fleet") or "")
+    name = str(name).strip()
+    return name or None
+
+
 def mail(cfg):
     """[mail]: this fleet's name in a shared mailbox, and where that mailbox lives.
 

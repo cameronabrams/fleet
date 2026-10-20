@@ -194,6 +194,28 @@ fleet-ending fact at exactly the moment the other half of the check broke. Only
 an *unknown* source withholds it, because there the document could not be
 interpreted at all.
 
+Whose fleet a pane is in
+------------------------
+
+Two fleets can share a machine. A pane labeled with **another** fleet's
+``@fleet`` is listed separately as *not this fleet* and takes no part in anything
+else the board says. A pane with **no** ``@fleet`` is counted as ours — and
+**said so, on the screen**, because that is an assumption rather than a reading:
+
+.. code-block:: text
+
+   3 pane(s) carry no @fleet and are assumed ours: alpha, beta, gamma
+
+Including the unlabeled is deliberate and temporary. Zero panes carried ``@fleet``
+when this landed, so excluding them would have emptied every tool at once. The
+order is: :doc:`fleetinit` ``--label-panes``, then the exclusion can be tightened.
+Until then the count is the honest form of the assumption — visible rather than
+buried.
+
+With no name of its own, a fleet counts everything as its own: one that has never
+been named cannot say which panes are not its, and guessing in the excluding
+direction would hide real members.
+
 Absence is rendered ``?``, never as a pass
 ------------------------------------------
 

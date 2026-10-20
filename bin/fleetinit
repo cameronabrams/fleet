@@ -37,14 +37,18 @@ anything.
 It never overwrites an existing fleet.toml. A configuration that is already there
 is somebody's work.
 """
-import argparse, os, re, shutil, sys, tomllib
+import argparse, os, re, shutil, subprocess, sys, tomllib
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import panes as panes_mod
 from fleet import version_flag
 
 APP = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 EXAMPLE = os.path.join(APP, "examples", "fleet.example.toml")
 BRIEF_EXAMPLE = os.path.join(APP, "examples", "brief.example.md")
+
+# With --label-panes: which tmux server to label on. None is the default one.
+SOCKET = None
 
 # What belongs to ONE fleet rather than to how a person likes fleets to work --
 # and it divides in two, which an end-to-end run found and no unit test would
@@ -57,18 +61,42 @@ BRIEF_EXAMPLE = os.path.join(APP, "examples", "brief.example.md")
 EMPTY = ("colors", "owners")
 # DROPPED outright: `[parked.*]` and `[retired.*]` are history a new fleet has
 # none of; `[authority]` is a statement about one grant to one set of sessions;
-# `[updates]` names a host. A copy carrying any of them describes a fleet that
+# `[updates]` names a host; `[fleet]` is the source fleet's own NAME, and a copy
+# that kept it would label its panes as the fleet it was copied from -- the exact
+# confusion the name exists to prevent. A copy carrying any of them describes a fleet that
 # does not exist on the new machine -- twelve parked entries naming transcripts
 # that are not on that disk.
-DROP = ("parked", "retired", "authority", "updates")
+DROP = ("parked", "retired", "authority", "updates", "fleet")
 PER_FLEET = EMPTY + DROP
+
+# A per-fleet KEY inside a section that otherwise travels. `[mail]` is a
+# preference -- which mailbox, how often to poll -- but `fleet` inside it is this
+# fleet's own name in that mailbox, so a copy keeping it would address peers as
+# the fleet it was copied from. Dropping the section instead would lose the
+# mailbox; dropping the line keeps the useful part and discards the identity.
+#
+# Found by a test, not by the manual run: the mirror corrects it when a NEW name
+# is supplied, and `--keep` supplies none -- so a kept copy carried the old name
+# silently.
+PER_FLEET_KEYS = (("mail", "fleet"),)
 
 # Asked in this order, and each says what it is for rather than naming a key.
 QUESTIONS = [
     ("human", "name", "Your name, as sessions should address you", None),
     ("human", "timezone", "Your timezone (e.g. America/New_York)", None),
-    ("mail", "fleet", "A short name for THIS fleet (used in cross-fleet mail)", ""),
+    # Asked before [mail].fleet and separately from it. A fleet's NAME is a
+    # property of the fleet; it lived under [mail] only because mail was the
+    # first thing that needed a namespace, and membership needs the same name --
+    # two fleets can share a machine, and until 2026-10-20 nothing could tell.
+    ("fleet", "name", "A short name for THIS fleet (it labels its panes)", None),
 ]
+
+# One identity, two readers. `fleet.config.fleet_name` prefers `[fleet].name`, but
+# `fleetmail` reads `[mail].fleet` directly for its address namespace -- so an
+# answer has to land in both or the fleet is called one thing by its panes and
+# another by its mail. A derived config carried the SOURCE fleet's `[mail].fleet`
+# until this was noticed: a new fleet addressing peers under the old one's name.
+MIRROR = {("fleet", "name"): ("mail", "fleet")}
 
 
 def kind_of(name):
@@ -115,7 +143,29 @@ def strip_per_fleet(text):
             continue
         keep.append(lines[i])
         i += 1
-    return "".join(keep).rstrip("\n") + "\n", emptied, dropped
+    text = "".join(keep)
+    for table, key in PER_FLEET_KEYS:
+        text, gone = drop_key(text, table, key)
+        if gone:
+            dropped.append("%s.%s" % (table, key))
+    return text.rstrip("\n") + "\n", emptied, dropped
+
+
+def drop_key(text, table, key):
+    """(text, True) with `key` removed from `[table]`, by line."""
+    lines = text.splitlines(keepends=True)
+    head = [i for i, l in enumerate(lines) if l.strip() == "[%s]" % table]
+    if not head:
+        return text, False
+    start = head[0] + 1
+    end = start
+    while end < len(lines) and not re.match(r"\s*\[", lines[end]):
+        end += 1
+    for i in range(start, end):
+        if re.match(r"\s*%s\s*=" % re.escape(key), lines[i]):
+            del lines[i]
+            return "".join(lines), True
+    return text, False
 
 
 def set_value(text, table, key, value):
@@ -171,7 +221,8 @@ def build(a, source_text, source_name):
     except tomllib.TOMLDecodeError:
         have = {}
     for table, key, prompt, fallback in QUESTIONS:
-        given = getattr(a, key.replace("-", "_"), None)
+        given = getattr(a, "name_of_fleet" if table == "fleet" else
+                        key.replace("-", "_"), None)
         current = (have.get(table) or {}).get(key)
         value = given or (current if a.keep else None)
         if value is None:
@@ -179,9 +230,81 @@ def build(a, source_text, source_name):
         if value:
             text = set_value(text, table, key, value)
             notes.append("[%s] %s = %r" % (table, key, value))
+            also = MIRROR.get((table, key))
+            # Keyed on the SECTION existing, not the key: the key has just been
+            # stripped as per-fleet, so requiring it would mean the mirror never
+            # fires. A fleet with a mailbox configured gets its name there; one
+            # with no `[mail]` at all is left alone, since inventing the section
+            # would declare a mailbox nobody asked for.
+            if also and also[0] in have:
+                text = set_value(text, also[0], also[1], value)
+                notes.append("[%s] %s = %r  (the same name, for mail)"
+                             % (also[0], also[1], value))
         elif current is None:
             notes.append("[%s] %s left unset -- edit it before spawning" % (table, key))
     return text, notes
+
+
+def tmux(*a):
+    argv = ["tmux"] + (["-L", SOCKET] if SOCKET else []) + list(a)
+    env = dict(os.environ)
+    env.pop("TMUX", None)          # never inherit the caller's server
+    r = subprocess.run(argv, capture_output=True, text=True, env=env)
+    return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+
+def label_panes(a, ours):
+    """Stamp `@fleet` on this fleet's existing panes. The one-time adoption step.
+
+    `fleetspawn` labels a pane when it creates one, so only panes that predate
+    that need this -- which, when it landed, was all of them: zero carried
+    `@fleet`, and that is why the tools include the unlabeled rather than
+    excluding them. **Label first, then the exclusion can be made strict**; a
+    correct end state reached in the wrong order empties every tool at once.
+
+    It refuses to touch a pane already labeled with ANOTHER fleet's name. That is
+    the one case where the label is doing its job, and overwriting it would be
+    this fleet claiming somebody else's session.
+    """
+    rc, out, err = tmux("list-panes", "-a", "-F",
+                        "#{pane_id}\t" + panes_mod.LABELS)
+    if rc != 0:
+        print("\n  could not list panes: %s\n" % (err or "tmux failed"))
+        return 4
+    todo, already, theirs = [], [], []
+    for row in out.splitlines():
+        f = (row.split("\t") + ["", ""])[:3]
+        pane, agent, fleet = f[0], panes_mod.agent_label(f[1]), panes_mod.fleet_label(f[2])
+        if not agent:
+            continue
+        if not fleet:
+            todo.append((pane, agent))
+        elif fleet == ours:
+            already.append(agent)
+        else:
+            theirs.append((agent, fleet))
+    print("\n  fleet %r" % ours)
+    print("  already labeled: %d" % len(already))
+    if theirs:
+        print("  ANOTHER FLEET'S, left alone: "
+              + ", ".join("%s@%s" % (n, f) for n, f in sorted(theirs)))
+    if not todo:
+        print("  nothing to label.\n")
+        return 0
+    for pane, agent in todo:
+        print("  %s %s -> @fleet=%s" % (pane, agent, ours))
+    if not a.go:
+        print("\n  plan only -- re-run with --go\n")
+        return 0
+    bad = 0
+    for pane, agent in todo:
+        rc, _, err = tmux("set-option", "-p", "-t", pane, "@fleet", ours)
+        if rc != 0:
+            print("  FAILED on %s (%s): %s" % (pane, agent, err or "tmux failed"))
+            bad += 1
+    print("\n  labeled %d pane(s)%s\n"
+          % (len(todo) - bad, "" if not bad else ", %d failed" % bad))
+    return 4 if bad else 0
 
 
 def main():
@@ -191,15 +314,31 @@ def main():
                     help="an existing fleet.toml to take the shareable parts from")
     ap.add_argument("--name", help="[human] name")
     ap.add_argument("--timezone", help="[human] timezone")
-    ap.add_argument("--fleet", help="[mail] fleet -- this fleet's own short name")
+    ap.add_argument("--fleet", dest="name_of_fleet",
+                    help="[fleet] name -- this fleet's own short name, which labels "
+                         "its panes and namespaces its mail")
     ap.add_argument("--keep", action="store_true",
                     help="with --from: keep the source's answers; ask nothing")
     ap.add_argument("--save-profile", metavar="PATH",
                     help="write the shareable parts of --from to PATH and stop")
+    ap.add_argument("--label-panes", action="store_true",
+                    help="stamp @fleet on this fleet's existing panes and stop -- "
+                         "the one-time step for a fleet older than the label")
+    ap.add_argument("--socket", metavar="NAME",
+                    help="with --label-panes: the tmux server to label on")
     ap.add_argument("--go", action="store_true")
     a = ap.parse_args()
+    global SOCKET
+    SOCKET = a.socket
 
     cfg = fc.config_dir()
+    if a.label_panes:
+        ours = fc.fleet_name(fc.load())
+        if not ours:
+            sys.exit("\n  this fleet has no name. Declare one first:\n"
+                     "    [fleet]\n    name = \"<short name>\"\n"
+                     "  in %s/fleet.toml\n" % cfg)
+        sys.exit(label_panes(a, ours))
     target = os.path.join(cfg, "fleet.toml")
     briefs = os.path.join(cfg, "briefs")
 

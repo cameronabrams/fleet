@@ -152,8 +152,13 @@ class AgentLabel(unittest.TestCase):
         with self.assertRaises(TypeError):
             panes.is_agent_pane("", "oldname")
 
-    def test_the_format_string_asks_for_the_one_label(self):
-        self.assertEqual(panes.LABELS, "#{@agent}")
+    def test_the_format_string_asks_for_both_labels(self):
+        """`@agent` says who a pane is; `@fleet` says whose fleet it is in. Read
+        together, because a caller with only the first is what let a second
+        fleet's sessions count as this one's (2026-10-20)."""
+        self.assertEqual(panes.LABELS, "#{@agent}\t#{@fleet}")
+        self.assertEqual(panes.LABEL_FIELDS, len(panes.LABELS.split("\t")),
+                         "callers split on this count; it has to match the string")
 
     def test_no_tool_reads_the_old_label(self):
         """Exhaustive over `bin/`, not a list of five. No tool may ask tmux for
@@ -250,3 +255,65 @@ class Reconcile(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhoseFleetAPaneIsIn(unittest.TestCase):
+    """Two fleets can share a machine, and until 2026-10-20 nothing could tell.
+
+    Membership was "a pane with `@agent` on the default tmux server", so a second
+    fleet's sessions counted as this one's: `fleetsnap` asked for a brief and a
+    color for them, and the roll would have offered to restart one.
+
+    `@fleet` held a DIFFERENT meaning before and was retired -- it named a group
+    *within* one fleet. Nothing carried the old value when the word was reused
+    (zero panes, checked), so no pane means two things at once.
+    """
+    def test_our_own_name_belongs(self):
+        self.assertTrue(panes.belongs("abrams", "abrams"))
+
+    def test_another_name_does_not(self):
+        """Positive evidence that somebody else's tools own that pane, which is
+        the whole point of writing it down."""
+        self.assertFalse(panes.belongs("teaching", "abrams"))
+
+    def test_an_unlabeled_pane_belongs_for_now(self):
+        """Zero panes carried `@fleet` when this landed, so excluding the
+        unlabeled would have emptied every tool at once -- `fleetsnap` seeing no
+        fleet, `fleetupgrade` nothing to roll. A correct end state reached in the
+        wrong order is an outage. Callers must COUNT these and say so."""
+        self.assertTrue(panes.belongs("", "abrams"))
+        self.assertTrue(panes.belongs(None, "abrams"))
+
+    def test_with_no_name_of_our_own_everything_belongs(self):
+        """A fleet that has never been named cannot say which panes are not its
+        own, and guessing in the excluding direction would hide real members."""
+        self.assertTrue(panes.belongs("teaching", None))
+        self.assertTrue(panes.belongs("teaching", ""))
+
+    def test_whitespace_is_not_a_label(self):
+        self.assertTrue(panes.belongs("   ", "abrams"))
+        self.assertEqual(panes.fleet_label("  abrams  "), "abrams")
+
+
+class NoToolDecidesMembershipAlone(unittest.TestCase):
+    def test_nothing_in_bin_compares_a_fleet_label_itself(self):
+        """Exhaustive over `bin/`, like the sibling check for `@agent`. The rule
+        has to live in one place: a tool that silences a pane and a tool that
+        reports it cannot hold separate copies of what membership means."""
+        import os
+        from tests.support import APP
+        offenders = []
+        for tool in sorted(os.listdir(os.path.join(APP, "bin"))):
+            path = os.path.join(APP, "bin", tool)
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path) as f:
+                    src = f.read()
+            except (OSError, UnicodeDecodeError):
+                continue
+            for i, line in enumerate(src.splitlines(), 1):
+                code = line.split("#")[0]
+                if "@fleet" in code and ("==" in code or "!=" in code):
+                    offenders.append("%s:%d" % (tool, i))
+        self.assertEqual(offenders, [], "; ".join(offenders))

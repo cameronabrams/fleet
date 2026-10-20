@@ -90,8 +90,16 @@ class Verify(unittest.TestCase):
     def sessions(self, *pairs):
         return [{"label": l, "cwd": c} for l, c in pairs]
 
+    @staticmethod
+    def row(label, cwd, pane, fleet=""):
+        """A pane row in the format `verify` asks for: LABELS is TWO columns now
+        -- the agent and its fleet -- so the fixture carries both. Written as a
+        helper rather than inline tuples so the next column added has one place
+        to go, instead of four."""
+        return (label, fleet, cwd, pane)
+
     def test_a_matching_restore_reports_nothing(self):
-        with self.panes([("alpha", "/w/a", "%1"), ("beta", "/w/b", "%2")]):
+        with self.panes([self.row("alpha", "/w/a", "%1"), self.row("beta", "/w/b", "%2")]):
             self.assertEqual(self.r.verify(self.sessions(("alpha", "/w/a"),
                                                          ("beta", "/w/b"))), [])
 
@@ -99,7 +107,7 @@ class Verify(unittest.TestCase):
         """The 2026-09-30 shape: the label is on a pane, and the pane is somebody
         else's. --resume still found the right transcript, so context was right and
         the shell was wrong -- which is why nothing looked broken."""
-        with self.panes([("alpha", "/w/b", "%2")]):
+        with self.panes([self.row("alpha", "/w/b", "%2")]):
             bad = self.r.verify(self.sessions(("alpha", "/w/a")))
         self.assertEqual(len(bad), 1)
         self.assertEqual(bad[0][0], "alpha")
@@ -110,17 +118,18 @@ class Verify(unittest.TestCase):
         """The request, not only the response. A mock makes the response a
         constant, so whatever is in the format string goes untested unless a test
         reaches for it -- which is how a narrowed format slipped through once."""
-        with self.panes([("alpha", "/w/a", "%1")]):
+        with self.panes([self.row("alpha", "/w/a", "%1")]):
             self.assertEqual(self.r.verify(self.sessions(("alpha", "/w/a"))), [])
         fmt = self.asked[0][self.asked[0].index("-F") + 1]
         self.assertIn("#{@agent}", fmt)
         self.assertNotIn("#{@repo}", fmt)
-        self.assertEqual(len(fmt.split("\t")), 3,
-                         "the format and the three-field parse are one unit")
+        self.assertIn("#{@fleet}", fmt, "membership needs the fleet, not only the name")
+        self.assertEqual(len(fmt.split("\t")), 4,
+                         "the format and the four-field parse are one unit")
 
     def test_a_session_that_never_started_is_named(self):
         """Five of them, with `no such pane`."""
-        with self.panes([("beta", "/w/b", "%2")]):
+        with self.panes([self.row("beta", "/w/b", "%2")]):
             bad = self.r.verify(self.sessions(("alpha", "/w/a"), ("beta", "/w/b")))
         self.assertEqual([b[0] for b in bad], ["alpha"])
         self.assertIn("no pane", bad[0][1])

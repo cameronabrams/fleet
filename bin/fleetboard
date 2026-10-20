@@ -29,7 +29,8 @@ import json, os, shutil, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
-from fleet.panes import LABELS, agent_label, is_agent_pane
+from fleet.panes import (LABELS, agent_label, belongs, fleet_label,
+                         is_agent_pane)
 from fleet import versions
 
 # Read once, for the state directory only: where the cache lives is not something
@@ -81,13 +82,26 @@ def run_json(cmd, timeout=120):
     except ValueError:
         return None
 
+# Filled by `panes()` each draw: sessions this fleet is NOT responsible for, and
+# ones whose membership is being assumed rather than read.
+foreign, unlabeled = [], []
+
+
 def panes():
     out = run(["tmux","list-panes","-a","-F",
                "\t".join(["#{window_index}","#{window_name}","#{pane_id}", LABELS,
                           "#{?window_silence_flag,quiet,active}","#{?window_active,cur,}"])], 5)
     rows = {}
+    del foreign[:], unlabeled[:]
     if out is None:
         return None
+    # Re-read each draw, like the parked list and for the same reason: `--watch`
+    # outlives the configuration, and a fleet that is given a name while a board
+    # is up should start filtering on it without a restart.
+    try:
+        ours = fc.fleet_name(fc.load())
+    except Exception:
+        ours = None
     for line in out.splitlines():
         f = line.split("\t")
         # Membership through the shared helper, not a truthiness check on the
@@ -95,9 +109,20 @@ def panes():
         # the name has already moved once. The test that caught this board for
         # keeping its own copy of the rule is exhaustive over bin/, which is why
         # it caught it on the day it arrived.
-        if len(f) >= 6 and is_agent_pane(f[3]):
-            rows[agent_label(f[3])] = {"win":f[0], "winname":f[1], "pane":f[2],
-                                       "quiet":f[4] == "quiet", "current":f[5] == "cur"}
+        if len(f) < 7 or not is_agent_pane(f[3]):
+            continue
+        # Another fleet's pane is not this fleet's business. `belongs` includes
+        # the unlabeled, because zero panes carried `@fleet` when this landed and
+        # excluding them would have emptied the board at once -- but unlabeled is
+        # COUNTED, so the assumption is on the screen rather than inside it.
+        if not belongs(f[4], ours):
+            foreign.append((agent_label(f[3]), fleet_label(f[4])))
+            continue
+        if ours and not fleet_label(f[4]):
+            unlabeled.append(agent_label(f[3]))
+        rows[agent_label(f[3])] = {"win":f[0], "winname":f[1], "pane":f[2],
+                                   "fleet":f[4],
+                                   "quiet":f[5] == "quiet", "current":f[6] == "cur"}
     return rows
 
 def agents():
@@ -409,6 +434,13 @@ def draw(full=False, auto=False):
     if pk is None:
         print(f"\n  {C['red']}parked sessions could not be read from the "
               f"configuration{C['r']}")
+    if foreign:
+        print(f"\n  {C['dim']}not this fleet ({len(foreign)}): "
+              + ", ".join("%s@%s" % (n, f) for n, f in sorted(foreign))
+              + f"{C['r']}")
+    if unlabeled:
+        print(f"\n  {C['dim']}{len(unlabeled)} pane(s) carry no @fleet and are "
+              f"assumed ours: {', '.join(sorted(unlabeled))}{C['r']}")
     elif pk:
         # A rule, not a blank line: the rows below are a different KIND of thing
         # -- declared, not observed -- and the two must not read as one list that

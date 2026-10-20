@@ -52,6 +52,32 @@ entries and makes you confirm the bump against this list.
   form on 2026-10-16 and the restore's end-to-end test caught it — its fake `claude`
   recorded a `--version` call that displaced a real launch.
 
+- **A fleet can tell its own panes from another fleet's.** Membership was "a pane
+  with `@agent` on the default tmux server", so two fleets sharing a machine were
+  indistinguishable to every tool: `fleetsnap` demanded a brief and a color for a
+  stranger's session and the roll would have offered to restart one. Raised
+  2026-10-20 after exactly that happened.
+
+  `[fleet].name` declares a fleet's own name — falling back to `[mail].fleet`,
+  which has carried one since mail needed a namespace, so an established fleet
+  needs no edit. `fleetspawn` stamps it on each pane it creates as `@fleet`, and
+  `fleet.panes.belongs` is the one place that decides membership: our name belongs,
+  **another name does not**, and an unlabeled pane belongs *for now* and is
+  **counted and reported** rather than passing silently.
+
+  Including the unlabeled is deliberate: zero panes carried `@fleet` when this
+  landed, so excluding them would have emptied every tool at once. `fleetinit
+  --label-panes` is the one-time step, and it refuses to touch a pane already
+  carrying another fleet's name.
+
+  `@fleet` held a different meaning before and was retired — it named a group
+  *within* one fleet. Nothing carried the old value when the word was reused.
+
+  `LABELS` is now two columns, which shifted the positional parse in seven tools;
+  a derived configuration also drops `[mail].fleet`, since `[mail]` travels but the
+  name inside it is an identity — found by a test, because `--keep` supplies no new
+  name and so would never have corrected it.
+
 - **`fleetspawn --socket`**, so a tool that creates panes and launches sessions can
   be tried somewhere other than the live fleet. `fleetrestore` has had it since it
   grew an end-to-end test; `fleetspawn` had not, so exercising `--go` by hand on

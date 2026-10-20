@@ -126,7 +126,7 @@ def preflight(a, brief):
         problems.append(f"a claude named {a.name!r} is already running: "
                         + ", ".join(f"pid {p} in {c}" for p, c in clash))
     rc, labels, _ = tmux("list-panes", "-a", "-F", LABELS)
-    taken = {agent_label(l) for l in labels.splitlines()}
+    taken = {agent_label(l.split("\t")[0]) for l in labels.splitlines()}
     if a.name in taken:
         problems.append(f"a pane is already labeled @agent={a.name}")
     stopped = fc.stopped(CFG)
@@ -493,8 +493,20 @@ def main():
             tmux("set-window-option", "-t", pane, "automatic-rename", "off")
     if rc != 0:
         sys.exit(f"  tmux failed: {err}")
-    for opt, val in (("@agent", a.name), ("@muted", "0")):
+    # `@fleet` alongside `@agent`, so another fleet's tools on this machine can
+    # tell this pane is not theirs -- and ours can tell theirs. Set at creation
+    # because that is the only moment the spawning configuration is known for
+    # certain; a pane labeled later is labeled from a guess.
+    ours = fc.fleet_name(fc.load())
+    opts = [("@agent", a.name), ("@muted", "0")]
+    if ours:
+        opts.append(("@fleet", ours))
+    for opt, val in opts:
         tmux("set-option", "-p", "-t", pane, opt, val)
+    if not ours:
+        print("  note: this fleet has no name ([fleet].name or [mail].fleet), so the")
+        print("        pane carries no @fleet and another fleet's tools cannot tell")
+        print("        it apart from their own.")
     tmux("select-pane", "-t", pane, "-T", a.name)
     tmux("send-keys", "-t", pane, launch_cmd(a, brief), "C-m")
     print(f"  created pane {pane}, launched; waiting up to {a.wait}s ...")

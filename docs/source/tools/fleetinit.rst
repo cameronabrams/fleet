@@ -105,3 +105,36 @@ there is worse than keeping both or dropping both.
 
 The result is parsed before it replaces anything, and an existing ``fleet.toml``
 is never overwritten: one that is already there is somebody's work.
+
+Giving a fleet its name
+-----------------------
+
+``[fleet].name`` is this fleet's own short name. ``fleetspawn`` stamps it on every
+pane it creates, as ``@fleet`` beside ``@agent``, so the tools can tell one
+fleet's sessions from another's on a shared machine — which until 2026-10-20 they
+could not: membership was *"a pane with ``@agent`` on the default tmux server"*,
+so a second fleet's sessions counted as this one's.
+
+``fleetinit`` asks for it, writes it, and **mirrors it into** ``[mail].fleet``.
+One identity with two readers: ``fleet.config.fleet_name`` prefers ``[fleet].name``
+while :doc:`fleetmail` reads ``[mail].fleet`` directly for its address namespace,
+and a fleet called one thing by its panes and another by its mail is worse than
+one with no name at all.
+
+For the same reason ``[mail].fleet`` is stripped from a ``--from`` copy even
+though ``[mail]`` itself travels: the mailbox and the poll interval are
+preferences, the name inside is an identity.
+
+.. code-block:: text
+
+   fleetinit --label-panes        show which panes would be labeled
+   fleetinit --label-panes --go   stamp @fleet on this fleet's existing panes
+
+**The one-time step for a fleet older than the label.** ``fleetspawn`` labels a
+pane when it creates one, so only panes that predate that need this — which, when
+it landed, was all of them. It refuses to touch a pane already carrying *another*
+fleet's name: that is the one case where the label is doing its job, and
+overwriting it would be this fleet claiming somebody else's session.
+
+Label first, and only then can the exclusion be made strict. A correct end state
+reached in the wrong order empties every tool at once.

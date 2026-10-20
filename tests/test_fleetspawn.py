@@ -683,3 +683,33 @@ class SomewhereOtherThanTheFleetToTryItOut(unittest.TestCase):
         main = inspect.getsource(self.spawn.main)
         self.assertIn("SOCKET = a.socket", main)
         self.assertLess(main.index("SOCKET = a.socket"), main.index("preflight("))
+
+
+class APaneSaysWhichFleetItIsIn(unittest.TestCase):
+    """Set at creation, because that is the only moment the spawning
+    configuration is known for certain. A pane labeled later is labeled from a
+    guess -- which is why `fleetinit --label-panes` refuses to touch a pane
+    already carrying another fleet's name."""
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.spawn = load_tool("fleetspawn")
+        self.addCleanup(self.cfg.close)
+
+    def test_the_pane_is_given_the_fleets_name(self):
+        import inspect
+        main = inspect.getsource(self.spawn.main)
+        self.assertIn('opts.append(("@fleet", ours))', main)
+        self.assertIn("fc.fleet_name(fc.load())", main)
+        # beside @agent, in the same loop, so a pane cannot get one without the other
+        self.assertLess(main.index('("@agent", a.name)'),
+                        main.index('tmux("set-option", "-p", "-t", pane, opt, val)'))
+        self.assertLess(main.index('opts.append(("@fleet", ours))'),
+                        main.index('tmux("set-option", "-p", "-t", pane, opt, val)'))
+
+    def test_an_unnamed_fleet_says_so_rather_than_labeling_blank(self):
+        """A blank `@fleet` would read as unlabeled anyway, so the useful thing
+        is to tell the human their fleet cannot be told apart."""
+        import inspect
+        main = inspect.getsource(self.spawn.main)
+        i = main.index("if not ours:")
+        self.assertIn("no @fleet", main[i:i + 400])

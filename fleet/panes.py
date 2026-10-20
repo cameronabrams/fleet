@@ -34,11 +34,56 @@ _ESC = re.compile(r"\x1b\[([0-9;:]*)([A-Za-z])|\x1b[^\[]")
 # before the panes were re-stamped, 0 of 14 sessions were recognized; with it, 14
 # of 14. So: read both, re-stamp every pane, drop the fallback, unset the old
 # option. This is the fourth step, and `@repo` is no longer read anywhere.
-LABELS = "#{@agent}"
+# The two pane options that say who a pane is: its agent's name, and which fleet
+# that agent belongs to. Read together, in this order, because every caller needs
+# both to answer "is this one of ours" -- and a caller that read only the first is
+# what let a second fleet's sessions count as this one's.
+#
+# `@fleet` HELD A DIFFERENT MEANING BEFORE and was retired: it named a GROUP
+# within one fleet, agreed with the window name only by accident -- seven of
+# fourteen panes disagreed -- and described the screen rather than the fleet. It
+# now names the fleet itself. Nothing carried the old value when the meaning
+# changed (checked: zero panes on 2026-10-20), so no pane means two things at
+# once; a reader of the old commits should know the word was reused.
+LABELS = "#{@agent}\t#{@fleet}"
+LABEL_FIELDS = 2          # how many columns LABELS occupies, for callers that split
 
 def agent_label(agent):
     """A pane's agent name, from `@agent`."""
     return (agent or "").strip()
+
+def fleet_label(fleet):
+    """A pane's fleet, from `@fleet`, or "" when it carries none."""
+    return (fleet or "").strip()
+
+
+def belongs(fleet, ours):
+    """Whether a pane labeled `fleet` is a member of the fleet named `ours`.
+
+    Three cases, and the middle one is the only thing this adds:
+
+    * labeled with OUR name -- ours.
+    * labeled with ANOTHER name -- **not ours.** Positive evidence that somebody
+      else's tools own that pane, and the whole point.
+    * **unlabeled -- ours**, which is the fleet as it stands today: zero panes
+      carried `@fleet` when this landed, so excluding the unlabeled would have
+      emptied every tool at once. `fleetsnap` would see no fleet,
+      `fleetupgrade` nothing to roll, `fleetretire` no such session. A correct
+      end state reached in the wrong order is an outage.
+
+    Callers must therefore COUNT the unlabeled and say so, rather than letting
+    them pass silently -- an assumption that is right today and wrong the moment
+    a second fleet is spawned by a tool too old to label it.
+
+    With no name of our own, everything is ours: a fleet that has never been
+    named cannot say which panes are not its own, and guessing in the excluding
+    direction would hide real members.
+    """
+    f = fleet_label(fleet)
+    if not f or not ours:
+        return True
+    return f == ours
+
 
 def is_agent_pane(agent):
     """Whether a pane belongs to an agent: does it carry a name.
