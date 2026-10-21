@@ -654,7 +654,14 @@ class PendingUpdatesAreASourceLikeAnyOther(unittest.TestCase):
 
     # -- rendering -------------------------------------------------------------
 
-    def draw(self, doc=None):
+    def draw(self, doc=None, kernel=("current", {})):
+        """`kernel` is PINNED, because the board now reads the running kernel
+        live. Left to the host, every assertion about the reboot marker would be
+        answered by whichever kernel the test machine happens to have booted:
+        green here, and green for the wrong reason on a machine with a pending
+        kernel or -- in a container with no `/lib/modules` at all -- on the
+        `unknown` branch. That is the same shape as the version-store tests that
+        passed in two places and failed in the only one that mattered."""
         import io, contextlib
         if doc is not None:
             self.write(doc)
@@ -663,6 +670,7 @@ class PendingUpdatesAreASourceLikeAnyOther(unittest.TestCase):
         with mock.patch.object(self.b, "panes", lambda: {}), \
              mock.patch.object(self.b, "agents", lambda: {}), \
              mock.patch.object(self.b, "load_cache", lambda: None), \
+             mock.patch.object(self.b.kernels, "state", lambda *a, **k: kernel), \
              mock.patch.object(self.b.versions, "installed", lambda *a, **k: "2.1.303"), \
              mock.patch.object(self.b.versions, "target", lambda *a, **k: ("2.1.302", "/v")):
             buf = io.StringIO()
@@ -685,6 +693,73 @@ class PendingUpdatesAreASourceLikeAnyOther(unittest.TestCase):
 
     def test_no_reboot_flag_when_none_is_needed(self):
         out = self.draw(self.fresh(total=5, reboot_needed=False))
+        self.assertNotIn("REBOOT NEEDED", out)
+
+    # -- the kernel, read live rather than from the daily document --------------
+
+    def test_a_newer_installed_kernel_is_flagged_even_when_the_document_is_calm(self):
+        """The gap this closes. The update document is written by a daily timer
+        and says `reboot_needed: false`; a `dup` then unpacks a kernel. Measured
+        on the machine this was written for: a kernel landed at 08:42 with the
+        next check due 06:21 the following morning -- twenty-two hours in which a
+        board reading only that document would have said nothing at all."""
+        out = self.draw(self.fresh(total=5, reboot_needed=False),
+                        kernel=("pending", {"running": "7.2.11-1-default",
+                                            "newest": "7.2.14-1-default",
+                                            "since": time.time() - 3 * 86400}))
+        head = [l for l in out.splitlines() if "FLEET" in l][0]
+        self.assertIn("REBOOT NEEDED", head)
+        # Trimmed to the part that differs: the `-1-default` tail is identical and
+        # this header already runs long enough to wrap a narrow pane.
+        self.assertIn("kernel 7.2.11 -> 7.2.14", head)
+
+    def test_the_header_says_how_long_the_reboot_has_been_owed(self):
+        """The owner already knows a reboot is due; the number they decide on is
+        how long they have been putting it off. 72h, not an epoch -- `age` takes a
+        timestamp and subtracts it from now, so handing it a duration prints the
+        wait as half a million hours."""
+        out = self.draw(self.fresh(total=5),
+                        kernel=("pending", {"running": "a", "newest": "b",
+                                            "since": time.time() - 72 * 3600}))
+        head = [l for l in out.splitlines() if "FLEET" in l][0]
+        self.assertIn("waiting 72h", head)
+
+    def test_a_pending_kernel_with_no_timestamp_still_flags(self):
+        """`since` can be absent when the directory could not be stat'ed. The
+        reboot is still owed, and dropping the marker for want of its age would
+        withhold the fact to avoid admitting one detail is missing."""
+        out = self.draw(self.fresh(total=5),
+                        kernel=("pending", {"running": "a", "newest": "b"}))
+        self.assertIn("REBOOT NEEDED", out)
+        self.assertNotIn("waiting", out)
+
+    def test_a_pending_kernel_flags_with_no_update_source_configured_at_all(self):
+        """The reminder does not depend on the producer existing. A machine with no
+        update checker configured gets `(None, None)` from `updates()` -- silence by
+        choice, not a failure -- and the kernel comparison is read locally, so it
+        still answers. This is the property that makes the feature portable to a
+        machine that never had the daily timer."""
+        out = self.draw(kernel=("pending", {"running": "7.2.11-1-default",
+                                            "newest": "7.2.14-1-default",
+                                            "since": time.time() - 86400}))
+        self.assertNotIn("updates:", out, "no source was configured")
+        head = [l for l in out.splitlines() if "FLEET" in l][0]
+        self.assertIn("REBOOT NEEDED", head)
+        self.assertIn("kernel 7.2.11 -> 7.2.14", head)
+
+    def test_an_unreadable_kernel_state_is_a_question_mark_not_silence(self):
+        """Read live and locally, so failing means something odd about the machine
+        itself -- and a silent omission reads exactly like a machine with nothing
+        to report. Absence is rendered `?`, never as a pass."""
+        out = self.draw(self.fresh(total=5, reboot_needed=False),
+                        kernel=("unknown", {"error": "no kernel image found"}))
+        head = [l for l in out.splitlines() if "FLEET" in l][0]
+        self.assertIn("kernel: ?", head)
+        self.assertNotIn("REBOOT NEEDED", head)
+
+    def test_a_current_kernel_says_nothing(self):
+        out = self.draw(self.fresh(total=5, reboot_needed=False))
+        self.assertNotIn("kernel", out.splitlines()[1])
         self.assertNotIn("REBOOT NEEDED", out)
 
     def test_a_failed_check_still_reports_a_reboot(self):

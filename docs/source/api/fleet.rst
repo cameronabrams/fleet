@@ -16,6 +16,7 @@ Submodules
    fleet.config
    fleet.history
    fleet.identity
+   fleet.kernels
    fleet.nudgelog
    fleet.panes
    fleet.procs

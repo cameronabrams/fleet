@@ -416,6 +416,25 @@ Three mechanisms produce it.
   pane was affected, so it would have been found by a human noticing one missing
   session, not by a test. `.strip("\n")` now.
 
+- **A board test answered by the host's own kernel.** The reboot-marker tests
+  mocked the update document and left the new live kernel read unmocked, so every
+  assertion about that marker was answered by whichever kernel the test machine
+  happened to have booted. Green here. Green for the wrong reason on a machine
+  with a pending kernel, and green on a third branch entirely in a container with
+  no `/lib/modules` at all.
+
+  The same shape as the version-store tests that were green in two places and red
+  in the only one that mattered, and the same fix: **a test about what the machine
+  has must SAY what it expects rather than inherit it.** The harness pins the
+  kernel state now, and the four branches each have a test.
+
+- **`age()` takes a timestamp, and was handed a duration.** One line, caught by
+  reading the other callers rather than by the suite: `age(ts)` returns
+  `now - ts`, so passing it `now - since` reconstructs an epoch in 1970 and prints
+  a three-day wait as roughly half a million hours. It would not have crashed, and
+  a reader seeing `waiting 497654h` would have doubted the feature rather than the
+  arithmetic.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and

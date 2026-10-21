@@ -28,10 +28,11 @@ one side of the dependency had CI.
 import json, os, shutil, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import kernels
 from fleet import version_flag
+from fleet import versions
 from fleet.panes import (LABELS, agent_label, belongs, fleet_label,
                          is_agent_pane)
-from fleet import versions
 
 # Read once, for the state directory only: where the cache lives is not something
 # a human moves while a board is watching, and the path is resolved before any
@@ -374,8 +375,38 @@ def draw(full=False, auto=False):
     # Only an UNKNOWN source withholds it, because there the document could not be
     # interpreted at all -- a schema this board has not been taught may mean
     # something else by the same word.
-    if u_state in ("ok", "stale", "failed") and u_data.get("reboot_needed"):
+    #
+    # And the KERNEL half is read live, here, rather than taken from that
+    # document. The document is written by a daily timer while this fact flips the
+    # moment a `dup` unpacks a kernel: on 2026-10-19 one landed at 08:42 with the
+    # next check due at 06:21 the following morning, twenty-two hours in which a
+    # board reading only the document would have said nothing. It is also the
+    # direction a stale document gets WRONG in the reassuring sense once the
+    # reboot happens -- an alarm nothing can clear is how a true one gets missed.
+    k_state, k_info = kernels.state()
+    if u_state in ("ok", "stale", "failed") and u_data.get("reboot_needed") \
+            or k_state == "pending":
         head += f"   {C['red']}REBOOT NEEDED{C['r']}"
+        if k_state == "pending":
+            # Both releases and the wait, because the owner reading this already
+            # knows a reboot is owed -- what they do not know is how long they
+            # have been putting it off, and that is the number that decides.
+            # Only the part that differs: the `-1-default` tail is identical in
+            # the ordinary case and this header already runs long enough to wrap a
+            # narrow pane. A reminder that wraps is a reminder read as noise.
+            was, now_ = kernels.differing(k_info["running"], k_info["newest"])
+            waited = ""
+            if k_info.get("since"):
+                # `age` takes an EPOCH and subtracts it from now; passing it a
+                # duration reconstructs an epoch in 1970 and prints the wait as
+                # half a million hours. `since` is already an epoch.
+                waited = ", waiting %s" % age(k_info["since"])
+            head += f"{C['red']} (kernel {was} -> {now_}{waited}){C['r']}"
+    elif k_state == "unknown":
+        # Said out loud rather than passed over. This is read live and locally, so
+        # it failing means something odd about the machine itself, and a silent
+        # omission here reads exactly like a machine with nothing to report.
+        head += f"   {C['red']}kernel: ?{C['r']}"
     print(head)
     if a is None:
         print(f"  {C['red']}claude agents could not be read -- every status below is ?{C['r']}")

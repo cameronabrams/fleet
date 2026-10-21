@@ -194,6 +194,53 @@ fleet-ending fact at exactly the moment the other half of the check broke. Only
 an *unknown* source withholds it, because there the document could not be
 interpreted at all.
 
+The kernel is read live, not from that document
+-----------------------------------------------
+
+``fleet.kernels`` compares the running kernel against the newest one installed,
+on every draw, from the filesystem and with no subprocess. The reason is timing
+rather than purity. The update document is written by a **daily timer**, while
+this fact flips the moment a ``zypper dup`` unpacks a kernel: on the machine this
+was written for a kernel landed at 08:42 with the next check due at 06:21 the
+following morning — twenty-two hours in which a board reading only the document
+would have said nothing. It is also the direction a stale document gets wrong in
+the *reassuring* sense once the reboot finally happens, and an alarm nothing can
+clear is how a true one gets missed.
+
+When they differ, the header carries both releases and how long the wait has run:
+
+.. code-block:: text
+
+   REBOOT NEEDED (kernel 7.2.11 -> 7.2.14, waiting 72h)
+
+Only the part that **differs**. The releases are ``7.2.11-1-default`` and
+``7.2.14-1-default``; the shared tail carries nothing, and this header is already
+long enough to wrap a narrow pane — a reminder that wraps is a reminder read as
+noise. Shared components only, never a fixed number of them: when the *flavor*
+differs, as in ``7.2.11-1-default`` against ``7.2.11-1-rt``, that is the whole
+point of the line and both releases print in full.
+
+The wait is the number that actually decides something. An owner reading this
+already knows a reboot is owed; what they do not know is how long they have been
+putting it off — and the reboot usually waits on whatever the fleet is in the
+middle of, so it is owed in days rather than minutes.
+
+**An installed kernel is a directory under** ``/lib/modules`` **that contains a
+kernel image.** The directory alone will not do:
+``/lib/modules/7.0.3-1-default`` on this machine is owned by no package at all
+(checked with ``rpm -qf``), left behind when its kernel went. A
+newest-directory-wins scan reads a leftover as installed, and the dangerous
+leftover is a *newer* one — it produces a permanent warning about a reboot that
+would change nothing, which is the kind of alarm that trains an owner to ignore
+the real one. Requiring the image costs one ``stat`` and no knowledge of the
+package manager.
+
+A running kernel that is **not installed at all** also reads as pending: it has
+been removed from under the machine, and a reboot is equally the answer.
+Unreadable is ``kernel: ?`` in the header, never silence — this is read locally,
+so failing means something odd about the machine itself, and omitting it reads
+exactly like a machine with nothing to report.
+
 Whose fleet a pane is in
 ------------------------
 

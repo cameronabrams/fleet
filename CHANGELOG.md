@@ -30,6 +30,33 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Added
+
+- **`fleetboard` flags a pending kernel reboot itself, live.** New
+  `fleet.kernels` compares the running kernel against the newest installed one on
+  every draw, from the filesystem, with no subprocess and nothing installed. The
+  header gains the releases and the wait:
+  `REBOOT NEEDED (kernel 7.2.11 -> 7.2.14, waiting 72h)` — trimmed to the part
+  that differs, since the shared `-1-default` tail carries nothing and the header
+  already runs long enough to wrap a narrow pane. A differing *flavor* prints in
+  full, because then it is the point of the line.
+
+  The board already showed `REBOOT NEEDED` from the machine's update document, but
+  that document is written by a **daily timer** while this fact flips the moment a
+  `zypper dup` unpacks a kernel — measured on this machine, a kernel landed at
+  08:42 with the next check due 06:21 the following morning, twenty-two hours of
+  silence. It is also the direction a stale document gets wrong in the reassuring
+  sense once the reboot happens, and an alarm nothing can clear is how a true one
+  gets missed. The document's flag still counts, for the reasons a kernel
+  comparison cannot see.
+
+  An installed kernel is a `/lib/modules` directory that **contains a kernel
+  image**; the directory alone is not enough, because a leftover owned by no
+  package is a real thing on this machine and a leftover *newer* than the running
+  kernel would warn for ever about a reboot that would change nothing. A running
+  kernel that is no longer installed reads as pending. Unreadable renders
+  `kernel: ?`, never silence.
+
 ### Changed
 
 - **An unlabeled pane is no longer assumed to be ours.** `fleet.panes.belongs`
