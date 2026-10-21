@@ -143,10 +143,43 @@ be a repo. Put **repo-specific** working notes in its `CLAUDE.md`. If the repo i
 may become public, keep personal paths, cluster accounts and fleet mechanics out of
 it — those belong in the brief.
 
-### 2c. Write the brief — required
+### 2c. Write the brief — YOU write it, from what the human already said
 
-`<config>/briefs/<name>.md`, from `examples/brief.example.md`. Role, kind, territory,
-peers, conventions pointer, deadlines, first step. **Commit it in the config repo.**
+`<config>/briefs/<name>.md`. Role, kind, territory, peers, conventions pointer,
+deadlines, first step. **Commit it in the config repo.**
+
+**Never hand the human a template to fill in.** By the time anyone asks for a
+session they have already said what it is for — "a repo session for X that owns
+the parser and reports bugs to Y" *is* the brief. Writing it down is
+transcription, not authorship, and answering with
+`cp examples/brief.example.md ...` asks them to redo the one part that was
+already done. The example is a shape to follow, not a form to send them.
+
+Say the brief back to them in a sentence and let them correct it. Do not
+interview them for fields they have not mentioned; a brief that is short and true
+beats one that is complete and invented.
+
+Write it in the same command that spawns:
+
+    fleetspawn <name> <dir> --beside <pane> --color <color> --brief-stdin --go <<'MD'
+    # <name> — <one line: what it is for>
+
+    **Kind:** repo|production|service|coordinator.  **Territory:** <paths it owns>
+    **Reports to / works with:** <peers>
+    **Conventions:** <config>/conventions.md
+    **First step:** <the thing to do on waking>
+    MD
+
+It refuses an empty brief, the shipped example verbatim, and overwriting one that
+exists. Those three are quieter failures than the refusal: a session whose brief
+says nothing, or says "fill me in", behaves plausibly and owns nothing in
+particular.
+
+Why it is a FILE and not just the first prompt: what was said interactively lives
+in a transcript, and transcripts compact. The brief is the copy that survives a
+restart, a `/clear` and a power cycle — `fleetsnap` lists it first among a
+session's durable files, and the recovery brief `fleetrestore` writes after a
+reboot sends the session back to exactly those.
 
 Why configuration and not a drop directory: a brief is *declared*, it must survive a
 disk loss, and it is what the session re-reads after every restart. On 2026-09-12 a
@@ -164,8 +197,11 @@ UNATTRIBUTED — correctly, since nothing declared them.
 
 ### 2e. Plan, show, then spawn
 
-    fleetspawn <name> <dir> --beside <pane>        # plan; changes nothing
-    fleetspawn <name> <dir> --beside <pane> --go
+    fleetspawn <name> <dir> --beside <pane> --color <c> --brief-stdin      # plan
+    fleetspawn <name> <dir> --beside <pane> --color <c> --brief-stdin --go
+
+(the brief on stdin, as in 2c; `--color` declares it under `[colors]` if it is not
+there yet, so neither is a separate step)
 
 Preflight blocks on: missing directory, missing brief, no `[colors]` entry, no tmux, a live claude already
 `--name`d this, a pane already labeled this. Do not work around a block; fix its

@@ -1,4 +1,4 @@
-import os, tempfile, unittest
+import io, os, tempfile, unittest
 from types import SimpleNamespace
 from unittest import mock
 from tests.support import FakeConfig, load_tool
@@ -795,3 +795,116 @@ class TheFirstSpawnOfANewFleet(unittest.TestCase):
         """`--color` clears its own blocker and nothing else."""
         problems = self.preflight(color="blue", brief=False)
         self.assertTrue(any("no brief" in p for p in problems))
+
+
+class TheBriefIsWrittenNotFilledIn(unittest.TestCase):
+    """Cameron, 2026-10-21: "I didn't say no briefs. I said no user copying and
+    editing a brief md file. Every session needs one -- it is the session's
+    identity -- its role, scope, etc. An agent should be smart enough to interpret
+    user specs about role and scope interactively as needing to be recorded
+    out-of-context in a brief."
+
+    By the time anyone asks for a session they have already said what it is for.
+    Writing that down is transcription, not authorship, and answering with
+    `cp examples/brief.example.md` asks them to redo the part already done.
+
+    Out-of-context on purpose: what was said interactively lives in a transcript,
+    and transcripts compact. The brief is the copy that survives a restart, a
+    `/clear` and a power cycle.
+    """
+
+    BRIEF = "# alpha -- repo session for the parser\n\n**Kind:** repo.\n"
+
+    def setUp(self):
+        self.cfg = FakeConfig(briefs=())
+        self.dir = tempfile.mkdtemp(dir=self.cfg.root)
+        self.spawn = load_tool("fleetspawn")
+        self.brief = os.path.join(self.cfg.config, "briefs", "alpha.md")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def run_write(self, text, go=True):
+        a = SimpleNamespace(name="alpha", dir=self.dir, go=go, brief_stdin=True)
+        with mock.patch.object(self.spawn.sys, "stdin", io.StringIO(text)), \
+             mock.patch("builtins.print"):
+            self.spawn.write_brief(a, self.brief)
+
+    # -- the point ------------------------------------------------------------
+
+    def test_the_brief_is_written_from_what_was_supplied(self):
+        self.run_write(self.BRIEF)
+        self.assertEqual(open(self.brief).read(), self.BRIEF)
+
+    def test_a_trailing_newline_is_added_if_missing(self):
+        self.run_write("# alpha -- the parser")
+        self.assertTrue(open(self.brief).read().endswith("\n"))
+
+    def test_nothing_is_written_without_go(self):
+        self.run_write(self.BRIEF, go=False)
+        self.assertFalse(os.path.exists(self.brief))
+
+    def test_preflight_does_not_block_on_a_brief_this_run_will_write(self):
+        """The `--color` contradiction again if it did: "would write 12 lines of
+        brief" three rows above "BLOCKED: no brief"."""
+        a = SimpleNamespace(name="alpha", dir=self.dir, color="red", resume=None,
+                            beside=None, brief=None, brief_stdin=True)
+        with mock.patch.object(self.spawn, "tmux", return_value=(0, "", "")), \
+             mock.patch.object(self.spawn, "claude_procs", return_value=[]):
+            problems = self.spawn.preflight(a, self.brief)
+        self.assertEqual([p for p in problems if "brief" in p], [])
+
+    def test_without_the_flag_a_missing_brief_still_blocks(self):
+        a = SimpleNamespace(name="alpha", dir=self.dir, color="red", resume=None,
+                            beside=None, brief=None, brief_stdin=False)
+        with mock.patch.object(self.spawn, "tmux", return_value=(0, "", "")), \
+             mock.patch.object(self.spawn, "claude_procs", return_value=[]):
+            problems = self.spawn.preflight(a, self.brief)
+        self.assertTrue(any("no brief" in p for p in problems))
+
+    def test_the_refusal_names_the_flag_rather_than_a_template_to_copy(self):
+        a = SimpleNamespace(name="alpha", dir=self.dir, color="red", resume=None,
+                            beside=None, brief=None, brief_stdin=False)
+        with mock.patch.object(self.spawn, "tmux", return_value=(0, "", "")), \
+             mock.patch.object(self.spawn, "claude_procs", return_value=[]):
+            problems = self.spawn.preflight(a, self.brief)
+        said = " ".join(p for p in problems if "brief" in p)
+        self.assertIn("--brief-stdin", said)
+
+    # -- the three refusals, each quieter than itself if allowed --------------
+
+    def test_an_empty_brief_is_refused(self):
+        """A session whose brief says nothing is told its role is nothing, and
+        `[spawn].first_prompt` still sends it there to look."""
+        with self.assertRaises(SystemExit) as e:
+            self.run_write("   \n\n  ")
+        self.assertIn("nothing on stdin", str(e.exception))
+        self.assertFalse(os.path.exists(self.brief))
+
+    def test_the_shipped_example_verbatim_is_refused(self):
+        """A session told that its role is to fill itself in: it behaves
+        plausibly and owns nothing in particular, where a missing brief fails
+        loudly at preflight."""
+        with open(self.spawn.BRIEF_EXAMPLE) as f:
+            example = f.read()
+        with self.assertRaises(SystemExit) as e:
+            self.run_write(example)
+        self.assertIn("shipped example", str(e.exception))
+        self.assertFalse(os.path.exists(self.brief))
+
+    def test_an_existing_brief_is_never_overwritten(self):
+        os.makedirs(os.path.dirname(self.brief), exist_ok=True)
+        with open(self.brief, "w") as f:
+            f.write("# the real one\n")
+        with self.assertRaises(SystemExit) as e:
+            self.run_write(self.BRIEF)
+        self.assertIn("already exists", str(e.exception))
+        self.assertEqual(open(self.brief).read(), "# the real one\n")
+
+    def test_an_edited_example_is_accepted(self):
+        """Only the UNCHANGED example is refused. Someone who started from it and
+        made it theirs has done the thing being asked for."""
+        with open(self.spawn.BRIEF_EXAMPLE) as f:
+            text = f.read() + "\n**Territory:** ~/Git/alpha only.\n"
+        self.run_write(text)
+        self.assertIn("Territory", open(self.brief).read())

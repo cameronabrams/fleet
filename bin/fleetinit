@@ -524,11 +524,18 @@ def main():
                 sys.exit("\n  install failed (exit %d) -- the setup is INCOMPLETE\n"
                          % r.returncode)
 
+    # NOT "cp the example and edit it". A session's role and scope are said out
+    # loud when someone asks for the session; `--brief-stdin` writes that down in
+    # the same command that spawns, which is transcription rather than authorship.
+    # Printing a `cp` here asked the human to redo the part already done.
     print("\n  next, and these are the only steps left --")
     print("    tmux new-session -d -s main          # which server is yours to choose")
-    print("    cp %s %s/<name>.md" % (BRIEF_EXAMPLE, briefs))
-    print("    $EDITOR %s/<name>.md" % briefs)
-    print("    fleetspawn <name> <dir> --window <title> --color <color> --go\n")
+    print("    fleetspawn <name> <dir> --window <title> --color <color> \\")
+    print("               --brief-stdin --go   <<'MD'")
+    print("    # <name> -- what this session is for, what it owns, who it answers to")
+    print("    MD\n")
+    print("  (the brief is the session's identity and has to outlive its transcript;")
+    print("   %s is a shape to follow, not a form to fill in)\n" % BRIEF_EXAMPLE)
 
 
 if __name__ == "__main__":

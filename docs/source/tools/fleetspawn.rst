@@ -41,6 +41,30 @@ make it offer instead:
    creates ``DIR``. The folder-trust prompt still stops the spawn afterwards, so
    the grant stays the human's.
 
+``--brief-stdin``
+   reads the brief from stdin and writes it before spawning, so **nobody copies a
+   template and fills it in**. By the time anyone asks for a session they have
+   already said what it is for — "a repo session for X that owns the parser and
+   reports bugs to Y" *is* the brief; writing it down is transcription, not
+   authorship, and answering with a ``cp`` asks them to redo the part already
+   done.
+
+   .. code-block:: bash
+
+      fleetspawn alpha ~/Git/x --window x --color blue --brief-stdin --go <<'MD'
+      # alpha — repo session for x
+
+      **Kind:** repo.  **Territory:** ``~/Git/x`` only.
+      **Reports to:** the coordinator.
+      **First step:** read ROADMAP.md and say what the next change should be.
+      MD
+
+   Three refusals, each quieter than itself if allowed: nothing on stdin (a
+   session told its role is nothing), the shipped example **verbatim** (a session
+   told its role is to fill itself in — it then behaves plausibly and owns
+   nothing in particular), and a brief that already exists, which is somebody's
+   work. An *edited* example is accepted; only the unchanged one is not.
+
 ``--brief-from-example``
    copies the brief template into place and **stops**. It does not spawn.
    ``[spawn].first_prompt`` tells a session to read its brief and follow it, so a
@@ -63,7 +87,8 @@ Preflight
 ---------
 
 Blocks, and changes nothing, on any of: a missing directory, a missing brief, no
-``[colors]`` entry for the name, no tmux server, a live claude already answering to
+``[colors]`` entry for the name (unless ``--color``), no tmux server, a live
+claude already answering to
 ``NAME``, a pane already labeled ``@agent=NAME``, or a nonexistent
 ``--beside`` pane. Fix the cause; do not work around it.
 

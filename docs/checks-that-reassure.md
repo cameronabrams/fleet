@@ -492,6 +492,24 @@ Three mechanisms produce it.
   misread. **A precondition should be checked against what the run will do, not
   only against what is already on disk.**
 
+- **A refusal that sent the human to do the work they had already done.**
+  `fleetspawn` refused to launch without a brief and pointed at
+  `examples/brief.example.md` — correct about the requirement and wrong about who
+  should satisfy it. Whoever asks for a session has just described it out loud;
+  the brief was already spoken, and the tool answered by handing back a form.
+
+  Not a false pass, which is this catalogue's usual shape, but the same root:
+  **a check that is right about WHAT is missing can still be wrong about who is
+  missing it.** When a refusal names a file, ask whether its content is already
+  in the room.
+
+  Mine, and worth recording separately: asked why the brief was necessary, I
+  defended it; told the complaint was about copying and editing a file, I read it
+  as "briefs are optional" and built that instead — removing the requirement from
+  three places before being corrected. **The second reading of a short correction
+  is worth more than the first implementation of it.** Reverted uncommitted;
+  nothing shipped.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and

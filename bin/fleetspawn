@@ -21,6 +21,15 @@ gives its recorded uuid; afterwards the configuration owner removes the entry.
 The brief defaults to <config>/briefs/NAME.md and must exist: a session launched
 with no brief has no role, and a role reconstructed later is an inference.
 
+**Nobody should be copying a template and filling it in.** A session's role and
+scope are said out loud when someone asks for the session; `--brief-stdin` writes
+that down in one command, which is transcription rather than authorship:
+
+    fleetspawn alpha ~/Git/x --window x --color blue --brief-stdin --go <<'MD'
+    # alpha -- repo session for x
+    ...
+    MD
+
 Once the session is live it types `/color <declared>` into its pane -- waiting for
 the pane to go idle first, and confirming the color reached the session's own
 transcript record. A color that does not apply is reported with the line to type;
@@ -112,8 +121,12 @@ def preflight(a, brief):
     problems = []
     if not os.path.isdir(a.dir):
         problems.append(f"directory does not exist: {a.dir} (create it, and git init if it is a repo)")
-    if not os.path.isfile(brief):
-        problems.append(f"no brief at {brief} -- write one first (examples/brief.example.md)")
+    # `--brief-stdin` has already written it, or said it would. Blocking on a
+    # file this same run is about to create is the `--color` contradiction again:
+    # "would write 12 lines of brief" three rows above "BLOCKED: no brief".
+    if not os.path.isfile(brief) and not getattr(a, "brief_stdin", False):
+        problems.append(f"no brief at {brief} -- pass --brief-stdin and write one "
+                        f"from what the session is for, or --brief-from-example")
     if not fc.colors(fc.load()).get(a.name) and not getattr(a, "color", None):
         # `and not a.color`: with `--color` given, the run above has already said
         # it would declare one, and a BLOCKED line three rows later saying there
@@ -336,6 +349,60 @@ def declare_color(a):
                  "  Fix it by hand and re-run.\n")
 
 
+def write_brief(a, brief):
+    """Write the brief from stdin, before preflight. Returns None, or exits.
+
+    **The human should never copy a template and fill it in.** A session's brief
+    is its identity -- role, scope, territory, who it answers to -- and all of
+    that is said out loud when someone asks for a session. An agent that hears
+    "spin up a repo session for X that owns the parser and reports bugs to Y" has
+    been given the brief; writing it down is transcription, not authorship, and
+    handing back a markdown template instead is asking the human to do the one
+    part of this that was already done.
+
+    Out-of-context on purpose. What was said interactively lives in a transcript,
+    and transcripts compact; the brief is the copy that survives a restart, a
+    `/clear` and a power cycle, which is why `fleetsnap` lists it first among a
+    session's durable files.
+
+    Three refusals, and each is a failure that is quieter than the refusal:
+
+    * **nothing on stdin** -- a session whose brief says nothing is told its role
+      is nothing, and `[spawn].first_prompt` still sends it there to look.
+    * **the shipped example, verbatim** -- a session told that its role is to
+      fill itself in. That fails as a session which behaves plausibly and owns
+      nothing in particular, where a missing brief fails at preflight.
+    * **a brief already there** -- somebody's work, and never this tool's to
+      overwrite.
+    """
+    if os.path.exists(brief):
+        sys.exit("\n  brief already exists: %s\n  Not overwritten -- edit it, or "
+                 "remove it first.\n" % brief)
+    text = sys.stdin.read()
+    if not text.strip():
+        sys.exit("\n  nothing on stdin. A brief that says nothing is a session "
+                 "told its role is nothing.\n")
+    try:
+        with open(BRIEF_EXAMPLE) as f:
+            if text.strip() == f.read().strip():
+                sys.exit("\n  that is the shipped example, unchanged. The brief is "
+                         "the session's\n  role, scope and territory -- write what "
+                         "this one is actually for.\n")
+    except OSError:
+        pass                      # the example is missing; not a reason to refuse
+    lines = len(text.splitlines())
+    if not a.go:
+        print("  would write %d line(s) of brief -> %s" % (lines, brief))
+        return
+    try:
+        os.makedirs(os.path.dirname(brief), exist_ok=True)
+        with open(brief, "w") as f:
+            f.write(text if text.endswith("\n") else text + "\n")
+    except OSError as e:
+        sys.exit("\n  could not write %s: %s\n" % (brief, e.strerror or e))
+    print("  wrote %s (%d lines)" % (brief, lines))
+
+
 def do_brief_from_example(a, brief):
     """Copy the brief template into place and STOP.
 
@@ -424,6 +491,9 @@ def main():
     ap.add_argument("--split", choices=("v", "h"), default="v",
                     help="with --beside: v = below (default), h = to the right")
     ap.add_argument("--brief", help="default: <config>/briefs/NAME.md")
+    ap.add_argument("--brief-stdin", action="store_true",
+                    help="read the brief from stdin and write it before spawning, "
+                         "so nobody has to copy a template and fill it in")
     ap.add_argument("--color", metavar="C",
                     help="declare this color for NAME under [colors] if it is not "
                          "declared yet (appended, never rewritten)")
@@ -468,6 +538,8 @@ def main():
             print(f"  would create {a.dir}")
     if a.brief_from_example:
         sys.exit(do_brief_from_example(a, brief))
+    if a.brief_stdin:
+        write_brief(a, brief)
     if a.color:
         declare_color(a)
 

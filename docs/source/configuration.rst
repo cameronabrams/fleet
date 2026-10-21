@@ -11,9 +11,14 @@ directory instead (:ref:`concepts`).
 The same directory holds:
 
 ``briefs/<name>.md``
-   One brief per session, required. :doc:`tools/fleetspawn` refuses to launch a
+   One brief per session, required — it is the session's identity: role, scope,
+   territory, who it answers to. :doc:`tools/fleetspawn` refuses to launch a
    session without one; :doc:`tools/fleetsnap` flags a member that lacks one.
-   Template: :doc:`templates`.
+
+   **It is written, not filled in.** ``fleetspawn --brief-stdin`` takes the brief
+   on stdin in the same command that spawns, because whoever asked for the
+   session has already described it. :doc:`templates` is a shape to follow, not a
+   form to send someone away with.
 
 ``conventions.md``
    The fleet's working rules, which every brief points to.

@@ -32,6 +32,28 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- **`fleetspawn --brief-stdin` writes the brief, so nobody copies a template and
+  fills it in.** Every session still needs a brief — it is the session's identity:
+  role, scope, territory, who it answers to. What changed is who writes it. By the
+  time anyone asks for a session they have already said what it is for, so writing
+  it down is transcription rather than authorship, and answering with
+  `cp examples/brief.example.md` asked them to redo the part already done.
+
+      fleetspawn alpha ~/Git/x --window x --color blue --brief-stdin --go <<'MD'
+      # alpha — repo session for x
+      **Kind:** repo.  **Territory:** `~/Git/x` only.
+      MD
+
+  Three refusals, each a quieter failure than itself: nothing on stdin (a session
+  told its role is nothing), the shipped example **verbatim** (a session told its
+  role is to fill itself in, which then behaves plausibly and owns nothing in
+  particular), and a brief that already exists. An *edited* example is accepted.
+
+  `fleetinit`'s closing instructions and the `fleet-bootstrap` skill both stopped
+  telling anyone to `cp` a template: the skill now says an agent writes the brief
+  from what the human already told it, says it back in a sentence for correction,
+  and does not interview for fields nobody mentioned.
+
 - **`fleetinit --go` now sets the machine up, not just the configuration.** It
   writes `fleet.toml` and `briefs/` as before, places the `conventions.md` that
   `fleet.toml` points at, and runs `install --go`. One command instead of four.
