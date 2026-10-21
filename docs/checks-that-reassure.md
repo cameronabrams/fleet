@@ -465,6 +465,33 @@ Three mechanisms produce it.
   same rule from its other side, where the board *can* answer and the answer is
   good news. One dim field, and it costs nothing to say.
 
+- **An installer that printed six errors and exited 0.** `install` creates
+  `~/bin` and then links the shipped skills into `~/.claude/skills` -- a directory
+  that does not exist on a machine where Claude Code has never written a skill,
+  which is exactly the fresh machine the script is for. Every skill link failed,
+  the `ln` errors went to the terminal, and the script exited 0 because nothing
+  checked.
+
+  **An installer may be wrong in many directions; this is the one it may not be
+  wrong in.** A human watching the output would have seen it. A human running it
+  from a setup script, or an agent reading the status, would have recorded a
+  successful install of a tool that was not there. Found by walking the
+  fresh-machine path end to end on a throwaway `HOME` -- there were no tests for
+  `install` at all, which is how the one path it exists for went unexercised
+  longest: the person who maintains it has had a fleet on their machine for
+  months.
+
+- **A flag that satisfied a precondition and a check that did not know.**
+  `fleetspawn --color blue` printed `would declare alpha = 'blue'` and then
+  `BLOCKED: no color declared` three lines later. Both statements were true --
+  nothing is written in a preview -- and together they read as the flag having
+  been ignored. `fleetinit` ships `[colors]` empty, so this is the FIRST thing a
+  new fleet sees, with no other output to weigh it against.
+
+  Not a wrong answer: a right answer in a place where it could only be
+  misread. **A precondition should be checked against what the run will do, not
+  only against what is already on disk.**
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and

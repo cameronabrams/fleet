@@ -30,6 +30,34 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`install` created `~/bin` but not `~/.claude/skills`**, so on a machine where
+  Claude Code has never written a skill — precisely the fresh machine the script
+  exists for — every skill link failed with `No such file or directory`. **And it
+  still exited 0**: six errors on screen and a success to anything reading the
+  status. It creates the directory now and exits 1 if any link could not be made.
+  Found by walking the fresh-machine path end to end on a throwaway `HOME`; there
+  were no tests for `install` at all, and there are now.
+
+- **`install` created directories on a dry run.** `mkdir -p ~/bin` ran whether or
+  not `--go` was given, which contradicts the read-only-by-default rule the rest
+  of the tools follow. Both `mkdir`s are gated now.
+
+- **`fleetspawn --color` contradicted itself on the first spawn of a new fleet.**
+  It printed `would declare alpha = 'blue'` and then, three lines later,
+  `BLOCKED: no color declared`. `fleetinit` ships `[colors]` empty, so every new
+  fleet hits this on its very first spawn, with nothing else on screen to weigh
+  the contradiction against. `--color` now satisfies its own precondition, the
+  refusal names the flag that clears it, and the status line reads
+  `blue (pending --go)` rather than `NOT DECLARED`.
+
+- **The bootstrap skill's prerequisites predated `fleetinit`** — it told a
+  coordinator to copy `fleet.example.toml` by hand, did not mention naming the
+  fleet, and said to label a coordinator's pane with `@agent` alone, which since
+  the strict-membership flip leaves that pane outside the fleet every tool can
+  see. The README said the same about copying the example.
+
 ### Added
 
 - **`fleetboard` flags a pending kernel reboot itself, live.** New

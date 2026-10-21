@@ -144,7 +144,7 @@ class Check(unittest.TestCase):
         def tmux(*a):
             if a[0] == "list-panes":
                 # tab-separated: pane, @agent, @repo, @fleet
-                return 0, "%16\talpha\talpha\tcoord", ""
+                return 0, "%16\talpha\talpha\ttestfleet", ""
             if a[0] == "capture-pane":
                 return 0, screen, ""
             return 1, "", "unexpected"
@@ -732,3 +732,66 @@ class APaneSaysWhichFleetItIsIn(unittest.TestCase):
         main = inspect.getsource(self.spawn.main)
         i = main.index("if not ours:")
         self.assertIn("no @fleet", main[i:i + 400])
+
+
+class TheFirstSpawnOfANewFleet(unittest.TestCase):
+    """`fleetinit` ships `[colors]` empty, so the very first spawn on a fresh
+    machine always lands on the no-colour refusal -- and with `--color` given it
+    did so three lines under its own "would declare alpha = 'blue'". A
+    contradiction at that moment has nothing else on screen to be weighed
+    against, and reads as the flag having been ignored.
+
+    Walked end to end on 2026-10-21 on a throwaway HOME, which is how it was
+    found; no test covered the fresh-machine path at all.
+    """
+
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.dir = tempfile.mkdtemp(dir=self.cfg.root)
+        self.spawn = load_tool("fleetspawn")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def preflight(self, color=None, brief=True):
+        # Every attribute `preflight` reads, named rather than inherited from a
+        # parser: a namespace missing one fails with AttributeError, which is a
+        # different test failing for a different reason than the one it claims.
+        a = SimpleNamespace(name="newbie", dir=self.dir, color=color,
+                            resume=None, beside=None)
+        path = os.path.join(self.cfg.config, "briefs", "newbie.md")
+        if brief:
+            with open(path, "w") as f:
+                f.write("# brief\n")
+        with mock.patch.object(self.spawn, "tmux", return_value=(0, "", "")), \
+             mock.patch.object(self.spawn, "claude_procs", return_value=[]):
+            return self.spawn.preflight(a, path)
+
+    def test_an_undeclared_color_still_blocks(self):
+        """A colour is how a human tells two panes apart at a glance, and a fleet
+        that silently grows an undeclared session has lost that."""
+        problems = self.preflight()
+        self.assertTrue(any("no color declared" in p for p in problems))
+
+    def test_the_refusal_names_the_flag_that_clears_it(self):
+        problems = self.preflight()
+        self.assertTrue(any("--color" in p for p in problems),
+                        "the refusal must say how to satisfy it")
+
+    def test_passing_color_clears_the_block(self):
+        self.assertEqual(self.preflight(color="blue"), [])
+
+    def test_a_declared_color_needs_no_flag(self):
+        # Into the EXISTING [colors] table. Appending a second one is invalid
+        # TOML -- "Cannot declare ('colors',) twice" -- and the test would then
+        # fail on a parse error rather than on the behaviour it names.
+        path = os.path.join(self.cfg.config, "fleet.toml")
+        text = open(path).read().replace("[colors]\n", '[colors]\nnewbie = "green"\n', 1)
+        with open(path, "w") as f:
+            f.write(text)
+        self.assertEqual(self.preflight(), [])
+
+    def test_a_missing_brief_still_blocks_whatever_the_color(self):
+        """`--color` clears its own blocker and nothing else."""
+        problems = self.preflight(color="blue", brief=False)
+        self.assertTrue(any("no brief" in p for p in problems))

@@ -25,9 +25,13 @@ hand is the specific thing that rots. See `docs/checks-that-reassure.md`.
 
 ## Install
 
-    cp examples/fleet.example.toml ~/.config/fleet/fleet.toml   # then edit
-    ./install          # shows the plan, changes nothing
-    ./install --go     # symlinks tools into ~/bin and skills into ~/.claude/skills
+    bin/fleetinit --fleet <fleet-name> --go   # creates ~/.config/fleet/fleet.toml
+    ./install                                 # shows the plan, changes nothing
+    ./install --go                            # symlinks tools into ~/bin, skills into ~/.claude/skills
+
+`fleetinit --from <another fleet.toml> --go` carries your own defaults — name,
+clusters, thresholds — and leaves the other fleet's roster behind. `install`
+refuses to run without a `fleet.toml` and names these commands when it does.
 
 Symlinks, not copies, so an edit here is live at once. Nothing real is ever
 overwritten silently; displaced files are moved aside, not deleted.

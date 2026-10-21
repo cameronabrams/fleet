@@ -29,15 +29,37 @@ manifest, a checkpoint or your memory says.
 
 ### 1a. Prerequisites — check, do not assume
 
-- tmux server running; the human is attached to it.
-- The fleet application installed (`<app>/install` shows the plan, `--go` applies).
-- `<config>/fleet.toml` exists, from `examples/fleet.example.toml`.
+- tmux server running; the human is attached to it. On a machine with none,
+  `tmux new-session` first -- `fleetspawn` refuses with "no tmux server running"
+  rather than starting one, because which server the human is attached to is
+  their decision.
+- `<config>/fleet.toml` exists. **`fleetinit --go` makes one**, from the shipped
+  example or, with `--from <another fleet.toml>`, from a configuration you
+  already have -- that carries the human's own clusters, thresholds and timezone
+  and leaves the other fleet's roster behind. Do not copy the example by hand;
+  that leaves the human editing TOML, which is the step `fleetinit` removes.
+- **`[fleet].name` is set** (`fleetinit --fleet <name>`). Membership went strict
+  on 2026-10-20: a pane whose `@fleet` does not match is not this fleet's, and a
+  fleet with no name of its own counts every pane on the server as its own. On a
+  machine that will only ever run one fleet that is merely untidy; on a shared
+  one it is two fleets acting on each other's sessions.
+- The fleet application installed (`<app>/install --go`; without `--go` it shows
+  the plan and changes nothing). Run it AFTER `fleetinit`: it exits 2 with no
+  configuration and tells you so. **Check its exit status** -- it now fails if any
+  link could not be made.
 - `<config>/conventions.md` exists, from `examples/conventions.example.md`, and
   `[paths].conventions` points at it. **A new fleet does not inherit the lessons of
   an old one unless this file carries them.** Read it with the human and delete
   rules that do not apply rather than shipping them unread.
-- You are the coordinator, and the human launched you in a pane labeled for it
-  (`tmux set -p @agent coord`). You cannot spawn yourself.
+- You are the coordinator, and the human launched you in a pane labeled for it --
+  **both labels**, since strict membership:
+
+      tmux set -p @agent <coordinator-name>
+      tmux set -p @fleet <the [fleet].name>
+
+  `@agent` alone leaves the coordinator's own pane outside the fleet every tool
+  can see, which is the one pane whose absence is hardest to notice from inside
+  it. You cannot spawn yourself.
 - **The coordinator's working directory is the fleet STATE directory**, with the
   application and configuration as added directories
   (`permissions.additionalDirectories` in `<state>/.claude/settings.json`) and a

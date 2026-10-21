@@ -45,6 +45,13 @@ if [ ! -f "$CFG/fleet.toml" ]; then
   exit 2
 fi
 
+# Counted, because `ln` failing used to be printed and then forgotten. On a
+# machine with no ~/.claude/skills, every skill link failed and this script still
+# exited 0 -- six errors on screen and a success to any caller reading the status,
+# which is the one direction an installer must not be wrong in. Found by running
+# the fresh-machine path end to end on 2026-10-21, not by a test.
+FAILED=0
+
 plan() {   # plan <target> <source>
   local tgt=$1 src=$2
   if [ -L "$tgt" ] && [ "$(readlink -f "$tgt")" = "$(readlink -f "$src")" ]; then
@@ -57,7 +64,10 @@ plan() {   # plan <target> <source>
   fi
   [ $GO = 1 ] || return
   if [ -e "$tgt" ] || [ -L "$tgt" ]; then mkdir -p "$AWAY"; mv "$tgt" "$AWAY/"; fi
-  ln -s "$src" "$tgt"
+  if ! ln -s "$src" "$tgt"; then
+    printf "  !! FAILED %s\n" "$tgt"
+    FAILED=$((FAILED + 1))
+  fi
 }
 
 echo "application : $APP"
@@ -65,15 +75,30 @@ echo "config      : $CFG"
 [ $GO = 1 ] && echo "MODE        : INSTALLING" || echo "MODE        : plan only (./install --go to apply)"
 echo
 echo "tools -> $BIN"
-mkdir -p "$BIN"
+# Only with --go. A plan that creates directories is not a plan, and this script
+# claims to be read-only without it like every tool in bin/. It made ~/bin on a
+# dry run for as long as it has existed; adding a second mkdir for the skills
+# directory is what made that visible.
+[ $GO = 1 ] && mkdir -p "$BIN"
 # Executable files only: a __pycache__ left by running a tool is not a tool.
 for t in "$APP"/bin/*; do [ -f "$t" ] && [ -x "$t" ] && plan "$BIN/$(basename "$t")" "$t"; done
 echo
 echo "application skills -> $SK"
-for s in "$APP"/skills/*/; do plan "$SK/$(basename "$s")" "${s%/}"; done
+# `mkdir -p`, like $BIN above, and for the same reason gated on --go. ~/.claude/skills
+# does not exist on a machine where Claude Code has never written a skill, which is
+# precisely the fresh machine this script is for -- so the one case it most needed
+# to handle was the one it did not.
+[ $GO = 1 ] && mkdir -p "$SK"
+for s in "$APP"/skills/*/; do [ -d "$s" ] && plan "$SK/$(basename "$s")" "${s%/}"; done
 echo
 echo "configuration skills -> $SK"
 for s in "$CFG"/skills/*/; do [ -d "$s" ] && plan "$SK/$(basename "$s")" "${s%/}"; done
 [ $GO = 1 ] && [ -d "$AWAY" ] && echo && echo "displaced originals kept in: $AWAY"
+
+if [ "$FAILED" -gt 0 ]; then
+  echo
+  echo "!! $FAILED link(s) failed -- the install is INCOMPLETE."
+  exit 1
+fi
 
 exit 0

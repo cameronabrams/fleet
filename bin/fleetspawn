@@ -114,9 +114,20 @@ def preflight(a, brief):
         problems.append(f"directory does not exist: {a.dir} (create it, and git init if it is a repo)")
     if not os.path.isfile(brief):
         problems.append(f"no brief at {brief} -- write one first (examples/brief.example.md)")
-    if not fc.colors(fc.load()).get(a.name):
+    if not fc.colors(fc.load()).get(a.name) and not getattr(a, "color", None):
+        # `and not a.color`: with `--color` given, the run above has already said
+        # it would declare one, and a BLOCKED line three rows later saying there
+        # is none reads as the flag having been ignored. It is the first thing a
+        # new fleet hits -- `fleetinit` empties `[colors]`, so the very first
+        # spawn always lands here -- and a contradiction at that moment is a
+        # contradiction with nothing else on screen to weigh it against.
+        #
+        # Still refused when `--color` is absent: a color is how a human tells
+        # two panes apart at a glance, and a fleet that silently grows an
+        # undeclared session has lost that.
         problems.append(f'no color declared -- add  {a.name} = "<color>"  under [colors] '
-                        f"in fleet.toml ({', '.join(fc.COLORS)})")
+                        f"in fleet.toml ({', '.join(fc.COLORS)}), "
+                        f"or pass --color <color>")
     rc, _, _ = tmux("has-session")
     if rc != 0:
         problems.append("no tmux server running")
@@ -468,8 +479,15 @@ def main():
     # scaffolding has run -- the same staleness that had a watched board listing a
     # session as parked 22 hours after it was unparked (f5c7201).
     declared = fc.colors(fc.load()).get(a.name)
-    print(f"  color {declared or 'NOT DECLARED'}"
-          + ("" if not declared else
+    # `--color` is reported as PENDING, not as absent. In a preview nothing has
+    # been written yet, so the configuration honestly says there is no color --
+    # and printing "NOT DECLARED" two lines under "would declare alpha = 'blue'"
+    # reads as the flag having been ignored. The first spawn of a new fleet always
+    # hits this, because `fleetinit` ships `[colors]` empty.
+    shown = declared or (f"{a.color} (pending --go)" if getattr(a, "color", None)
+                         else "NOT DECLARED")
+    print(f"  color {shown}"
+          + ("" if not (declared or getattr(a, "color", None)) else
              "  (left to be typed by hand)" if a.no_color else
              f"  (typed into the pane once idle, up to {a.color_wait}s)"))
     print(f"  place {'split ' + a.split + ' beside ' + a.beside if a.beside else 'new window ' + a.window}")
