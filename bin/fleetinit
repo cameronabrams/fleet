@@ -2,9 +2,19 @@
 """fleetinit - create a fleet's configuration directory so the other tools can run.
 
   fleetinit                      show the plan; change nothing (the default)
-  fleetinit --go                 create <config>/, <config>/briefs/ and fleet.toml
-  fleetinit --from PATH --go     take the shareable parts of an existing config
-  fleetinit --save-profile PATH  write those parts out, and stop
+  fleetinit --go                 set this machine up: fleet.toml, briefs/,
+                                 conventions.md, and the symlinks `install` makes
+  fleetinit --from HOST --go     take the shareable parts of another MACHINE's
+                                 configuration, over ssh
+  fleetinit --from PATH --go     the same, from a file on this machine
+  fleetinit --no-link --go       write the configuration but do not symlink
+  fleetinit --save-profile PATH  write the shareable parts out, and stop
+
+Everything up to the tmux server, in one command. The configuration was only ever
+the first of four things a clean machine needs, and leaving the other three in a
+docs page makes a setup that is performed from memory and got wrong. What is left
+afterwards is a tmux server -- which server a human is attached to is theirs to
+choose -- a brief, and the spawn.
 
 On a fresh machine nothing else can run: `install` exits 2 without a fleet.toml,
 so this is the step that blocks every other step. That is why it exists and why
@@ -24,9 +34,14 @@ travel one of two ways:
                                     terminal to ask at; `--name` and friends
                                     answer them non-interactively.
 
-So the fresh-machine path is: clone this repository, fetch your own configuration
-from wherever you keep it, `fleetinit --from <it> --go`. With nothing personal to
-hand, the prompts and the example file still produce a working configuration.
+So the fresh-machine path is: clone this repository and point `--from` at the
+machine that already has a fleet -- `fleetinit --from <host> --fleet <name> --go`,
+which reads `~/.config/fleet/fleet.toml` there over ssh. `host:/other/path` names
+a different file. With nothing to hand, the prompts and the example file still
+produce a working configuration.
+
+A local path still works and is tried first: a file that EXISTS is never treated
+as a hostname.
 
 **Copied as TEXT, not parsed and re-emitted.** There is no comment-preserving TOML
 writer in the standard library, and the comments are the reason a configuration is
@@ -46,6 +61,8 @@ from fleet import version_flag
 APP = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 EXAMPLE = os.path.join(APP, "examples", "fleet.example.toml")
 BRIEF_EXAMPLE = os.path.join(APP, "examples", "brief.example.md")
+CONVENTIONS_EXAMPLE = os.path.join(APP, "examples", "conventions.example.md")
+INSTALL = os.path.join(APP, "install")
 
 # With --label-panes: which tmux server to label on. None is the default one.
 SOCKET = None
@@ -97,6 +114,72 @@ QUESTIONS = [
 # another by its mail. A derived config carried the SOURCE fleet's `[mail].fleet`
 # until this was noticed: a new fleet addressing peers under the old one's name.
 MIRROR = {("fleet", "name"): ("mail", "fleet")}
+
+
+# The remote half of `--from`. Keeping a fleet.toml somewhere to copy is itself a
+# step to remember, and the machine that HAS one is the obvious place to point at:
+# `fleetinit --from otherbox --go`.
+REMOTE_DEFAULT = "~/.config/fleet/fleet.toml"
+SSH_TIMEOUT = "10"          # ConnectTimeout, so a dead host fails instead of hanging
+
+
+def looks_remote(spec):
+    """Whether `spec` names another machine rather than a file on this one.
+
+    A local file that EXISTS always wins, checked by the caller before this is
+    asked. What is left is ambiguous, so the rules are narrow and say why:
+
+    * a `:` makes it a host spec -- `host:/path`, the scp spelling.
+    * a `/` makes it a path that does not exist, which is an error worth
+      reporting as a missing file rather than as an unreachable host.
+    * a name ending `.toml` is a file someone meant to point at and mistyped;
+      `ssh fleet.toml` would report that as a DNS failure, which sends the
+      reader looking in the wrong place entirely.
+    * anything else is a hostname.
+    """
+    if ":" in spec:
+        return True
+    if "/" in spec or spec.endswith(".toml"):
+        return False
+    return bool(spec)
+
+
+def fetch_remote(spec):
+    """`(text, label)` for a fleet.toml on another machine, over ssh.
+
+    `cat` rather than `scp`: only the text is wanted, there is no temporary file
+    to clean up afterwards, and the failure arrives on stderr where it can be
+    quoted back. No `BatchMode` -- a human running this may well need to answer a
+    passphrase prompt -- but a `ConnectTimeout`, so an unreachable host fails in
+    seconds rather than hanging a command that looks like it is working.
+    """
+    host, _, path = spec.partition(":")
+    path = path or REMOTE_DEFAULT
+    label = "%s:%s" % (host, path)
+    argv = ["ssh", "-o", "ConnectTimeout=" + SSH_TIMEOUT, host, "cat -- " + path]
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True)
+    except (OSError, subprocess.SubprocessError) as e:
+        sys.exit("\n  could not run ssh: %s\n" % e)
+    if r.returncode != 0:
+        why = r.stderr.strip() or "ssh exited %d" % r.returncode
+        sys.exit("\n  could not read %s\n    %s\n" % (label, why))
+    if not r.stdout.strip():
+        # An empty file is not a configuration, and silently proceeding would
+        # write a fleet.toml with nothing in it but the answers to the prompts.
+        sys.exit("\n  %s is empty -- refusing to build a configuration from it\n"
+                 % label)
+    return r.stdout, label
+
+
+def read_source(spec):
+    """`(text, label)` for `--from`, local or remote, or exit saying why not."""
+    if spec and os.path.isfile(spec):
+        with open(spec) as f:
+            return f.read(), spec
+    if spec and looks_remote(spec):
+        return fetch_remote(spec)
+    sys.exit("\n  no such file: %s\n" % spec)
 
 
 def kind_of(name):
@@ -326,6 +409,9 @@ def main():
                          "the one-time step for a fleet older than the label")
     ap.add_argument("--socket", metavar="NAME",
                     help="with --label-panes: the tmux server to label on")
+    ap.add_argument("--no-link", dest="link", action="store_false",
+                    help="do not run `install --go` afterwards (it is run by "
+                         "default, so one command sets the machine up)")
     ap.add_argument("--go", action="store_true")
     a = ap.parse_args()
     global SOCKET
@@ -342,11 +428,12 @@ def main():
     target = os.path.join(cfg, "fleet.toml")
     briefs = os.path.join(cfg, "briefs")
 
-    src = a.source or EXAMPLE
-    if not os.path.isfile(src):
-        sys.exit("\n  no such file: %s\n" % src)
-    with open(src) as f:
-        source_text = f.read()
+    if a.source:
+        source_text, src = read_source(a.source)
+    else:
+        src = EXAMPLE
+        with open(src) as f:
+            source_text = f.read()
 
     # --save-profile is about the SOURCE, not about this machine's configuration,
     # so it neither reads nor writes <config>/ at all.
@@ -372,9 +459,23 @@ def main():
     text, notes = build(a, source_text, os.path.basename(src))
     for n in notes:
         print("  %s" % n)
+    # EVERYTHING UP TO THE TMUX SERVER, in one command. The configuration was
+    # only ever the first of four things a clean machine needed, and the other
+    # three -- the conventions file this fleet.toml points at, the symlinks, and
+    # knowing what order to do them in -- were left in a docs page. A setup whose
+    # steps live in prose is a setup someone performs from memory and gets wrong.
+    conventions = os.path.join(cfg, "conventions.md")
+    make_conventions = not os.path.exists(conventions)
     print("\n  would create:")
     print("    %s" % target)
     print("    %s/" % briefs)
+    if make_conventions:
+        print("    %s   (from the example; fleet.toml points at it)" % conventions)
+    else:
+        print("    (conventions.md is already there -- left alone)")
+    if a.link:
+        print("    symlinks: %s --go   (tools -> ~/bin, skills -> ~/.claude/skills)"
+              % INSTALL)
     if not a.go:
         print("\n  plan only -- re-run with --go\n")
         return
@@ -388,10 +489,46 @@ def main():
         sys.exit("\n  %s\n" % why)
     print("\n  created %s" % target)
     print("  created %s/" % briefs)
-    print("\n  next: write a brief for the first session --")
+
+    # Copied, never overwritten. The file is the fleet's accumulated lessons once
+    # it has any, and a second `fleetinit` on a machine that already has one must
+    # not replace them with the shipped example.
+    if make_conventions:
+        try:
+            shutil.copyfile(CONVENTIONS_EXAMPLE, conventions)
+            print("  created %s" % conventions)
+        except OSError as e:
+            print("  !! could not create %s: %s" % (conventions, e.strerror or e))
+            print("     cp %s %s" % (CONVENTIONS_EXAMPLE, conventions))
+
+    if a.link:
+        print("\n  linking (%s --go):" % INSTALL)
+        # FLEET_CONFIG pinned to the directory just written, not left to the
+        # environment: `fleetinit --go` may have been pointed somewhere else
+        # entirely, and an install that linked against a DIFFERENT configuration
+        # than the one just created is the kind of mismatch nobody re-checks.
+        env = dict(os.environ, FLEET_CONFIG=cfg)
+        try:
+            r = subprocess.run([INSTALL, "--go"], env=env, capture_output=True,
+                               text=True)
+        except (OSError, subprocess.SubprocessError) as e:
+            print("  !! could not run install: %s" % e)
+            r = None
+        if r is not None:
+            for ln in (r.stdout or "").splitlines():
+                print("    " + ln)
+            # Propagated, not swallowed. `install` exits non-zero when a link
+            # could not be made, and a fleetinit that reported success over it
+            # would recreate the silent-success bug one layer up.
+            if r.returncode != 0:
+                sys.exit("\n  install failed (exit %d) -- the setup is INCOMPLETE\n"
+                         % r.returncode)
+
+    print("\n  next, and these are the only steps left --")
+    print("    tmux new-session -d -s main          # which server is yours to choose")
     print("    cp %s %s/<name>.md" % (BRIEF_EXAMPLE, briefs))
     print("    $EDITOR %s/<name>.md" % briefs)
-    print("  then:  install --go   and   fleetspawn <name> <dir> --window <title> --go\n")
+    print("    fleetspawn <name> <dir> --window <title> --color <color> --go\n")
 
 
 if __name__ == "__main__":

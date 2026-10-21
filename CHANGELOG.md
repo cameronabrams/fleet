@@ -30,7 +30,39 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Added
+
+- **`fleetinit --go` now sets the machine up, not just the configuration.** It
+  writes `fleet.toml` and `briefs/` as before, places the `conventions.md` that
+  `fleet.toml` points at, and runs `install --go`. One command instead of four.
+  `--no-link` writes the configuration without touching `~/bin`. It still shows
+  the plan and changes nothing without `--go`, and the plan names the symlinks.
+
+  What it deliberately will not do is start a tmux server: which server a human
+  is attached to is theirs to choose. That, a brief and the spawn are what is
+  left, and it prints them.
+
+  An existing `conventions.md` is never replaced — it holds a fleet's accumulated
+  lessons once it has any. A failing `install` fails the whole setup rather than
+  being reported over.
+
+- **`fleetinit --from <host>` reads another machine's configuration over ssh**
+  (`ssh <host> cat ~/.config/fleet/fleet.toml`), so the fleet.toml that already
+  exists somewhere does not first have to be fetched by hand — keeping a copy to
+  point at is itself a step to remember. `host:/other/path` names a different
+  file. A local path still works and is tried first: a file that **exists** is
+  never treated as a hostname, and a spec containing `/` or ending `.toml` is
+  reported as a missing file rather than as an unreachable host, because the two
+  send a reader to entirely different places to look. An unreachable host fails
+  in seconds rather than hanging, and whatever `ssh` said is quoted back. An
+  empty remote file is refused rather than built on.
+
 ### Fixed
+
+- **A hand-written copy of `fleetinit`'s usage block in its docs page** had
+  drifted within a day of the tool growing options. The page already renders the
+  tool's own header via `tooldoc`, read from the script at build time; a second
+  copy of something that cannot drift is only a place for it to.
 
 - **`install` created `~/bin` but not `~/.claude/skills`**, so on a machine where
   Claude Code has never written a skill — precisely the fresh machine the script

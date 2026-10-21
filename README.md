@@ -25,13 +25,23 @@ hand is the specific thing that rots. See `docs/checks-that-reassure.md`.
 
 ## Install
 
-    bin/fleetinit --fleet <fleet-name> --go   # creates ~/.config/fleet/fleet.toml
-    ./install                                 # shows the plan, changes nothing
-    ./install --go                            # symlinks tools into ~/bin, skills into ~/.claude/skills
+    bin/fleetinit --fleet <fleet-name>        # shows the plan, changes nothing
+    bin/fleetinit --fleet <fleet-name> --go   # and this does all of it
 
-`fleetinit --from <another fleet.toml> --go` carries your own defaults — name,
-clusters, thresholds — and leaves the other fleet's roster behind. `install`
-refuses to run without a `fleet.toml` and names these commands when it does.
+One command: `fleet.toml`, `briefs/`, `conventions.md`, and the symlinks
+(tools into `~/bin`, skills into `~/.claude/skills`). What is left afterwards is a
+tmux server — which server you are attached to is yours to choose — a brief, and
+`fleetspawn`.
+
+Already run a fleet on another machine? Point at it:
+
+    bin/fleetinit --from <host> --fleet <fleet-name> --go
+
+That reads `~/.config/fleet/fleet.toml` there over ssh and keeps the parts that
+are about how *you* like fleets to work — your name, clusters, thresholds,
+timezone — while leaving that fleet's roster, history and name behind.
+`host:/other/path` names a different file; a local path still works and is tried
+first. `--no-link` writes the configuration without touching `~/bin`.
 
 Symlinks, not copies, so an edit here is live at once. Nothing real is ever
 overwritten silently; displaced files are moved aside, not deleted.

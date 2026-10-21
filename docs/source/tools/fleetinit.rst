@@ -3,26 +3,28 @@ fleetinit
 
 .. tooldoc:: fleetinit
 
-Usage
------
-
-.. code-block:: text
-
-   fleetinit                      show the plan; change nothing (the default)
-   fleetinit --go                 create <config>/, <config>/briefs/ and fleet.toml
-   fleetinit --from PATH --go     take the shareable parts of an existing config
-   fleetinit --save-profile PATH  write those parts out, and stop
+The usage block above is the tool's own header, read from the script at build
+time. There was a hand-written copy of it here until 2026-10-21, which had drifted
+within a day of the tool growing ``--from <host>`` and ``--no-link`` — a second
+copy of something that already cannot drift is only a place for it to.
 
 Options: ``--name``, ``--timezone``, ``--fleet`` answer the prompts
-non-interactively; ``--keep`` takes the source's own answers and asks nothing.
+non-interactively; ``--keep`` takes the source's own answers and asks nothing;
+``--no-link`` skips the symlinking.
 
 Why it comes first
 ------------------
 
-On a fresh machine nothing else can run: :doc:`../index` installs through
-``install``, which exits 2 without a ``fleet.toml``. So this is the step that
-blocks every other step, and it was built before the conveniences for that reason
-rather than because it was the smallest.
+On a fresh machine nothing else can run: ``install`` exits 2 without a
+``fleet.toml``. So this is the step that blocks every other step, and it was built
+before the conveniences for that reason rather than because it was the smallest.
+
+It now *is* the other steps as well. ``--go`` writes the configuration, places the
+``conventions.md`` that ``fleet.toml`` points at, and runs ``install --go`` —
+because four commands in a docs page is a setup performed from memory and got
+wrong. What it will not do is start a tmux server: which server a human is
+attached to is theirs to choose, and a tool that picks one has made a decision it
+cannot see the consequences of.
 
 Where the defaults come from
 ----------------------------

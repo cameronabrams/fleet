@@ -29,25 +29,40 @@ copied or edited by hand first:
 
 .. code-block:: bash
 
-   $ bin/fleetinit --fleet <fleet-name> --go         # from the shipped example
-   $ cp examples/conventions.example.md ~/.config/fleet/conventions.md
+   $ bin/fleetinit --fleet <fleet-name> --go
+
+That is the whole of it: ``fleet.toml``, ``briefs/``, ``conventions.md`` and the
+symlinks ``install`` makes, in one command. It shows the plan and changes nothing
+without ``--go``, and ``--no-link`` writes the configuration without touching
+``~/bin``.
 
 ``--fleet`` names the fleet, and it is worth giving even on a machine that will
 only ever run one. Membership is strict: a pane whose ``@fleet`` does not match is
 not this fleet's, and a fleet with **no** name of its own falls back to counting
 every pane on the tmux server as its own. See :doc:`tools/fleetboard`.
 
-**If you already run a fleet somewhere**, take your own defaults from it instead —
-your name, your clusters, your thresholds, with the other fleet's roster and
-history left behind:
+**If you already run a fleet somewhere**, point at that machine. Keeping a copy
+of its ``fleet.toml`` to fetch by hand is itself a step to remember:
 
 .. code-block:: bash
 
-   $ bin/fleetinit --from /path/to/another/fleet.toml --go
+   $ bin/fleetinit --from <host> --fleet <fleet-name> --go
+   $ bin/fleetinit --from <host>:/other/path --fleet <name> --go   # a different file
+   $ bin/fleetinit --from /a/local/fleet.toml --fleet <name> --go  # still works
 
-That is the whole fresh-machine path: clone this repository, fetch the
-configuration you keep privately, run one command. ``install`` refuses to run
-without a ``fleet.toml`` and names these commands when it does.
+``--from <host>`` runs ``ssh <host> cat ~/.config/fleet/fleet.toml``. What travels
+is what is about **how you like fleets to work** — your name and timezone, your
+clusters and accounts, your context thresholds, your mail and notification
+settings. What does not: the other fleet's roster, its parked and retired history,
+its ``[authority]`` grant, the host its update checker names, and its own
+``[fleet].name`` — a copy keeping that would label its panes as the fleet it was
+copied from, which is the confusion the name exists to prevent.
+
+A local file that **exists** is never treated as a hostname, and a spec with a
+``/`` in it, or ending ``.toml``, is reported as a missing file rather than as an
+unreachable host — the two send you to entirely different places to look. An
+unreachable host fails in seconds rather than hanging, and whatever ``ssh`` said
+is quoted back.
 
 See :doc:`configuration` for every setting. Put the configuration directory under
 version control of its own — privately; it names your hosts, accounts and sessions
@@ -56,6 +71,9 @@ directory other than ``~/.config/fleet``.
 
 Link
 ----
+
+``fleetinit --go`` runs this for you. Run it directly after a ``git pull``, or
+when ``fleetinit --no-link`` was used:
 
 .. code-block:: bash
 
@@ -80,7 +98,7 @@ refuses with a named reason for each rather than inventing one:
 .. code-block:: bash
 
    $ tmux new-session -d -s main                     # it will not start a server
-   $ cp examples/brief.example.md ~/.config/fleet/briefs/<name>.md
+   $ cp examples/brief.example.md ~/.config/fleet/briefs/<name>.md   # fleetinit prints this
    $ $EDITOR ~/.config/fleet/briefs/<name>.md
    $ fleetspawn <name> <dir> --window <title> --color blue    # plan
    $ fleetspawn <name> <dir> --window <title> --color blue --go
