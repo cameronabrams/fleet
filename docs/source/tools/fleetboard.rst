@@ -10,6 +10,7 @@ Usage
 
    fleetboard                 local sources only (~0.2 s)
    fleetboard --full          also refresh cluster work and context sizes (~6 s)
+   fleetboard --parked        also list the parked sessions (counted by default)
    fleetboard --watch [N]     redraw every N seconds (default 15)
 
 One screen: every session, its window, busy or idle, context size, cluster work,
@@ -76,20 +77,29 @@ column is cut from the **left**: paths are distinctive at the end, so a right-ha
 cut would make the column widest exactly where it stops telling two sessions apart.
 The width follows the terminal, between 14 and 42 characters.
 
-Below the table, under a rule, are the sessions declared **parked** in
-``[parked.<name>]`` (:doc:`../configuration`), with their directory and the date
-they were parked. Parked is a *declaration*, not an observation, which is why it can
-be shown for a session with no process and no pane — and why those rows sit under a
-rule rather than at the bottom of the same list: they are a different kind of thing.
+Below the table, under a rule, is a **count** of the sessions declared **parked**
+in ``[parked.<name>]`` (:doc:`../configuration`). ``fleetboard --parked`` lists
+them, with each one's directory and the date it was parked. Parked is a
+*declaration*, not an observation, which is why it can be shown for a session with
+no process and no pane — and why it sits under a rule rather than at the bottom of
+the same list: it is a different kind of thing.
+
+Counted rather than listed since 2026-10-21, and the reason is the section below.
+Twelve parked sessions were fourteen lines of a thirty-six-line board; every one of
+them is durable, declared in a file, and unchanged between draws, while a
+``--watch`` pane re-read them every fifteen seconds and the rows that *do* change
+sat below the fold.
 
 A parked row carries no state, version, context or work. Those are runtime and it
 has none; printing ``?`` in them would say they were unknown, which is this page's
 rule about ``?`` read backwards. **Retired** sessions are not listed at all — they
 are not coming back, and a board is about what might.
 
-A name that is both running and declared parked is marked ``ALSO RUNNING``. That is
-two sources disagreeing, and drawing it in both places without a word would let an
-undeclared unpark look like an ordinary board.
+A name that is both running and declared parked is marked ``ALSO RUNNING``, and
+that line survives the collapse as its own ``!`` row. It is the one parked fact
+that is **not** durable: two sources disagreeing, a human's decision against the
+machine's, which is what this board is for. Everything else about a parked session
+can wait behind a flag; a contradiction cannot.
 
 The configuration is **re-read on every draw**, not once at startup. ``--watch``
 redraws for as long as the board is left up, and parking is a declaration a human
@@ -240,6 +250,38 @@ been removed from under the machine, and a reboot is equally the answer.
 Unreadable is ``kernel: ?`` in the header, never silence — this is read locally,
 so failing means something odd about the machine itself, and omitting it reads
 exactly like a machine with nothing to report.
+
+What scrolls off is what does not change
+----------------------------------------
+
+Everything time-sensitive sits **directly under the header**: pending updates, the
+cluster/context stamp, every ``!`` warning, and any pane belonging to another
+fleet. The live roster follows, and the parked count last.
+
+It was the other way round until 2026-10-21, and the cost was measured rather than
+imagined. The board was 36 lines. Eight of the fleet's seventeen panes are under 40
+rows. Of those 36 lines, **fourteen were the parked list** — durable, declared in a
+file, identical tomorrow — and **three were the footer** carrying the updates
+count, the cluster stamp and every red warning. The largest block was sessions that
+are not running; the smallest was everything a glance is for. And it got worse with
+use: the parked block grows each time a session is parked, pushing the footer
+further down.
+
+The rule, which outlives this particular layout: **anything that can scroll off
+should be the thing that does not change.**
+
+This matters more than one hidden line. ``fleetwatch`` and ``fleetboard`` have had
+a long run of work making their warnings honest — the classifier for declined
+nudges, dead-watcher detection, the ``(all)`` row guard — and every bit of it
+assumes the warning is *read*. A true alarm printed below the fold is the same end
+state as a false one printed above it. ``docs/checks-that-reassure.md`` carries the
+sibling case from the other side: a permanent red line gets read past, and then a
+real hole lands where nobody is looking. This is that failure one step earlier,
+where the line never reaches the reader at all.
+
+The ``!`` warnings stay **with** the stamp that dates them rather than being
+hoisted above it. Each is true as of that moment and no later, and a red line with
+no age beside it invites being read as current when its source stopped hours ago.
 
 Whose fleet a pane is in
 ------------------------

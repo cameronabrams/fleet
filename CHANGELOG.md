@@ -59,6 +59,34 @@ entries and makes you confirm the bump against this list.
 
 ### Changed
 
+- **`fleetboard` puts everything time-sensitive directly under the header**, and
+  counts parked sessions instead of listing them (`fleetboard --parked` lists
+  them). Pending updates, the cluster/context stamp, every `!` warning and any
+  foreign pane now precede the live roster; the parked count comes last.
+
+  Measured rather than guessed: the board was 36 lines and eight of this fleet's
+  seventeen panes are under 40 rows. Fourteen of those lines were the parked list
+  — durable, declared in a file, identical tomorrow — and three were the footer
+  carrying the updates count, the cluster stamp and every red warning. The largest
+  block was sessions that are not running; the smallest was everything a glance is
+  for, and the parked block grows every time a session is parked, pushing the
+  footer further down. The default draw is 23 lines now.
+
+  The rule that outlives this layout: **anything that can scroll off should be the
+  thing that does not change.** A true alarm printed below the fold is the same end
+  state as a false one printed above it.
+
+  `ALSO RUNNING` survives the collapse as its own `!` line. It is the one parked
+  fact that is not durable — a session declared parked and running at once is a
+  human's decision disagreeing with the machine — and a count must not swallow a
+  contradiction.
+
+- **The quiet kernel case says so.** A board that printed nothing when the running
+  kernel was the newest was indistinguishable from a board that does not check:
+  found by a reader going to look for the warning the day after it landed, not by
+  a test. The header carries a dim `kernel <release>` when there is nothing to
+  report.
+
 - **An unlabeled pane is no longer assumed to be ours.** `fleet.panes.belongs`
   shipped permissive on purpose: zero panes carried `@fleet` when it landed, so
   excluding the unlabeled would have emptied every tool at once. Every pane is

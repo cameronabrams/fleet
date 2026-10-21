@@ -3,6 +3,7 @@
 
   fleetboard              local sources only (~0.2 s)
   fleetboard --full       also refresh cluster work and context sizes (~6 s)
+  fleetboard --parked     also list the parked sessions (counted by default)
   fleetboard --watch [N]  redraw every N seconds (default 15), refreshing the
                           slow sources whenever the cache is over 10 min old
 
@@ -329,7 +330,63 @@ def age(ts):
     if s < 5400: return f"{s//60}m"
     return f"{s//3600}h"
 
-def draw(full=False, auto=False):
+def updates_line(u_state, u_data):
+    """The pending-updates line, or None when no source is configured.
+
+    Beside the other aged sources, and carrying its age for the same reason they
+    do: a package count is evidence as of a time, and the producer is a daily
+    timer. Nothing is printed when no source is configured -- that is silence by
+    choice, which is the one absence here that is not a failure.
+
+    Returned rather than printed, because this moved from the bottom of the board
+    to the top on 2026-10-21 and a block that prints itself cannot be moved.
+    """
+    if u_state == "unknown":
+        return f"  {C['red']}updates: UNKNOWN -- {u_data.get('error', 'no reason given')}{C['r']}"
+    if u_state == "failed":
+        return (f"  {C['red']}updates: THE CHECK FAILED -- "
+                f"{u_data.get('error') or 'no reason given'}{C['r']}")
+    if u_state in ("ok", "stale"):
+        n = u_data.get("total")
+        k = u_data.get("kernel_update") or []
+        tgt = u_data.get("target_snapshot")
+        if n:
+            what = "%s update%s" % (n, "" if n == 1 else "s")
+            if k:
+                what += " (kernel)"
+            if tgt and tgt != u_data.get("snapshot"):
+                what += " -> %s" % tgt
+        else:
+            what = "up to date (%s)" % (u_data.get("snapshot") or "?")
+        when = "checked %s ago" % age(time.time() - u_data["_age_s"])
+        # STALE is said, not implied by a large number: a reader who sees only an
+        # age has to do the arithmetic, and the whole point is that a check which
+        # stopped running must not read as a quiet machine.
+        mark = f"  {C['red']}STALE{C['r']}" if u_state == "stale" else ""
+        color = C['red'] if (n or u_state == "stale") else C['dim']
+        return f"  {color}updates: {what}{C['r']}{C['dim']} - {when}{C['r']}{mark}"
+    return None
+
+
+def cache_lines(cache, full, auto):
+    """The cluster/context provenance stamp, and the `!` warnings it carries.
+
+    The warnings stay WITH the stamp rather than being hoisted above it: each one
+    is true as of that moment and no later, and a red line with no age beside it
+    invites being read as current when its source stopped hours ago.
+    """
+    if not cache:
+        return [f"  {C['dim']}no cluster/context data yet -- fleetboard --full{C['r']}"]
+    stamp = f"{C['dim']}cluster + context as of {age(cache['at'])} ago"
+    if not full and not auto:
+        stamp += "; fleetboard --full to refresh"
+    out = ["  " + stamp + C['r']]
+    for note in cache.get("notes", []):
+        out.append(f"  {C['red']}! {note}{C['r']}")
+    return out
+
+
+def draw(full=False, auto=False, show_parked=False):
     p, a = panes(), agents()
     cache = load_cache() if not full else None
     if full or (auto and (cache is None or time.time() - cache["at"] > REFRESH)):
@@ -402,16 +459,65 @@ def draw(full=False, auto=False):
                 # half a million hours. `since` is already an epoch.
                 waited = ", waiting %s" % age(k_info["since"])
             head += f"{C['red']} (kernel {was} -> {now_}{waited}){C['r']}"
-    elif k_state == "unknown":
+    elif k_state == "unknown" or not k_info.get("running"):
         # Said out loud rather than passed over. This is read live and locally, so
         # it failing means something odd about the machine itself, and a silent
         # omission here reads exactly like a machine with nothing to report.
         head += f"   {C['red']}kernel: ?{C['r']}"
+    else:
+        # The quiet case says something too, and it took a reader going to look
+        # for the warning to find out why that matters: Cameron checked the board
+        # for a pending reboot the day after this landed, saw nothing, and could
+        # not tell "checked, and you are on the newest kernel" from "this board
+        # does not report kernels". A silent pass is indistinguishable from an
+        # absent feature, which is the same doctrine as rendering `?` seen from
+        # its other side -- there the board cannot answer, here it can and the
+        # answer happens to be good news.
+        #
+        # One dim field, and no second release to compare against, so the running
+        # one prints as `uname -r` gives it. A state of "current" with no release
+        # in it falls to the `?` branch above rather than printing `kernel ` with
+        # an empty field, which would read as a bug in the board rather than in
+        # what it was handed.
+        head += f"   {C['dim']}kernel {k_info['running']}{C['r']}"
     print(head)
     if a is None:
         print(f"  {C['red']}claude agents could not be read -- every status below is ?{C['r']}")
     if p is None:
         print(f"  {C['red']}tmux could not be read -- panes and silence unknown{C['r']}")
+
+    # EVERYTHING TIME-SENSITIVE, DIRECTLY UNDER THE HEADER. All of this used to
+    # sit at the bottom, below a parked list that is fourteen lines long and grows
+    # every time a session is parked -- so the board was 36 lines, eight of the
+    # fleet's seventeen panes are under 40 rows, and the rows that change were the
+    # ones that fell off. Cameron went looking for a kernel warning on 2026-10-21
+    # and ran the comparison by hand rather than read it here.
+    #
+    # The ordering rule, which is the part worth keeping: ANYTHING THAT SCROLLS
+    # OFF SHOULD BE THE THING THAT DOES NOT CHANGE. Fourteen lines saying a
+    # session has been parked for a fortnight will say the same tomorrow; the
+    # updates count, the cluster stamp and every `!` are the rows a glance is for.
+    #
+    # Same family as the permanent red line already in the catalogue, one step
+    # earlier: there a true alarm is read past, here it never reaches the reader.
+    pk = parked()
+    status = []
+    if pk is None:
+        status.append(f"  {C['red']}parked sessions could not be read from the "
+                      f"configuration{C['r']}")
+    line = updates_line(u_state, u_data)
+    if line:
+        status.append(line)
+    status += cache_lines(cache, full, auto)
+    if foreign:
+        status.append(f"  {C['dim']}not this fleet ({len(foreign)}): "
+                      + ", ".join("%s@%s" % (n, f or "(no @fleet)")
+                                  for n, f in sorted(foreign))
+                      + f"{C['r']}")
+    for ln in status:
+        print(ln)
+    if status:
+        print()
 
     names = sorted(set(list((a or {}).keys()) + list((p or {}).keys())))
     raw_jobs = (cache or {}).get("jobs")
@@ -466,14 +572,6 @@ def draw(full=False, auto=False):
                f"{vcol}{(sv or '?'):<9}{C['r']}{k:>6}  "
                f"{C['dim']}{d:<{cw}}{C['r']}  {work}").rstrip())
 
-    pk = parked()
-    if pk is None:
-        print(f"\n  {C['red']}parked sessions could not be read from the "
-              f"configuration{C['r']}")
-    if foreign:
-        print(f"\n  {C['dim']}not this fleet ({len(foreign)}): "
-              + ", ".join("%s@%s" % (n, f or "(no @fleet)") for n, f in sorted(foreign))
-              + f"{C['r']}")
     # `if`, not the `elif` this was. The parked ROWS live in this block, so while
     # the branch above it was live, a single unstamped pane would have taken the
     # entire parked section off the board -- heading and all -- for a reason that
@@ -485,72 +583,55 @@ def draw(full=False, auto=False):
         # -- declared, not observed -- and the two must not read as one list that
         # happens to have quiet entries at the bottom.
         print(f"  {C['dim']}{'─' * (63 + cw)}{C['r']}")
-        print(f"  {C['dim']}parked ({len(pk)}){C['r']}")
-        # Its own narrow layout, not the live table's. A parked session has no
-        # state, version, context or work -- those are runtime -- and borrowing
-        # the columns to leave them blank draws a row of absences where there is
-        # nothing absent. Printing `?` in them would be worse: `?` is this board's
-        # word for a source that failed, and nothing failed here.
-        pw = cwd_width(34, hi=46)   # the longest real parked path fits at 46
-        for n in sorted(pk):
-            also = f"  {C['red']}ALSO RUNNING{C['r']}" if n in names else ""
-            print((f"   {C['dim']}{n:<21}{short_path(pk[n]['cwd'], pw):<{pw}}  "
-                   f"since {pk[n]['since']}{C['r']}{also}").rstrip())
-
-    # Beside the other aged sources, and carrying its age for the same reason they
-    # do: a package count is evidence as of a time, and the producer is a daily
-    # timer. Nothing is printed when no source is configured -- that is silence by
-    # choice, which is the one absence here that is not a failure.
-    if u_state == "unknown":
-        print(f"\n  {C['red']}updates: UNKNOWN -- {u_data.get('error', 'no reason given')}{C['r']}")
-    elif u_state == "failed":
-        print(f"\n  {C['red']}updates: THE CHECK FAILED -- "
-              f"{u_data.get('error') or 'no reason given'}{C['r']}")
-    elif u_state in ("ok", "stale"):
-        n = u_data.get("total")
-        k = u_data.get("kernel_update") or []
-        tgt = u_data.get("target_snapshot")
-        if n:
-            what = "%s update%s" % (n, "" if n == 1 else "s")
-            if k:
-                what += " (kernel)"
-            if tgt and tgt != u_data.get("snapshot"):
-                what += " -> %s" % tgt
+        # COUNTED BY DEFAULT, listed on request. Twelve parked sessions are
+        # fourteen lines of a 36-line board, every one of them durable: the names
+        # are declared in `fleet.toml`, nothing about them changes between draws,
+        # and a `--watch` pane re-read them every fifteen seconds while the rows
+        # that do change sat below the fold. One line here, the list behind
+        # `--parked`.
+        #
+        # ALSO RUNNING is the exception and stays visible, because it is a
+        # CONTRADICTION rather than an inventory: a session declared parked and
+        # running at the same time means a human's decision and the machine
+        # disagree, and that is exactly the kind of thing this board exists to
+        # put in front of someone. Collapsing it into the count would hide the one
+        # parked fact that is not durable.
+        clash = sorted(n for n in pk if n in names)
+        if show_parked:
+            print(f"  {C['dim']}parked ({len(pk)}){C['r']}")
+            # Its own narrow layout, not the live table's. A parked session has no
+            # state, version, context or work -- those are runtime -- and borrowing
+            # the columns to leave them blank draws a row of absences where there
+            # is nothing absent. Printing `?` in them would be worse: `?` is this
+            # board's word for a source that failed, and nothing failed here.
+            pw = cwd_width(34, hi=46)   # the longest real parked path fits at 46
+            for n in sorted(pk):
+                also = f"  {C['red']}ALSO RUNNING{C['r']}" if n in names else ""
+                print((f"   {C['dim']}{n:<21}{short_path(pk[n]['cwd'], pw):<{pw}}  "
+                       f"since {pk[n]['since']}{C['r']}{also}").rstrip())
         else:
-            what = "up to date (%s)" % (u_data.get("snapshot") or "?")
-        when = "checked %s ago" % age(time.time() - u_data["_age_s"])
-        # STALE is said, not implied by a large number: a reader who sees only an
-        # age has to do the arithmetic, and the whole point is that a check which
-        # stopped running must not read as a quiet machine.
-        mark = f"  {C['red']}STALE{C['r']}" if u_state == "stale" else ""
-        color = C['red'] if (n or u_state == "stale") else C['dim']
-        print(f"\n  {color}updates: {what}{C['r']}{C['dim']} - {when}{C['r']}{mark}")
-
-    if cache:
-        stamp = f"{C['dim']}cluster + context as of {age(cache['at'])} ago"
-        if not full and not auto:
-            stamp += "; fleetboard --full to refresh"
-        print("\n  " + stamp + C['r'])
-        for note in cache.get("notes", []):
-            print(f"  {C['red']}! {note}{C['r']}")
-    else:
-        print(f"\n  {C['dim']}no cluster/context data yet -- fleetboard --full{C['r']}")
+            print(f"  {C['dim']}parked ({len(pk)}){C['r']}"
+                  f"{C['dim']} -- fleetboard --parked to list{C['r']}")
+            if clash:
+                print(f"  {C['red']}! parked and ALSO RUNNING: "
+                      f"{', '.join(clash)}{C['r']}")
 
 def main():
     version_flag()
     args = sys.argv[1:]
     full = "--full" in args
+    show_parked = "--parked" in args
     if "--watch" in args:
         i = args.index("--watch")
         every = int(args[i+1]) if len(args) > i+1 and args[i+1].isdigit() else 15
         try:
             while True:
-                print("\033[2J\033[H", end=""); draw(full, auto=True); full = False
+                print("\033[2J\033[H", end=""); draw(full, auto=True, show_parked=show_parked); full = False
                 time.sleep(every)
         except KeyboardInterrupt:
             pass
     else:
-        draw(full)
+        draw(full, show_parked=show_parked)
 
 if __name__ == "__main__":
     main()

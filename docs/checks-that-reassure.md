@@ -435,6 +435,36 @@ Three mechanisms produce it.
   a reader seeing `waiting 497654h` would have doubted the feature rather than the
   arithmetic.
 
+- **The board's most urgent line was the one that scrolled off.** Not a check
+  that lied -- a check that was right, printed, and never reached the reader. The
+  board was 36 lines; eight of the fleet's seventeen panes are under 40 rows.
+  Fourteen of those lines were the parked list, every entry durable and identical
+  tomorrow; three were the footer carrying pending updates, the cluster stamp and
+  every `!` warning. The largest block was sessions that are **not running**, the
+  smallest was everything that changes, and the parked block grew each time a
+  session was parked, pushing the footer further down with use.
+
+  Found by a reader, not by a test: the owner went looking for a kernel reboot
+  warning and ran the comparison by hand instead. **Anything that can scroll off
+  should be the thing that does not change.** A true alarm printed below the fold
+  is the same end state as a false one printed above it -- the sibling of the
+  permanent-red-line entry above, one step earlier, where the line never reaches
+  the reader at all.
+
+  Worth keeping separate from its diagnosis. The peer that raised this reported
+  the reboot marker as being in the hidden footer; it is in the header, on the
+  board's first line, and has been since it landed. The *finding* was right and
+  the *explanation* was wrong, and acting on the explanation would have moved a
+  line that was already where it needed to be. Re-measure a peer's reasoning as
+  well as its conclusion.
+
+- **A silent pass is indistinguishable from an absent feature.** The kernel check
+  printed nothing when the running kernel was the newest -- correct, and the
+  reason the owner could not tell whether the board had checked at all. The
+  doctrine already covers the unreadable case, which renders `?`; this is the
+  same rule from its other side, where the board *can* answer and the answer is
+  good news. One dim field, and it costs nothing to say.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and

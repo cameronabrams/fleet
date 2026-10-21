@@ -294,7 +294,11 @@ class CwdAndParked(unittest.TestCase):
     def tearDown(self):
         self.cfg.close()
 
-    def board(self, agents, cols=170):
+    def board(self, agents, cols=170, show_parked=True):
+        """`show_parked=True` by default HERE, because this class is about the
+        parked rows themselves. The board counts them instead since 2026-10-21 --
+        twelve of them were fourteen lines of a thirty-six-line board, all of it
+        durable, while the rows that change sat below the fold."""
         panes = {n: {"win": "1", "winname": "w", "pane": "%1",
                      "quiet": False, "current": False} for n in agents}
         import io, contextlib
@@ -307,14 +311,18 @@ class CwdAndParked(unittest.TestCase):
              mock.patch.object(self.b.versions, "of_pid", lambda pid: "2.1.0"):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
-                self.b.draw()
+                self.b.draw(show_parked=show_parked)
             return buf.getvalue()
 
     LIVE = {"alpha": {"status": "idle", "pid": 11, "cwd": "/home/u/Git/alpha"}}
 
     def test_the_cwd_column_shows_each_agents_directory(self):
         out = self.board(self.LIVE)
-        self.assertIn("cwd", out.splitlines()[2])
+        # Found, not indexed. This read `splitlines()[2]` and broke the day the
+        # time-sensitive lines moved above the table -- an assertion that depends
+        # on how many rows happen to precede the one it means.
+        self.assertTrue(any("cwd" in l and "session" in l for l in out.splitlines()),
+                        "the live table's column header is missing")
         row = next(l for l in out.splitlines() if l.strip().startswith("alpha"))
         self.assertIn("/home/u/Git/alpha", row)
 
@@ -439,7 +447,10 @@ class TheConfigurationIsReReadEachDraw(unittest.TestCase):
     def tearDown(self):
         self.cfg.close()
 
-    def draw(self):
+    def draw(self, show_parked=True):
+        """Lists the parked rows, because what this class checks is that a session
+        parked WHILE a `--watch` board is running shows up on the next draw --
+        which is about re-reading the configuration, not about the count."""
         import io, contextlib
         agents = {"old-talk": {"status": "idle", "pid": 11, "cwd": "/home/u/x"}}
         panes = {"old-talk": {"win": "1", "winname": "w", "pane": "%1",
@@ -451,7 +462,7 @@ class TheConfigurationIsReReadEachDraw(unittest.TestCase):
              mock.patch.object(self.b.versions, "of_pid", lambda pid: "2.1.0"):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
-                self.b.draw()
+                self.b.draw(show_parked=show_parked)
             return buf.getvalue()
 
     def unpark_everything(self):
@@ -654,7 +665,7 @@ class PendingUpdatesAreASourceLikeAnyOther(unittest.TestCase):
 
     # -- rendering -------------------------------------------------------------
 
-    def draw(self, doc=None, kernel=("current", {})):
+    def draw(self, doc=None, kernel=("current", {"running": "7.2.11-1-default"})):
         """`kernel` is PINNED, because the board now reads the running kernel
         live. Left to the host, every assertion about the reboot marker would be
         answered by whichever kernel the test machine happens to have booted:
@@ -757,10 +768,29 @@ class PendingUpdatesAreASourceLikeAnyOther(unittest.TestCase):
         self.assertIn("kernel: ?", head)
         self.assertNotIn("REBOOT NEEDED", head)
 
-    def test_a_current_kernel_says_nothing(self):
-        out = self.draw(self.fresh(total=5, reboot_needed=False))
-        self.assertNotIn("kernel", out.splitlines()[1])
+    def test_a_current_kernel_says_so_rather_than_saying_nothing(self):
+        """Found by a reader, not by a test. Cameron checked the board for a
+        pending reboot the day after this landed, saw nothing, and could not tell
+        "checked, and you are on the newest kernel" from "this board does not
+        report kernels" -- so he ran the comparison by hand. A silent pass is
+        indistinguishable from an absent feature, which is the doctrine of
+        rendering `?` seen from its other side: there the board cannot answer,
+        here it can and the answer is good news."""
+        out = self.draw(self.fresh(total=5, reboot_needed=False),
+                        kernel=("current", {"running": "7.2.11-1-default",
+                                            "newest": "7.2.11-1-default"}))
+        head = [l for l in out.splitlines() if "FLEET" in l][0]
+        self.assertIn("kernel 7.2.11-1-default", head)
         self.assertNotIn("REBOOT NEEDED", out)
+
+    def test_the_quiet_case_is_not_dressed_as_an_alarm(self):
+        """Dim, not red, and no `!`. A board that shouts good news teaches its
+        reader to skim the line that will one day carry bad news -- the sibling of
+        the permanent-red-line case already in the catalogue."""
+        out = self.draw(self.fresh(total=5, reboot_needed=False),
+                        kernel=("current", {"running": "7.2.11-1-default"}))
+        self.assertNotIn("REBOOT", out)
+        self.assertNotIn("!", [l for l in out.splitlines() if "FLEET" in l][0])
 
     def test_a_failed_check_still_reports_a_reboot(self):
         """The opposite of what this board first did, and the fix came from
@@ -818,3 +848,119 @@ class PendingUpdatesAreASourceLikeAnyOther(unittest.TestCase):
                 if "updates:" in l][0]
         self.assertIn("up to date", line)
         self.assertIn("20261017", line)
+
+
+class WhatScrollsOffIsWhatDoesNotChange(unittest.TestCase):
+    """The ordering rule, after the board's most urgent line spent a day below the
+    fold.
+
+    The board was 36 lines; eight of the fleet's seventeen panes are under 40
+    rows. Of those 36, fourteen were the parked list -- every entry durable, none
+    of it changing between draws -- and three were the footer carrying pending
+    updates, the cluster/context stamp and every `!` warning. The largest block
+    was sessions that are not running; the smallest was everything time-sensitive,
+    and the parked block grew each time a session was parked, pushing the footer
+    further down.
+
+    Cameron went looking for a kernel reboot warning on 2026-10-21 and ran the
+    comparison by hand rather than find it here. Same family as the permanent red
+    line already in the catalogue, one step earlier: there a true alarm is read
+    past, here it never reaches the reader at all.
+    """
+
+    # FIVE parked sessions, not the one the sibling fixture declares. With a
+    # single entry the collapse saves nothing and a test of it compares two equal
+    # numbers -- which is how the first version of `test_the_board_fits_a_short_pane`
+    # passed on a fixture that could not show the behavior it named.
+    MANY_PARKED = PARKED_TOML + "".join(
+        '\n[parked.%s]\nuuid  = "cccccccc-%04d-4333-8333-333333333333"\n'
+        'since = "2026-10-0%d"\ncwd   = "/home/u/Git/%s"\n' % (n, i, i, n)
+        for i, n in enumerate(("beta-talk", "gamma-repo", "delta-sweep",
+                               "epsilon-notes"), start=1))
+
+    def setUp(self):
+        self.cfg = FakeConfig(toml=self.MANY_PARKED)
+        self.b = load_tool("fleetboard")
+        self.b.C = dict.fromkeys(self.b.C, "")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def board(self, show_parked=False, notes=(), running=True):
+        import io, contextlib
+        agents = {"alpha": {"status": "idle", "pid": 11, "cwd": "/home/u/a"}}
+        if running:
+            agents["old-talk"] = {"status": "idle", "pid": 12, "cwd": "/home/u/x"}
+        panes = {n: {"win": "1", "winname": "w", "pane": "%1",
+                     "quiet": False, "current": False} for n in agents}
+        cache = {"at": time.time() - 120, "notes": list(notes)}
+        with mock.patch.object(self.b, "panes", lambda: panes), \
+             mock.patch.object(self.b, "agents", lambda: agents), \
+             mock.patch.object(self.b, "load_cache", lambda: cache), \
+             mock.patch.object(self.b.kernels, "state",
+                               lambda *a, **k: ("current", {"running": "1.0-1-default"})), \
+             mock.patch.object(self.b.versions, "installed", lambda *a, **k: "2.1.0"), \
+             mock.patch.object(self.b.versions, "of_pid", lambda pid: "2.1.0"):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.b.draw(show_parked=show_parked)
+            return buf.getvalue()
+
+    @staticmethod
+    def row_of(out, needle):
+        return next(i for i, l in enumerate(out.splitlines()) if needle in l)
+
+    def test_the_cluster_stamp_is_above_the_session_table(self):
+        out = self.board()
+        self.assertLess(self.row_of(out, "cluster + context"),
+                        self.row_of(out, "cwd"))
+
+    def test_a_red_warning_is_above_the_session_table(self):
+        """The `!` notes were the LAST thing the board printed, below even the
+        stamp. They are the most urgent rows on it."""
+        out = self.board(notes=["a job died"])
+        self.assertLess(self.row_of(out, "! a job died"),
+                        self.row_of(out, "cwd"))
+
+    def test_the_warning_stays_with_the_stamp_that_dates_it(self):
+        """Above the table, but not hoisted above its own provenance: each note is
+        true as of that moment and no later, and a red line with no age beside it
+        invites being read as current when its source stopped hours ago."""
+        out = self.board(notes=["a job died"])
+        self.assertEqual(self.row_of(out, "! a job died"),
+                         self.row_of(out, "cluster + context") + 1)
+
+    def test_parked_is_counted_not_listed(self):
+        out = self.board()
+        self.assertIn("parked (5)", out)
+        self.assertIn("--parked to list", out)
+        self.assertNotIn("/home/u/Git/talks/old", out)
+
+    def test_parked_lists_on_request(self):
+        out = self.board(show_parked=True)
+        self.assertIn("/home/u/Git/talks/old", out)
+        self.assertNotIn("--parked to list", out)
+
+    def test_the_collapse_still_shows_a_session_both_parked_and_running(self):
+        """The one parked fact that is NOT durable, and so the one the count must
+        not swallow. A session declared parked in `fleet.toml` and running at the
+        same time means a human's decision and the machine disagree -- which is
+        what this board is for. It survives the collapse as its own `!` line."""
+        out = self.board()
+        self.assertIn("parked and ALSO RUNNING: old-talk", out)
+
+    def test_no_clash_line_when_nothing_clashes(self):
+        out = self.board(running=False)
+        self.assertIn("parked (5)", out)
+        self.assertNotIn("ALSO RUNNING", out)
+
+    def test_the_board_fits_a_short_pane(self):
+        """The measurement that started this. Not a fixed budget -- the live
+        roster is as long as the fleet is -- but the parked list must no longer
+        add a line per parked session to the default draw."""
+        short = len(self.board().splitlines())
+        listed = len(self.board(show_parked=True).splitlines())
+        self.assertEqual(listed - short, 4,
+                         "five parked sessions must cost four lines more when "
+                         "listed than when counted (the clash line is printed "
+                         "either way)")
