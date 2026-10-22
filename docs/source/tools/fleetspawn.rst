@@ -190,10 +190,22 @@ entire version spread was unparks rather than rolls. The auto-roll log recorded
 
 So ``--go`` appends one line to ``<state>/autoroll.log``::
 
-   2026-10-16T09:51:04-0400  installed=2.1.301 rolled=lib-repo from=parked to=2.1.301 note=unpark
+   2026-10-16T09:51:04-0400  installed=2.1.301 kind=unpark rolled=lib-repo from=parked to=2.1.301 note=unpark
 
 It is the auto-roll's own log and not a new one, deliberately: a second file would
-have said ``rolled=none`` twice. ``from`` is ``parked`` for an unpark and ``new``
+have said ``rolled=none`` twice.
+
+``kind=`` says **what put the session on that binary** — ``roll``, ``spawn``,
+``unpark``, ``restore`` or ``adopt`` — and it is not decoration. A daily cap on
+the auto-roll ("act at most once per calendar day") has to read this log, and
+until 2026-10-22 it could not: of the six ``rolled=`` lines then present exactly
+one was a roll, two were a restore converging the fleet, one an unpark and two
+were spawns. A cap counting ``rolled=`` lines would have blocked the roll on two
+days for reasons having nothing to do with rolling — and worst on the day after a
+reboot, which is already when the ladder is stalled because the restore flattened
+every version onto one. ``fleet.versions.rolled_on`` reads it, and a line written
+before the field existed has its kind inferred from the note, conservatively and
+explicitly. ``from`` is ``parked`` for an unpark and ``new``
 for a fresh spawn — ``parked`` is honest rather than lazy, since a parked session
 is not running and nothing here can know which binary it was on.
 

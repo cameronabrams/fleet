@@ -314,10 +314,106 @@ ADOPTION_LOG = "autoroll.log"
 # that mean nothing on this route are left out rather than filled with `-`: an
 # absent key is readable as "not applicable here", a dash is readable as "nobody
 # looked".
-_LINE = "%s  installed=%s rolled=%s from=%s to=%s note=%s\n"
+_LINE = "%s  installed=%s kind=%s rolled=%s from=%s to=%s note=%s\n"
+
+# What put a session onto a binary. The log records all of them and they are NOT
+# interchangeable: only `roll` is the auto-roll acting.
+#
+# Added 2026-10-22, after a proposed daily cap -- "stop if `autoroll.log` already
+# has a `rolled=` line dated today" -- turned out to be unimplementable against
+# the log as written. Of the six `rolled=` lines then present, ONE was a roll: two
+# were a restore converging the fleet, one an unpark, and two were spawns from
+# testing. The cap would have blocked the roll on two days for reasons that had
+# nothing to do with rolling, and worst on the day after a reboot -- exactly when
+# the ladder is already stalled because a restore flattened every version.
+KINDS = ("roll", "spawn", "unpark", "restore", "adopt")
+
+# Lines written before `kind=` existed. A reader cannot ask them what they were,
+# so it infers from the note and SAYS it is inferring -- the same read-both-then-
+# drop-the-fallback shape as the `@repo` -> `@agent` rename. Delete this once no
+# line without `kind=` is still being read.
+_LEGACY_NOT_A_ROLL = ("spawn", "unpark", "restore")
 
 
-def record_adoption(state_dir, session, to, frm, note, installed_version=None):
+def adoptions(state_dir):
+    """Every line of the adoption log, parsed: `[{date, kind, session, note}]`.
+
+    Unparseable lines are skipped rather than raising. This log is written by
+    several tools and read to answer "has the auto-roll already acted today"; a
+    reader that died on one malformed line would take the gate with it, and a
+    gate that cannot be evaluated is a gate that gets bypassed.
+    """
+    path = os.path.join(state_dir, ADOPTION_LOG)
+    out = []
+    try:
+        with open(path) as fh:
+            lines = fh.readlines()
+    except OSError:
+        return out
+    for ln in lines:
+        m = re.match(r"(\d{4}-\d{2}-\d{2})\S*\s+(.*)", ln)
+        if not m:
+            continue
+        day, rest = m.group(1), m.group(2)
+        kind = re.search(r"\bkind=(\S+)", rest)
+        rolled = re.search(r"\brolled=(\S+)", rest)
+        note = re.search(r"\bnote=(.*)", rest)
+        out.append({"date": day,
+                    "kind": kind.group(1) if kind else None,
+                    "session": rolled.group(1) if rolled else None,
+                    "note": (note.group(1).strip() if note else "")})
+    return out
+
+
+def is_roll(rec):
+    """Whether a log record is the AUTO-ROLL having acted.
+
+    `kind=roll` when the writer said so. For a line written before that field
+    existed the kind is inferred from the note and the inference is conservative
+    -- a spawn, an unpark or a restore is not a roll, and anything else recording
+    a session is taken as one. Conservative in the direction that SUPPRESSES a
+    roll rather than permitting a second one, because the cap exists to stop the
+    fleet being restarted twice in a day.
+    """
+    # A session must actually have been rolled. The driver writes `kind=roll`
+    # on its REFUSALS too -- `rolled=none` with a note saying which gate closed --
+    # and counting one of those would have the mechanism cap itself on the days
+    # it decided to do nothing, which is most days.
+    if not rec.get("session") or rec["session"] == "none":
+        return False
+    if rec.get("kind"):
+        return rec["kind"] == "roll"
+    first = (rec.get("note") or "").strip().split()[:1]
+    return not (first and first[0].lower().strip(":,") in _LEGACY_NOT_A_ROLL)
+
+
+def rolled_on(state_dir, date):
+    """Sessions the auto-roll put onto a binary on `date` (a `YYYY-MM-DD` string).
+
+    This is the computable form of "at most one roll per calendar day". The cap
+    was previously implied by the SCHEDULE -- one roll per fire, one fire a day --
+    which welded how often the gates are sampled to how often they may act, and
+    cost up to 24 hours of latency every time a gate opened just after a fire.
+    Separating them needs the cap to be a fact about the log rather than about
+    the cron, and this is that fact.
+    """
+    return [r["session"] for r in adoptions(state_dir)
+            if r["date"] == date and is_roll(r)]
+
+
+def rolled_today(state_dir, now=None):
+    """Sessions the auto-roll acted on today, in LOCAL time.
+
+    Local, because "once a calendar day" is a claim about the day the human is
+    living in -- a UTC boundary would let a second roll through at 20:00 EDT and
+    refuse one at 19:00, for a reason nobody reading the log could see.
+    """
+    stamp = time.strftime("%Y-%m-%d", time.localtime(now))
+    return rolled_on(state_dir, stamp)
+
+
+def record_adoption(state_dir, session, to, frm, note, installed_version=None,
+                    kind="adopt"):
     """Append one line saying `session` has been put onto a binary, or say why not.
 
     Returns None on success and a reason otherwise. **The caller must not fail on
@@ -336,6 +432,7 @@ def record_adoption(state_dir, session, to, frm, note, installed_version=None):
     # one of this function's callers is the recovery path.
     line = _LINE % (time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                     installed_version or installed(ask_binary=False) or "?",
+                    kind if kind in KINDS else "adopt",
                     session, frm or "?", to or "?", note)
     try:
         os.makedirs(state_dir, exist_ok=True)

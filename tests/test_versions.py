@@ -550,3 +550,153 @@ class TheNewestVersionThatHasSoaked(unittest.TestCase):
     def test_a_missing_store_is_none_not_a_crash(self):
         self.assertIsNone(versions.store("/nowhere/at/all/claude"))
         self.assertEqual(versions.soaked(24, "/nowhere/at/all/claude"), (None, None))
+
+
+class WhatPutASessionOnABinary(unittest.TestCase):
+    """`kind=`, because a proposed daily cap on the auto-roll could not be
+    implemented against the log as written.
+
+    coord proposed: check the gates hourly, act at most once per calendar day,
+    the cap being "`autoroll.log` already has a `rolled=` line dated today". The
+    cap is right and the log could not answer it. Of the six `rolled=` lines then
+    present, exactly ONE was a roll -- two were a restore converging the fleet,
+    one an unpark, two were spawns from testing. The cap would have blocked the
+    roll on two separate days for reasons having nothing to do with rolling, and
+    worst on the day after a reboot, which is already when the ladder is stalled
+    because the restore flattened every version onto one.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="fleet-adopt-")
+        self.d = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def log(self):
+        with open(os.path.join(self.d, versions.ADOPTION_LOG)) as f:
+            return f.read()
+
+    def write(self, text):
+        with open(os.path.join(self.d, versions.ADOPTION_LOG), "w") as f:
+            f.write(text)
+
+    # -- the field ------------------------------------------------------------
+
+    def test_the_kind_is_written(self):
+        versions.record_adoption(self.d, "alpha", "2.1.3", "new", "spawn",
+                                 installed_version="2.1.3", kind="spawn")
+        self.assertIn("kind=spawn", self.log())
+
+    def test_an_unknown_kind_falls_back_rather_than_writing_nonsense(self):
+        """The log is read by a gate. A kind nobody recognises would make a line
+        that reads as neither a roll nor not one."""
+        versions.record_adoption(self.d, "alpha", "2.1.3", "new", "x",
+                                 installed_version="2.1.3", kind="banana")
+        self.assertIn("kind=adopt", self.log())
+
+    def test_the_default_is_adopt_not_roll(self):
+        """A caller that says nothing has not claimed to be the auto-roll."""
+        versions.record_adoption(self.d, "alpha", "2.1.3", "new", "x",
+                                 installed_version="2.1.3")
+        self.assertIn("kind=adopt", self.log())
+        self.assertEqual(versions.rolled_today(self.d), [])
+
+    # -- reading it back ------------------------------------------------------
+
+    def test_a_roll_is_counted_for_its_day(self):
+        self.write("2026-10-18T09:53:00-0400  installed=2.1.3 kind=roll "
+                   "rolled=sysadmin from=2.1.1 to=2.1.3 note=first\n")
+        self.assertEqual(versions.rolled_on(self.d, "2026-10-18"), ["sysadmin"])
+        self.assertEqual(versions.rolled_on(self.d, "2026-10-19"), [])
+
+    def test_a_spawn_is_not_a_roll(self):
+        self.write("2026-10-20T10:43:00-0400  installed=2.1.3 kind=spawn "
+                   "rolled=teachbot from=new to=2.1.3 note=spawn\n")
+        self.assertEqual(versions.rolled_on(self.d, "2026-10-20"), [])
+
+    def test_a_restore_is_not_a_roll(self):
+        """And this is the one that mattered most: a restore converges every
+        session onto one version, so the day after a reboot is when the ladder is
+        already stalled. A cap that counted the restore would stall it further."""
+        self.write("2026-10-19T08:00:00-0400  installed=2.1.3 kind=restore "
+                   "rolled=16-sessions from=mixed to=2.1.3 note=restore DONE\n")
+        self.assertEqual(versions.rolled_on(self.d, "2026-10-19"), [])
+
+    def test_a_refusal_is_not_a_roll(self):
+        self.write("2026-10-21T09:53:00-0400  installed=2.1.3 kind=roll "
+                   "rolled=none from=- to=- note=lag gate\n")
+        self.assertEqual(versions.rolled_on(self.d, "2026-10-21"), [])
+
+    # -- lines written before the field existed -------------------------------
+
+    def test_a_legacy_roll_is_still_recognised(self):
+        self.write("2026-10-18T09:53:00-0400  installed=2.1.3 "
+                   "rolled=sysadmin from=2.1.1 to=2.1.3 note=FIRST REAL ROLL\n")
+        self.assertEqual(versions.rolled_on(self.d, "2026-10-18"), ["sysadmin"])
+
+    def test_a_legacy_spawn_unpark_and_restore_are_not(self):
+        """Inferred from the note, and the inference is stated as such. Deleting
+        this fallback is safe once no line without `kind=` is still read."""
+        self.write(
+            "2026-10-19T08:00:00-0400  installed=2.1.3 rolled=16-sessions "
+            "from=mixed to=2.1.3 note=restore DONE -- 16 of 16\n"
+            "2026-10-19T08:10:00-0400  installed=2.1.3 rolled=orgexplorer "
+            "from=parked to=2.1.3 note=unpark\n"
+            "2026-10-20T10:43:00-0400  installed=2.1.3 rolled=teachbot "
+            "from=new to=2.1.3 note=spawn\n")
+        self.assertEqual(versions.rolled_on(self.d, "2026-10-19"), [])
+        self.assertEqual(versions.rolled_on(self.d, "2026-10-20"), [])
+
+    def test_an_explicit_kind_beats_the_note(self):
+        """Once a writer says what it did, nothing guesses from its prose."""
+        self.write("2026-10-20T10:43:00-0400  installed=2.1.3 kind=roll "
+                   "rolled=alpha from=a to=b note=spawn-like wording\n")
+        self.assertEqual(versions.rolled_on(self.d, "2026-10-20"), ["alpha"])
+
+    # -- it must not take the gate down with it -------------------------------
+
+    def test_a_malformed_line_is_skipped_not_raised(self):
+        """A gate that cannot be evaluated is a gate that gets bypassed."""
+        self.write("this is not a log line\n"
+                   "2026-10-18T09:53:00-0400  installed=2.1.3 kind=roll "
+                   "rolled=sysadmin from=a to=b note=x\n"
+                   "\n")
+        self.assertEqual(versions.rolled_on(self.d, "2026-10-18"), ["sysadmin"])
+
+    def test_no_log_at_all_is_no_rolls_not_an_error(self):
+        self.assertEqual(versions.adoptions(self.d), [])
+        self.assertEqual(versions.rolled_today(self.d), [])
+
+    def test_today_is_local_not_utc(self):
+        """"Once a calendar day" is a claim about the day the human is living in.
+        A UTC boundary would permit a second roll at 20:00 EDT and refuse one at
+        19:00, for a reason nobody reading the log could see.
+
+        Pinned to a zone and an instant where the two dates DIFFER. The first
+        version of this test compared `rolled_today()` against today's local
+        date, which is also today's UTC date for twenty of every twenty-four
+        hours -- it passed under either implementation and proved nothing."""
+        import time as _t
+        old = os.environ.get("TZ")
+        os.environ["TZ"] = "America/New_York"
+        _t.tzset()
+        try:
+            # 2026-10-19 01:30 UTC == 2026-10-18 21:30 EDT. Local says the 18th.
+            # Computed with calendar.timegm rather than typed from memory: the
+            # first value here was a day and eight hours out, and the test then
+            # failed for arithmetic rather than for the behavior it names.
+            import calendar
+            instant = float(calendar.timegm((2026, 10, 19, 1, 30, 0, 0, 0, 0)))
+            self.assertEqual(_t.strftime("%Y-%m-%d", _t.gmtime(instant)), "2026-10-19")
+            self.assertEqual(_t.strftime("%Y-%m-%d", _t.localtime(instant)), "2026-10-18")
+            self.write("2026-10-18T21:00:00-0400  installed=2.1.3 kind=roll "
+                       "rolled=alpha from=a to=b note=x\n")
+            self.assertEqual(versions.rolled_today(self.d, now=instant), ["alpha"],
+                             "the roll happened on the human's 18th")
+        finally:
+            if old is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old
+            _t.tzset()

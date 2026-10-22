@@ -465,6 +465,19 @@ class AnUnparkIsAnAdoption(unittest.TestCase):
     def tearDown(self):
         self.cfg.close()
 
+    def test_the_adoption_declares_its_kind(self):
+        """`kind=spawn` or `kind=unpark`, so no reader has to infer it from the
+        note. A daily cap on the auto-roll reads this log, and counting a spawn
+        would block the roll on any day a session was created -- which is how the
+        field came to exist."""
+        import inspect
+        src = inspect.getsource(self.spawn.main)
+        call = src[src.index("record_adoption"):]
+        call = call[:call.index(")") + 1]
+        self.assertIn("kind=", call, "the adoption must say what it was")
+        self.assertIn("unpark", call)
+        self.assertIn("spawn", call)
+
     def test_the_version_logged_is_read_from_the_running_process(self):
         """Not from `installed()`. Between composing the launch and the session
         coming up -- up to `--wait` seconds -- a human can have upgraded, and the

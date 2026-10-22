@@ -32,6 +32,25 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- **The adoption log records `kind=`** — `roll`, `spawn`, `unpark`, `restore` or
+  `adopt` — and `fleet.versions` gains `adoptions()`, `is_roll()`, `rolled_on()`
+  and `rolled_today()` to read it.
+
+  This exists because a proposed daily cap on the auto-roll could not be
+  implemented against the log as written. The proposal — sample the gates hourly,
+  act at most once per calendar day, the cap being "`autoroll.log` already has a
+  `rolled=` line dated today" — is right, and the log could not answer it: of the
+  six `rolled=` lines then present, **one** was a roll. Two were a restore
+  converging the fleet, one an unpark, two were spawns. The cap would have
+  blocked the roll on two separate days for reasons unrelated to rolling, and
+  worst on the day after a reboot, which is already when the ladder is stalled.
+
+  A refusal is not a roll either: the driver writes `kind=roll rolled=none` when
+  a gate closes, and counting those would have the mechanism cap itself on the
+  days it decided to do nothing. Lines written before the field existed have
+  their kind inferred from the note, conservatively, in the direction that
+  suppresses a roll rather than permitting a second one.
+
 - **`fleetwatch` records when the cluster was last readable**, so a failed query
   carries a duration: `unreachable for 1h 20m -- last good 2026-10-22 10:00 EDT`.
   It computed `cluster_ok` every run and recorded nothing, so a two-minute blip, a

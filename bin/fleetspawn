@@ -647,7 +647,11 @@ def main():
     want = versions.target()[0]
     if want and ran and ran != want:
         note += " MISMATCH (meant %s)" % want
-    problem = versions.record_adoption(STATE, a.name, ran, frm, note)
+    # `kind=` explicitly, so nothing downstream has to infer it from the note.
+    # A daily cap on the auto-roll reads this log, and a spawn is not a roll:
+    # counting one would block the roll on any day a session was created.
+    problem = versions.record_adoption(STATE, a.name, ran, frm, note,
+                                       kind="unpark" if a.resume else "spawn")
     if problem:
         # Said, not swallowed, and it does not fail the spawn: the session is up.
         print(f"  adoption not logged: {problem}")

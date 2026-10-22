@@ -365,7 +365,8 @@ def main():
         problem = versions.record_adoption(
             STATE, "%d-sessions" % len(m["sessions"]), launched,
             was[0] if len(was) == 1 else ("mixed" if was else "?"),
-            "restore INTENT -- %d planned, none verified yet" % len(m["sessions"]))
+            "restore INTENT -- %d planned, none verified yet" % len(m["sessions"]),
+            kind="restore")
         if problem:
             print(f"  adoption not logged: {problem}")
 
@@ -534,7 +535,8 @@ def main():
         problem = versions.record_adoption(
             STATE, "%d-sessions" % n, launched,
             "restore", "restore DONE -- launched on %s; %s"
-                       % (launched or "?", said))
+                       % (launched or "?", said),
+            kind="restore")
         if problem:
             print(f"  outcome not logged: {problem}")
     print(f"\n  After restore: run `fleetsnap` to re-capture, and ask each session to "

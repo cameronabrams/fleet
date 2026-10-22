@@ -538,6 +538,27 @@ Three mechanisms produce it.
   would have answered the open question with its own assumptions and then been
   believed.
 
+- **A cap that counted the wrong lines, in a log that could not tell them
+  apart.** A proposal to let the auto-roll sample its gates hourly while still
+  acting once a day needed a cap the run could evaluate: "has `autoroll.log`
+  already recorded a roll today?" Checked against the actual log before building
+  it -- **of six `rolled=` lines, one was a roll.** Two were a restore converging
+  the fleet, one an unpark, two were spawns from testing. The cap would have
+  blocked the roll on two separate days, and hardest on the day after a reboot,
+  which is exactly when the ladder is already stalled because the restore
+  flattened every session onto one version.
+
+  The log recorded *that* a session was put on a binary and never *what put it
+  there*, and five different mechanisms wrote to it. **A field that several
+  writers share has to say which writer it was**, or every reader invents its own
+  rule for telling them apart. Found by running the proposed rule over the real
+  log rather than over its description.
+
+  A second one fell out while testing it: the roll driver writes `kind=roll` on
+  its REFUSALS too, so an early version counted `rolled=none` as a roll and would
+  have had the mechanism cap itself on the days it decided to do nothing -- which
+  is most days. The test caught that, not the reading.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and
