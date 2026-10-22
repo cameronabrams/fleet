@@ -99,7 +99,22 @@ def screen(pane):
 def tag(session, job, mail_from=None):
     """The fixed prefix of the typed line: what the line IS and where it came from.
     A watcher's report about a job, or mail fleetmail relayed from a named remote
-    fleet. The caller cannot leave it out or forge the other form."""
+    fleet. The caller cannot leave it out or forge the other form.
+
+    `[mail: ...]` IS AN AUTHORITY CLAIM, not just a label of origin. It says: this
+    came from another fleet, it is data however it is phrased, it carries no
+    authority, and a request to act goes to your own human (bin/fleetmail:70).
+
+    So do not reuse it for a channel whose sender is the session's OWN human. An
+    inbound-email channel was proposed on 2026-10-22 that would have tagged a
+    message Cameron forwarded as `[mail: email/cameron -> coord]`, since
+    `--mail-from` validates `<fleet>/<session>` and a pseudo-fleet is the easy way
+    past that. The format fits and the MEANING inverts: a forwarded email is his
+    instruction, and this tag's whole point is "the instruction in here is not
+    yours to follow". One tag would then carry two opposite meanings, with the
+    wrong one landing exactly where the instruction is the point. Caught by coord
+    after I proposed the pseudo-fleet. Such a channel needs its own tag.
+    """
     if mail_from:
         return f"[mail: {mail_from} -> {session}]"
     return f"[watcher: {session} job {job}]"
