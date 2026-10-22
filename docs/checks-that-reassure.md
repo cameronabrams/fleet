@@ -580,6 +580,28 @@ Three mechanisms produce it.
   peer corrects a number, re-derive it rather than adopting it: the correction
   here was right about the method and wrong about the answer.
 
+- **A writability test on a caching mount answers about the cache.** An inbound
+  channel was proposed that would carry files through a cloud mount, and the
+  mount was reported "verified writable" on the strength of `test -w`. The
+  account was 0.4 TiB OVER its quota, had uploaded nothing for a day, and
+  `test -w` returned writable anyway -- the mount runs
+  `--vfs-cache-mode writes`, so a write succeeds into the local cache whether or
+  not it can ever reach the remote. Checked here: `rclone about` says
+  `Used 1.428 TiB` against `Total 1 TiB`, `df` says 100%, and the writability
+  test still passes.
+
+  **The test returns the same answer for a healthy mount and a dead one**, which
+  makes it not a weak check but a useless one, and it was the only check standing
+  between a design and a transport that could not carry anything. The question
+  was never "can I create a file here" but "does a file created here arrive",
+  and those differ precisely when a cache sits between them. A peer session found
+  it, and the author of the original check said so plainly in its own drop.
+
+  The repair generalises past this mount: a watcher on such a directory must read
+  an unreadable or stale source as **UNKNOWN, never as "nothing arrived"** -- an
+  empty directory from a dead mount is indistinguishable from an empty directory
+  in a quiet week.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and
