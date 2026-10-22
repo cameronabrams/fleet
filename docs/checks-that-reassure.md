@@ -292,14 +292,14 @@ Three mechanisms produce it.
 - **Testing the tool that changes things, by changing things.** Exercising
   `fleetspawn --go` by hand on 2026-10-20 spawned two real sessions onto the
   default tmux server. Every other tool then counted them as fleet members --
-  `fleetsnap` asked for a brief and a colour for each, and the auto-roll would
+  `fleetsnap` asked for a brief and a color for each, and the auto-roll would
   have offered to roll one, since nothing it reads says whose fleet a session
   belongs to.
 
   The tool had no way to be tried anywhere else: `fleetrestore` grew `--socket`
   when it got an end-to-end test, and `fleetspawn` never did. So the careless
   option was the only option, and `--go` previewing is no protection when the
-  behaviour under test *is* what `--go` does.
+  behavior under test *is* what `--go` does.
 
   **A tool that changes the live system needs somewhere other than the live
   system to be tried.** Giving `fleetspawn` the same `--socket` was the actual
@@ -308,7 +308,7 @@ Three mechanisms produce it.
 
 - **An assertion whose two sides came from the same broken parser.** Tidying the
   changelog's duplicate heading blocks, the safeguard was "count the entries
-  before, count them after, assert they match". The splitter recognised an entry
+  before, count them after, assert they match". The splitter recognized an entry
   by `- **`, and the released sections write theirs as plain `- ` — so it found
   none, the assertion compared **0 == 0**, and the rewrite emitted the headings
   with all 103 lines of `[0.2.0]` deleted beneath them. It passed (2026-10-20).

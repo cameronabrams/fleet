@@ -749,7 +749,7 @@ class APaneSaysWhichFleetItIsIn(unittest.TestCase):
 
 class TheFirstSpawnOfANewFleet(unittest.TestCase):
     """`fleetinit` ships `[colors]` empty, so the very first spawn on a fresh
-    machine always lands on the no-colour refusal -- and with `--color` given it
+    machine always lands on the no-color refusal -- and with `--color` given it
     did so three lines under its own "would declare alpha = 'blue'". A
     contradiction at that moment has nothing else on screen to be weighed
     against, and reads as the flag having been ignored.
@@ -781,7 +781,7 @@ class TheFirstSpawnOfANewFleet(unittest.TestCase):
             return self.spawn.preflight(a, path)
 
     def test_an_undeclared_color_still_blocks(self):
-        """A colour is how a human tells two panes apart at a glance, and a fleet
+        """A color is how a human tells two panes apart at a glance, and a fleet
         that silently grows an undeclared session has lost that."""
         problems = self.preflight()
         self.assertTrue(any("no color declared" in p for p in problems))
@@ -797,7 +797,7 @@ class TheFirstSpawnOfANewFleet(unittest.TestCase):
     def test_a_declared_color_needs_no_flag(self):
         # Into the EXISTING [colors] table. Appending a second one is invalid
         # TOML -- "Cannot declare ('colors',) twice" -- and the test would then
-        # fail on a parse error rather than on the behaviour it names.
+        # fail on a parse error rather than on the behavior it names.
         path = os.path.join(self.cfg.config, "fleet.toml")
         text = open(path).read().replace("[colors]\n", '[colors]\nnewbie = "green"\n', 1)
         with open(path, "w") as f:

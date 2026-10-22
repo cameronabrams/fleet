@@ -51,12 +51,12 @@ option beside ``@agent``, and :doc:`tools/fleetboard` and the membership rule in
 ``fleet.panes.belongs`` read it back. **Two fleets can share a machine**, and
 until this existed nothing could tell them apart: membership was "a pane with
 ``@agent`` on the default tmux server", so one fleet's tools counted the other's
-sessions as members — demanding a brief and a colour for a stranger's session,
+sessions as members — demanding a brief and a color for a stranger's session,
 and offering to restart it.
 
 ``fleet.config.fleet_name`` falls back to ``[mail].fleet`` when this is unset, so
 a fleet that was named for mail before this section existed is already
-recognisable. :doc:`tools/fleetinit` writes both and keeps them equal: one
+recognizable. :doc:`tools/fleetinit` writes both and keeps them equal: one
 identity with two readers, and a fleet called one thing by its panes and another
 by its mail is worse than one with no name.
 

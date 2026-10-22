@@ -56,7 +56,7 @@ class _Spawned:
         # nothing and fails an assertion about process identity instead of about
         # timing. That is what made the first version of this flaky: it passed
         # alone and failed about one run in three under a loaded suite, which is
-        # the worst possible behaviour because it trains you to re-run.
+        # the worst possible behavior because it trains you to re-run.
         deadline = time.time() + 10
         while True:
             try:

@@ -120,7 +120,7 @@ def last_nudge_word(recs):
 
     `informed` records are excluded, and that is not bookkeeping. They are
     assertions ABOUT a nudge, not outcomes OF one, so letting one count as the
-    last word would mean a cleared hole stopped being recognisable as the kind
+    last word would mean a cleared hole stopped being recognizable as the kind
     of hole it was -- and a genuine dangling that arrived AFTER an assertion
     would be masked by it, which is the dangerous direction.
     """

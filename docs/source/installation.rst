@@ -104,7 +104,7 @@ refuses with a named reason for each rather than inventing one:
    $ fleetspawn <name> <dir> --window <title> --color blue --go
 
 Which tmux server the human is attached to is their decision, so the tool will not
-pick one. The brief is the session's role, re-readable after a restart. The colour
+pick one. The brief is the session's role, re-readable after a restart. The color
 is how two panes are told apart at a glance; ``fleetinit`` ships ``[colors]``
 empty, so the first spawn always needs ``--color``, which declares it in
 ``fleet.toml`` and then applies it.

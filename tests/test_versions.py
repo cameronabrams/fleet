@@ -589,7 +589,7 @@ class WhatPutASessionOnABinary(unittest.TestCase):
         self.assertIn("kind=spawn", self.log())
 
     def test_an_unknown_kind_falls_back_rather_than_writing_nonsense(self):
-        """The log is read by a gate. A kind nobody recognises would make a line
+        """The log is read by a gate. A kind nobody recognizes would make a line
         that reads as neither a roll nor not one."""
         versions.record_adoption(self.d, "alpha", "2.1.3", "new", "x",
                                  installed_version="2.1.3", kind="banana")
@@ -630,7 +630,7 @@ class WhatPutASessionOnABinary(unittest.TestCase):
 
     # -- lines written before the field existed -------------------------------
 
-    def test_a_legacy_roll_is_still_recognised(self):
+    def test_a_legacy_roll_is_still_recognized(self):
         self.write("2026-10-18T09:53:00-0400  installed=2.1.3 "
                    "rolled=sysadmin from=2.1.1 to=2.1.3 note=FIRST REAL ROLL\n")
         self.assertEqual(versions.rolled_on(self.d, "2026-10-18"), ["sysadmin"])

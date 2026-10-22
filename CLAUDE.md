@@ -51,7 +51,7 @@
   -- which is how `tests/test_fleetrestore_e2e.py` builds a real fleet safely.
   Exercising `fleetspawn --go` by hand against the default server on 2026-10-20
   left two real sessions in the fleet, which every other tool then counted as
-  members: `fleetsnap` demanded a brief and a colour for them and the auto-roll
+  members: `fleetsnap` demanded a brief and a color for them and the auto-roll
   would have offered to roll one. `--go` previewing is not protection when the
   thing you are testing is what `--go` does.
 - Nothing personal in this repo: no people, hosts, accounts or project sessions.
