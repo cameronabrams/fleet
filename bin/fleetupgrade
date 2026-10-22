@@ -637,7 +637,15 @@ def version_lag(session_version, installed):
     major or minor is a bigger step than any patch distance, and the caller treats
     it as satisfying any lag. 0 means current. Counting is only honest within one
     major.minor, because the releases between two patch numbers are not all
-    installed here -- 2.1.297 and .298 never were.
+    installed here -- and 2.1.297 and .298 were never PUBLISHED at all, checked
+    against `npm view @anthropic-ai/claude-code time --json` on 2026-10-22.
+
+    This returns a difference of PATCH NUMBERS, not a count of releases, and the
+    distinction matters to anyone reasoning about how fast the gate opens. Over
+    2026-10-08..22 the patch number advanced 1.00/day while npm published
+    0.86/day; two separate estimates of "the release rate" -- one from install
+    mtimes, one from the median publish gap -- each missed the quantity this
+    function measures.
     """
     if not session_version or not installed:
         return None

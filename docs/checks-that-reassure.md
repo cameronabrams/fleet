@@ -559,6 +559,27 @@ Three mechanisms produce it.
   have had the mechanism cap itself on the days it decided to do nothing -- which
   is most days. The test caught that, not the reading.
 
+- **Three measurements of a rate, each adjacent to the rate the gate uses.** A
+  design argument about the auto-roll turned on `v`, how fast the fleet falls
+  behind. It was first measured from **install mtimes** on this machine -- wrong,
+  as a peer caught: the updater takes the newest at each check, so releases
+  landing between checks are skipped silently, and the store here jumps 2.1.304
+  to 2.1.308. An install mtime is a lower bound on the release rate.
+
+  The replacement was wrong too, in two further ways, and only re-running the
+  measurement found them. **24 / the median gap is not a rate**: the median
+  discarded a real 4.3-day stretch in which nothing shipped, and the reciprocal
+  of the MEAN gap (0.85/day) agrees with count-over-span (0.86/day) while the
+  median gives 1.06. And **publishes are not patch numbers**: `version_lag`
+  returns `b[2] - a[2]`, 2.1.297 and .298 were never published at all, and the
+  patch number advanced 1.00/day against 0.86 publishes/day.
+
+  Three estimates -- 0.84, 1.06, 1.00 -- all plausible, all describing something
+  real, and only the last describing the thing the gate subtracts. **Measure the
+  quantity the code uses, not the one the English sentence suggests**, and when a
+  peer corrects a number, re-derive it rather than adopting it: the correction
+  here was right about the method and wrong about the answer.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and
