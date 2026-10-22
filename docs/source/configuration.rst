@@ -62,7 +62,7 @@ by its mail is worse than one with no name.
 
 A fleet with no name counts every pane as its own, because it cannot say which
 are not — and guessing in the excluding direction would hide real members.
-Existing panes are labelled once with ``fleetinit --label-panes``.
+Existing panes are labeled once with ``fleetinit --label-panes``.
 
 ``[updates]``
 ^^^^^^^^^^^^^

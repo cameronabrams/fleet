@@ -142,7 +142,7 @@ def display_zone(cfg):
     [human] timezone_file names a file holding the human's CURRENT zone, re-read on
     every run, for a human who travels; [human] timezone is a fixed zone. The file
     wins when it is readable and names a real zone. Otherwise UTC -- and the caller
-    must label it, because an unlabelled time in the wrong zone reads as right."""
+    must label it, because an unlabeled time in the wrong zone reads as right."""
     from zoneinfo import ZoneInfo
     human = cfg.get("human", {})
     tried = []

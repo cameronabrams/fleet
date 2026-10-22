@@ -492,8 +492,8 @@ class Clients(Base):
         self.assertIn("!! MORE THAN ONE CLIENT", two)
         self.assertIn("rotate", two)          # says what to do, not just that it happened
 
-    def test_times_are_labelled_with_a_zone(self):
-        """An unlabelled time in the wrong zone reads as right."""
+    def test_times_are_labeled_with_a_zone(self):
+        """An unlabeled time in the wrong zone reads as right."""
         self.assertRegex(self.w._stamp_epoch(1790163444),
                          r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+$")
         self.assertEqual(self.w._stamp_epoch(None), "?")
@@ -600,7 +600,7 @@ class HowLongTheClusterHasBeenDown(Base):
         self.assertIn("last good", line)
 
     def test_the_absolute_time_carries_a_zone(self):
-        """An unlabelled time in the wrong zone reads as right -- the rule this
+        """An unlabeled time in the wrong zone reads as right -- the rule this
         repository applies to every timestamp a person reads."""
         import re as _re, time as _t
         line = self.w.down_line(600.0, {"last_good": _t.time() - 600})

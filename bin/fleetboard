@@ -521,7 +521,7 @@ def draw(full=False, auto=False, show_parked=False):
     # session has been parked for a fortnight will say the same tomorrow; the
     # updates count, the cluster stamp and every `!` are the rows a glance is for.
     #
-    # Same family as the permanent red line already in the catalogue, one step
+    # Same family as the permanent red line already in the catalog, one step
     # earlier: there a true alarm is read past, here it never reaches the reader.
     pk = parked()
     status = []

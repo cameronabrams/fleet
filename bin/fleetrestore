@@ -524,7 +524,7 @@ def main():
         # line claiming the stronger fact would be the week's recurring mistake in
         # a new place. What it can say honestly is how many panes matched.
         n = len(m["sessions"])
-        # `verify` returns ONE row labelled "(all)" when it could not list panes at
+        # `verify` returns ONE row labeled "(all)" when it could not list panes at
         # all. Counting that as a single failure would report "14 of 15 matched"
         # for a check that matched nothing -- the reassuring direction, in the
         # tool whose whole job is saying whether the fleet came back.

@@ -1567,7 +1567,7 @@ something a stranger could pin.
 - **Skills.** `fleet-bootstrap`, `fleet-upgrade`, `fleet-snapshot`, `waiting` and a
   site-independent `slurm` skill.
 - **Documentation** at <https://fleet-of-agents.readthedocs.io>, including
-  `docs/checks-that-reassure.md` — the catalogue of checks whose wrong answer is
+  `docs/checks-that-reassure.md` — the catalog of checks whose wrong answer is
   the reassuring one, which is the design rule the rest of this follows.
 - **Continuous integration** running the suite on Python 3.11, 3.12 and 3.13, with
   a step that refuses to report a pass on an empty or shrunken suite.

@@ -1,6 +1,6 @@
 # Checks that fail toward the reassuring answer
 
-Catalogue started by a study session (five instances, all in one project) and
+Catalog started by a study session (five instances, all in one project) and
 extended by nine sessions of one fleet, 2026-08-27 .. 2026-09-12: study,
 production, repo, website, oldname and coordinator roles.
 
@@ -498,7 +498,7 @@ Three mechanisms produce it.
   should satisfy it. Whoever asks for a session has just described it out loud;
   the brief was already spoken, and the tool answered by handing back a form.
 
-  Not a false pass, which is this catalogue's usual shape, but the same root:
+  Not a false pass, which is this catalog's usual shape, but the same root:
   **a check that is right about WHAT is missing can still be wrong about who is
   missing it.** When a refusal names a file, ask whether its content is already
   in the room.

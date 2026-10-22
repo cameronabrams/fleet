@@ -786,7 +786,7 @@ class PendingUpdatesAreASourceLikeAnyOther(unittest.TestCase):
     def test_the_quiet_case_is_not_dressed_as_an_alarm(self):
         """Dim, not red, and no `!`. A board that shouts good news teaches its
         reader to skim the line that will one day carry bad news -- the sibling of
-        the permanent-red-line case already in the catalogue."""
+        the permanent-red-line case already in the catalog."""
         out = self.draw(self.fresh(total=5, reboot_needed=False),
                         kernel=("current", {"running": "7.2.11-1-default"}))
         self.assertNotIn("REBOOT", out)
@@ -864,7 +864,7 @@ class WhatScrollsOffIsWhatDoesNotChange(unittest.TestCase):
 
     Cameron went looking for a kernel reboot warning on 2026-10-21 and ran the
     comparison by hand rather than find it here. Same family as the permanent red
-    line already in the catalogue, one step earlier: there a true alarm is read
+    line already in the catalog, one step earlier: there a true alarm is read
     past, here it never reaches the reader at all.
     """
 

@@ -303,7 +303,7 @@ class ARestoreIsTheLargestAdoption(Plan):
         self.assertIn("not a version check", src[i - 700:i + 300])
 
     def test_an_unreadable_tmux_is_not_counted_as_one_failure(self):
-        """`verify` returns a single row labelled `(all)` when it could not list
+        """`verify` returns a single row labeled `(all)` when it could not list
         panes at all. Treating that as one failed session would log "14 of 15
         matched" for a check that matched nothing -- the reassuring direction, in
         the tool whose whole job is saying whether the fleet came back."""

@@ -134,13 +134,13 @@ def sessions():
     is resolved from its transcript."""
     agents = list_agents()
     by_pid = {a.get("pid"): a for a in agents or [] if a.get("pid")}
-    pane_pids, unlabelled = panes()
-    not_ours = {o["pane_pid"] for o in unlabelled}
+    pane_pids, unlabeled = panes()
+    not_ours = {o["pane_pid"] for o in unlabeled}
     procs = claude_procs()
-    # Only an unlabelled pane that actually RUNS a session is worth reporting;
+    # Only an unlabeled pane that actually RUNS a session is worth reporting;
     # otherwise every ordinary shell pane on the server shows up as "not ours".
     running = {pid for pid, _, _ in procs} | {ppid(pid) for pid, _, _ in procs}
-    outside = [o for o in unlabelled if o["pane_pid"] in running]
+    outside = [o for o in unlabeled if o["pane_pid"] in running]
     attached = {}
     for pid, cwd, argv in procs:
         if argv[1:2] == ["attach"] and len(argv) > 2:

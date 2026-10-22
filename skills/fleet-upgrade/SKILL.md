@@ -295,7 +295,7 @@ register itself.
 
 **No burst: one line per event class, latched, never one per task.** Nine per-task
 lines for one job collided on 2026-09-17 and none was delivered. The tool now
-serialises typing, but a burst still queues, wraps the pane and says no more than a
+serializes typing, but a burst still queues, wraps the pane and says no more than a
 count does; per-task detail belongs in the watcher's log, which the session reads once
 it is awake.
 

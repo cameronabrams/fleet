@@ -72,7 +72,7 @@ class SnapshotDirectory(unittest.TestCase):
         self.assertEqual(self.manifest(proc_cwd=None)["sessions"][0]["cwd"], "/home/u/somewhere-else")
 
 
-class UnlabelledPane(SnapshotDirectory):
+class UnlabeledPane(SnapshotDirectory):
     """A pane launched as a bare `claude` and named later has no @repo. fleetsnap
     used to invent "(unlabeled %1)" and then ask for a brief under that name, while
     fleetupgrade resolved the session fine (OBSERVED 2026-09-18)."""
@@ -446,7 +446,7 @@ class OutsidePanes(unittest.TestCase):
         self.assertFalse(self.s.is_agent_pane(""))
 
     def test_the_name_is_resolved_before_membership_is_decided(self):
-        """Order matters: `claude agents` is what tells an unlabelled pane of OURS
+        """Order matters: `claude agents` is what tells an unlabeled pane of OURS
         from somebody else's window, so resolve_label has to run first. Reversed,
         a session named only by the platform would be dropped from recovery."""
         src = open(os.path.join(APP, "bin", "fleetsnap")).read()

@@ -341,7 +341,7 @@ class OtherTmuxSessions(unittest.TestCase):
              mock.patch.object(self.up, "proc_version", side_effect=lambda pid: "2.1.276"):
             return self.up.sessions()
 
-    def test_the_unlabelled_pane_is_not_a_session_of_ours(self):
+    def test_the_unlabeled_pane_is_not_a_session_of_ours(self):
         rows = self.rows()
         self.assertEqual([r["pane"] for r in rows], ["%1"])
 
@@ -366,7 +366,7 @@ class OtherTmuxSessions(unittest.TestCase):
         self.assertEqual([r["pane"] for r in self.rows()], [])
         self.assertEqual(self.up.OUTSIDE[0]["why"], "@fleet=(unlabeled)")
 
-    def test_a_pane_labelled_by_hand_is_ours(self):
+    def test_a_pane_labeled_by_hand_is_ours(self):
         """A pane in another tmux session that carries `@agent` counts, whoever
         set it. Membership is the label, never the tmux session it sits in."""
         self.PANES = "%26\t200\tx\t/home/u\tbeta\tother\ttestfleet\n"
@@ -393,7 +393,7 @@ class EveryGateIsARefusal(unittest.TestCase):
 
     The direction is the whole design. A gate that cannot be evaluated must
     refuse, because the alternative -- an unreadable source reading as clearance
-    -- is this repository's oldest catalogued failure, and it is far more
+    -- is this repository's oldest catalogd failure, and it is far more
     dangerous here than on a board: a board that fails toward reassurance shows a
     wrong color, a roll that fails toward reassurance restarts a session that was
     holding something.

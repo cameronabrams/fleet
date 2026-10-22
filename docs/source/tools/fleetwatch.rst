@@ -32,7 +32,7 @@ The sentence alone was honest and carried no duration, so a two-minute blip, a
 two-day maintenance window and a cluster that was never reachable all printed the
 same words. A cluster with **no** recorded good read says exactly that rather than
 reporting an outage of zero length, which would date the outage to the creation of
-the state file. The absolute time is in the human's own zone and labelled; the
+the state file. The absolute time is in the human's own zone and labeled; the
 duration is also in ``--json`` as ``cluster_down_for_s``, and :doc:`fleetboard`
 puts it in its failure note.
 
@@ -109,7 +109,7 @@ it came from (from ``who``), and how long it has been idle.
    a failed query and an unattached server both produce no rows, and only one of
    them means what an empty list looks like.
 
-**This reports; it does not guard, and a lock here would be close to theatre.**
+**This reports; it does not guard, and a lock here would be close to theater.**
 Whoever can attach can equally read the Claude credentials, the ``gh`` token and the
 ssh key — they sit in the same account and need no tmux — so authenticating this one
 door defends nothing that is not already open. The boundary is the account, not the
@@ -120,7 +120,7 @@ machine. Check that one by hand: a lock whose command is missing fails toward
 unlocked.
 
 Times are shown in the zone from ``[human]`` (:doc:`../configuration`) and labeled,
-because an unlabelled time in the wrong zone reads as right.
+because an unlabeled time in the wrong zone reads as right.
 
 Did the result reach the session?
 ---------------------------------

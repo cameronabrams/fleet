@@ -31,7 +31,7 @@ class Base(unittest.TestCase):
         self.agents = [{"pid": 4242, "name": "alpha", "sessionId": UUID, "kind": "interactive",
                         "status": "idle"}]
         self.pane_pids = {4242: "%7"}
-        self.unlabelled = []   # panes in another tmux session, with no @repo/@fleet
+        self.unlabeled = []   # panes in another tmux session, with no @repo/@fleet
         self.kids = []
         self.clock = itertools.count(NOW, 1)
         self.stats = {"tokens": 300_000, "turns": 12, "compactions": 0, "since": NOW - 7200,
@@ -66,7 +66,7 @@ class Base(unittest.TestCase):
         c = self.c
         return [mock.patch.object(c, "claude_procs", side_effect=lambda: self.procs),
                 mock.patch.object(c, "list_agents", side_effect=lambda *a, **k: self.agents),
-                mock.patch.object(c, "panes", side_effect=lambda: (self.pane_pids, self.unlabelled)),
+                mock.patch.object(c, "panes", side_effect=lambda: (self.pane_pids, self.unlabeled)),
                 mock.patch.object(c, "tmux", side_effect=self.tmux),
                 mock.patch.object(c, "children", side_effect=lambda pid: self.kids),
                 mock.patch.object(c, "context_stats", side_effect=lambda u: self.stats),

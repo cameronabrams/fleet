@@ -463,7 +463,7 @@ def print_hole(r):
               % r["_later"])
 
 def _stamp_epoch(t):
-    """A wall-clock time in the human's zone, labeled. An unlabelled time in the
+    """A wall-clock time in the human's zone, labeled. An unlabeled time in the
     wrong zone reads as right, which is why fc.display_zone makes the caller
     label it."""
     if not t:
@@ -611,8 +611,8 @@ def down_line(down, entry):
     observed a cluster that has been down for no time at all, and saying so would
     invent an outage that started when the file did.
 
-    The absolute time is shown in the human's own zone and LABELLED, because an
-    unlabelled time in the wrong zone reads as right -- the same rule this
+    The absolute time is shown in the human's own zone and LABELED, because an
+    unlabeled time in the wrong zone reads as right -- the same rule this
     repository applies to every other timestamp a person reads.
     """
     if down is None:
@@ -623,7 +623,7 @@ def down_line(down, entry):
     try:
         when = datetime.datetime.fromtimestamp(entry["last_good"], ZoneInfo(zone))
     except Exception:
-        # The host's zone, still labelled by %Z. `time` is not imported in this
+        # The host's zone, still labeled by %Z. `time` is not imported in this
         # module, and the first version of this fallback used it -- it would have
         # raised precisely when the zone lookup had already failed, turning a
         # cosmetic problem into a crash in the middle of an outage report.

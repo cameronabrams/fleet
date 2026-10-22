@@ -50,7 +50,7 @@ jobs:
           tmux -V
 
       - name: Refuse to pass on an empty suite
-        # A green badge over no tests is the failure this repository catalogues in
+        # A green badge over no tests is the failure this repository catalogs in
         # docs/checks-that-reassure.md: a check whose wrong answer is the
         # reassuring one. Measured 2026-09-20, same empty suite each time:
         # `unittest discover` exits 0 on 3.11 and 5 on 3.12 and 3.13 -- so on the
