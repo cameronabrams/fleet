@@ -154,7 +154,15 @@ def jobs_and_notes():
         return None, []
     notes = []
     if not d.get("cluster_ok"):
-        return None, ["cluster query failed -- live work is UNKNOWN, not none"]
+        # With a DURATION, which is the difference between ignoring the line and
+        # looking into it: the sentence alone reads identically for a two-minute
+        # blip, a two-day maintenance window, and a cluster nobody ever reached.
+        # `None` is not zero -- a fleet with no recorded good read says so rather
+        # than claiming an outage that began when its state file did.
+        down = d.get("cluster_down_for_s")
+        how_long = (" for %s" % short_duration(down)) if down else ""
+        return None, ["cluster query failed%s -- live work is UNKNOWN, not none"
+                      % how_long]
     jobs = [{"job": j.get("job"), "tasks": j.get("tasks") or 0,
              "owner": j.get("owner"),
              "watched": bool(j.get("watched_by"))} for j in d.get("jobs") or []]
@@ -323,6 +331,21 @@ def parked():
         # editing the configuration under it and say so, not exit on a parse error
         # and take the screen down.
         return None
+
+def short_duration(seconds):
+    """`1h 20m` for an outage. Hours and minutes from one hour, not from ninety
+    minutes: `age` below is the age of a cached READING, where coarseness is
+    right; the length of an outage is read at the moment someone decides whether
+    to care, and "80m" makes them do the division first."""
+    s = int(seconds)
+    if s < 90:
+        return "%ds" % s
+    if s < 3600:
+        return "%dm" % (s // 60)
+    if s < 172800:
+        return "%dh %dm" % (s // 3600, (s % 3600) // 60)
+    return "%dd %dh" % (s // 86400, (s % 86400) // 3600)
+
 
 def age(ts):
     s = int(time.time() - ts)

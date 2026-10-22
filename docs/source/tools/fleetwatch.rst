@@ -18,6 +18,43 @@ the same.
 **Owner** is the first ``[owners]`` fragment found in the working directory, else
 ``UNATTRIBUTED``.
 
+**How long the cluster has been unreachable** is recorded every run, success or
+failure, in ``<state>/cluster-reach.json`` — only a success moves ``last_good``,
+but ``last_checked`` moving either way is what tells "down since 08:35" from
+"nobody has looked since 08:35". A failed query then reads
+
+.. code-block:: text
+
+   !! CLUSTER QUERY FAILED (ssh <host>) -- no job table. ...
+      unreachable for 1h 20m -- last good 2026-10-22 10:00 EDT
+
+The sentence alone was honest and carried no duration, so a two-minute blip, a
+two-day maintenance window and a cluster that was never reachable all printed the
+same words. A cluster with **no** recorded good read says exactly that rather than
+reporting an outage of zero length, which would date the outage to the creation of
+the state file. The absolute time is in the human's own zone and labelled; the
+duration is also in ``--json`` as ``cluster_down_for_s``, and :doc:`fleetboard`
+puts it in its failure note.
+
+**The reservation table is recorded, not interpreted.** The same ssh round trip
+runs ``scontrol show reservation`` and appends its output to
+``<state>/cluster-reservations.log`` **when it changes**, and nothing parses it.
+
+This is an experiment, and it is phrased as one on purpose. SLURM holds planned
+maintenance as a reservation that is readable *while the cluster is still up* —
+exactly when a warning would be worth having — but whether this site creates them
+is unknown. ``scontrol show reservation`` answered ``No reservations in the
+system`` when the cluster returned from a maintenance window, and that is weaker
+evidence than it looks: a completed ``MAINT`` reservation is removed, so an empty
+table just after a window is what you would see whether or not the site uses them.
+One look after the fact cannot tell the two cases apart, and a parser written
+against that guess would answer the question with its own assumptions.
+
+So the log keeps what the table said and waits. If a ``MAINT`` entry ever appears
+*ahead* of an outage, the mechanism is real and advance warning can be built on
+evidence. If months pass with nothing, that is the answer too, and it cost one
+extra line in a round trip that was already happening.
+
 **Held** work — pending only for a reason in ``held_reasons`` — needs no watcher: it
 cannot produce anything to observe. The moment the reason changes, it needs one.
 

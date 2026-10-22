@@ -37,7 +37,7 @@ class LiveJobs(Base):
             return self.w.live_jobs()
 
     def test_parses_tasks_states_owner_and_held(self):
-        jobs, ok = self.jobs(SQUEUE_OK)
+        jobs, ok, _res = self.jobs(SQUEUE_OK)
         self.assertTrue(ok)
         self.assertEqual(jobs["23225789"]["tasks"], 2)
         self.assertTrue(jobs["23225789"]["held"])
@@ -49,12 +49,12 @@ class LiveJobs(Base):
 
     def test_failed_ssh_is_not_no_work(self):
         # a banner and nothing else: must read as a FAILED query, not an empty queue
-        jobs, ok = self.jobs("Welcome to the cluster\n")
+        jobs, ok, _res = self.jobs("Welcome to the cluster\n")
         self.assertEqual(jobs, {})
         self.assertFalse(ok)
 
     def test_empty_queue_is_ok(self):
-        self.assertEqual(self.jobs("--WD--\n--END--\n"), ({}, True))
+        self.assertEqual(self.jobs("--WD--\n--END--\n"), ({}, True, ""))
 
     def test_final_states(self):
         with mock.patch.object(self.w, "sh", return_value="1|COMPLETED,\n2|\n--END--\n"):
@@ -569,3 +569,157 @@ class Arguments(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HowLongTheClusterHasBeenDown(Base):
+    """The line that was missing. "CLUSTER QUERY FAILED" is honest and carries no
+    duration, so a blip and a maintenance window read identically -- and so does a
+    cluster nobody ever reached. The cluster was down on the morning of 2026-10-22 and
+    nothing in the fleet could say when it had started."""
+
+    def test_a_duration_is_coarse_on_purpose(self):
+        """Nobody acts on the seconds of a two-day outage, and a bare count of
+        them has to be divided by the reader."""
+        self.assertEqual(self.w.duration(45), "45s")
+        self.assertEqual(self.w.duration(600), "10m")
+        self.assertEqual(self.w.duration(4800), "1h 20m")
+        self.assertEqual(self.w.duration(200000), "2d 7h")
+
+    def test_never_recorded_says_so_rather_than_giving_a_duration(self):
+        """Absence is not zero: a state directory created a moment ago has not
+        observed a cluster that has been down for no time at all."""
+        line = self.w.down_line(None, {"last_good": None})
+        self.assertIn("no successful query", line)
+        self.assertNotIn("unreachable for", line)
+
+    def test_a_recorded_outage_names_its_length_and_its_last_good_read(self):
+        import time as _t
+        last = _t.time() - 4800
+        line = self.w.down_line(4800.0, {"last_good": last})
+        self.assertIn("unreachable for 1h 20m", line)
+        self.assertIn("last good", line)
+
+    def test_the_absolute_time_carries_a_zone(self):
+        """An unlabelled time in the wrong zone reads as right -- the rule this
+        repository applies to every timestamp a person reads."""
+        import re as _re, time as _t
+        line = self.w.down_line(600.0, {"last_good": _t.time() - 600})
+        self.assertTrue(_re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} \S+$", line),
+                        "expected a trailing zone label, got %r" % line)
+
+
+class TheReservationTableRidesTheSameRoundTrip(Base):
+    """coord proposed one ssh call on a schedule that already exists; folding it
+    into the call already being made is cheaper, and it cannot add a failure mode
+    -- it sits before the `--END--` marker, so a cluster that cannot run
+    `scontrol` still produces the marker that says the query worked."""
+
+    def jobs(self, out):
+        with mock.patch.object(self.w, "sh", return_value=out):
+            return self.w.live_jobs()
+
+    def test_the_table_comes_back_with_the_jobs(self):
+        out = ("23225789|RUNNING|None|2\n--WD--\n23225789|/w\n"
+               "--RES--\nReservationName=maint Flags=MAINT\n--END--\n")
+        jobs, ok, res = self.jobs(out)
+        self.assertTrue(ok)
+        self.assertIn("23225789", jobs)
+        self.assertIn("Flags=MAINT", res)
+
+    def test_reservation_lines_are_not_mistaken_for_jobs(self):
+        """The row parser splits on `|`, and reservation output contains them."""
+        out = ("--WD--\n--RES--\nReservationName=a|b|c|d\n--END--\n")
+        jobs, ok, res = self.jobs(out)
+        self.assertTrue(ok)
+        self.assertEqual(jobs, {})
+        self.assertIn("a|b|c|d", res)
+
+    def test_a_cluster_without_scontrol_still_reports_its_jobs(self):
+        out = ("23225789|RUNNING|None|2\n--WD--\n23225789|/w\n"
+               "--RES--\nbash: scontrol: command not found\n--END--\n")
+        jobs, ok, res = self.jobs(out)
+        self.assertTrue(ok, "a scontrol failure must not read as a failed query")
+        self.assertIn("23225789", jobs)
+        self.assertIn("command not found", res)
+
+    def test_a_failed_ssh_yields_no_reservation_text(self):
+        """An empty string is not an observation that the table was empty."""
+        jobs, ok, res = self.jobs("Welcome to the cluster\n")
+        self.assertFalse(ok)
+        self.assertEqual(res, "")
+
+
+# The empty shape `nudge_holes` returns, named once. Spelled out rather than
+# `{}` because `main` indexes it, and a short dict fails with a KeyError that
+# looks like a bug in the tool rather than in the fixture.
+NO_HOLES = {"silent": [], "pushed": [], "dangling": [], "older": 0, "resolved": 0,
+            "bad_lines": 0, "unreadable": None, "days": 7, "mail_stuck": 0,
+            "mail_error": None, "log": "/dev/null"}
+
+
+class TheOutageLineReachesTheReport(Base):
+    """`down_line` being right is not the same as it being PRINTED.
+
+    Breaking the call in the failure branch left this suite green on
+    2026-10-22: every test exercised the function directly and none drove the
+    report that is supposed to carry it. Same shape as a membership rule imported
+    by one tool and nothing else -- a correct answer nowhere anybody reads it.
+    """
+
+    def report(self, out, seeded_last_good=None):
+        import io, contextlib
+        if seeded_last_good is not None:
+            self.w.reach.record(self.w.REACHFILE, self.w.CLUSTER_NAME, True,
+                                now=seeded_last_good)
+        buf = io.StringIO()
+        with mock.patch.object(self.w, "sh", return_value=out), \
+             mock.patch.object(self.w, "known_sessions", return_value=set()), \
+             mock.patch.object(self.w, "watchers", return_value={}), \
+             mock.patch.object(self.w, "registered", return_value=({}, [], {})), \
+             mock.patch.object(self.w, "final_states", return_value={}), \
+             mock.patch.object(self.w, "nudge_holes", return_value=NO_HOLES), \
+             mock.patch.object(self.w, "clients", return_value=([], None)), \
+             mock.patch.object(self.w.sys, "argv", ["fleetwatch"]), \
+             contextlib.redirect_stdout(buf):
+            try:
+                self.w.main()
+            except SystemExit:
+                pass
+        return buf.getvalue()
+
+    def test_a_failed_query_prints_the_duration(self):
+        import time as _t
+        out = self.report("Welcome to the cluster\n", seeded_last_good=_t.time() - 4800)
+        self.assertIn("CLUSTER QUERY FAILED", out)
+        self.assertIn("unreachable for 1h 20m", out)
+
+    def test_a_failed_query_with_no_history_says_there_is_no_duration(self):
+        out = self.report("Welcome to the cluster\n")
+        self.assertIn("CLUSTER QUERY FAILED", out)
+        self.assertIn("no successful query", out)
+
+    def test_a_working_query_prints_no_outage_line(self):
+        out = self.report("--WD--\n--RES--\nNo reservations in the system\n--END--\n")
+        self.assertNotIn("CLUSTER QUERY FAILED", out)
+        self.assertNotIn("unreachable for", out)
+
+    def test_the_reservation_table_is_recorded_only_when_readable(self):
+        self.report("--WD--\n--RES--\nNo reservations in the system\n--END--\n")
+        self.assertIn("No reservations",
+                      open(self.w.RESFILE).read())
+        before = open(self.w.RESFILE).read()
+        self.report("Welcome to the cluster\n")     # failed query, no output
+        self.assertEqual(open(self.w.RESFILE).read(), before,
+                         "a failed ssh is not an observation of an empty table")
+
+    def test_a_truncated_response_does_not_record_a_partial_table(self):
+        """The case the `cluster_ok` guard is actually for. An ssh that dies after
+        the reservation lines but before `--END--` yields real text AND a failed
+        query -- so the emptiness check in `fleet.reach` does not catch it, and
+        without this guard a half-read table would be recorded as what the
+        cluster said. Found by breaking the guard and watching nothing fail."""
+        self.report("--WD--\n--RES--\nNo reservations in the system\n--END--\n")
+        before = open(self.w.RESFILE).read()
+        self.report("--WD--\n--RES--\nReservationName=half Flags=MAI")   # cut off
+        self.assertEqual(open(self.w.RESFILE).read(), before,
+                         "a truncated read is not an observation")

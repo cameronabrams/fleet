@@ -964,3 +964,52 @@ class WhatScrollsOffIsWhatDoesNotChange(unittest.TestCase):
                          "five parked sessions must cost four lines more when "
                          "listed than when counted (the clash line is printed "
                          "either way)")
+
+
+class AFailedClusterQueryCarriesItsLength(unittest.TestCase):
+    """"cluster query failed" is honest and says nothing about duration, so a
+    two-minute blip, a two-day maintenance window and a cluster nobody ever
+    reached all print the same words. The cluster was down on the morning of
+    2026-10-22 and nothing in the fleet could say when it had started."""
+
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.b = load_tool("fleetboard")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def notes(self, payload):
+        with mock.patch.object(self.b, "run_json", lambda *a, **k: payload):
+            return self.b.jobs_and_notes()[1]
+
+    def test_the_note_says_how_long(self):
+        n = self.notes({"cluster_ok": False, "cluster_down_for_s": 4800})
+        self.assertEqual(n, ["cluster query failed for 1h 20m -- live work is "
+                             "UNKNOWN, not none"])
+
+    def test_a_long_outage_reads_in_days(self):
+        n = self.notes({"cluster_ok": False, "cluster_down_for_s": 200000})
+        self.assertIn("2d 7h", n[0])
+
+    def test_no_recorded_duration_says_nothing_rather_than_zero(self):
+        """Absence is not zero. A fleet with no recorded good read has not
+        observed an outage of no length, and "failed for 0s" would invent one."""
+        n = self.notes({"cluster_ok": False, "cluster_down_for_s": None})
+        self.assertEqual(n, ["cluster query failed -- live work is UNKNOWN, not none"])
+
+    def test_an_older_fleetwatch_without_the_field_still_renders(self):
+        """The board and `fleetwatch` are separately installed scripts, and a
+        board reading an older one must not lose the warning over a missing key."""
+        n = self.notes({"cluster_ok": False})
+        self.assertEqual(n, ["cluster query failed -- live work is UNKNOWN, not none"])
+
+    def test_a_working_cluster_gets_no_such_note(self):
+        n = self.notes({"cluster_ok": True, "jobs": [], "cluster_down_for_s": None})
+        self.assertNotIn("cluster query failed", " ".join(n))
+
+    def test_the_duration_switches_to_hours_at_one_hour(self):
+        """`age` below it is the age of a cached reading, where coarseness is
+        right. An outage is read at the moment someone decides whether to care."""
+        self.assertEqual(self.b.short_duration(3599), "59m")
+        self.assertEqual(self.b.short_duration(3600), "1h 0m")

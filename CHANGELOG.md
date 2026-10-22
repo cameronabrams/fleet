@@ -32,6 +32,35 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- **`fleetwatch` records when the cluster was last readable**, so a failed query
+  carries a duration: `unreachable for 1h 20m -- last good 2026-10-22 10:00 EDT`.
+  It computed `cluster_ok` every run and recorded nothing, so a two-minute blip, a
+  two-day maintenance window and a cluster that was never reachable all printed
+  the same sentence. Stamped on every run in `<state>/cluster-reach.json` —
+  only a success moves `last_good`, but `last_checked` moving either way is what
+  distinguishes "down since 08:35" from "nobody has looked since 08:35".
+
+  A cluster with **no** recorded good read says so rather than reporting an outage
+  of zero length, which would date the outage to the creation of the state file.
+  Also in `--json` as `cluster_down_for_s`, and `fleetboard` puts it in its
+  failure note. Raised by coord after the cluster was down for maintenance on the
+  morning of 2026-10-22 and nothing in the fleet could say when it had started.
+
+- **The SLURM reservation table is recorded, as an experiment, not parsed.** The
+  same ssh round trip now runs `scontrol show reservation` and appends its output
+  to `<state>/cluster-reservations.log` when it **changes**.
+
+  SLURM holds planned maintenance as a reservation readable while the cluster is
+  still up — exactly when a warning would help — but whether this site creates
+  them is unknown. `scontrol show reservation` said `No reservations in the
+  system` when the cluster returned, and a completed `MAINT` reservation is removed,
+  so that is what an empty table looks like whether or not the site uses them.
+  One look after the fact cannot tell the two cases apart, so nothing interprets
+  the text. If a `MAINT` entry ever appears ahead of an outage the mechanism is
+  real; if months pass with nothing, that is the answer too. It costs one extra
+  line in a round trip that was already happening, and it sits before the
+  `--END--` marker so a cluster without `scontrol` still reports its jobs.
+
 - **`fleetspawn --brief-stdin` writes the brief, so nobody copies a template and
   fills it in.** Every session still needs a brief — it is the session's identity:
   role, scope, territory, who it answers to. What changed is who writes it. By the

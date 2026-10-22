@@ -40,6 +40,7 @@ from fleet.nudgelog import (DANGLING_AFTER, INFORMED_LEGACY, informed_times,
                             last_nudge_word, lost_the_news, resolved_by_hand)
 from fleet import version_flag
 from fleet.procs import alive
+from fleet import reach
 from fleet.panes import is_agent_pane, ours_agent_pane
 from fleet.transcripts import session_name
 
@@ -81,22 +82,37 @@ def owner_of(workdir):
 
 def live_jobs():
     """Array-parent job id -> {tasks, states, workdir}. One ssh round trip."""
+    # `scontrol show reservation` rides the SAME round trip. coord proposed it as
+    # "one ssh call on a schedule that already exists"; folding it into the call
+    # that is already being made is cheaper still, and it cannot add a failure
+    # mode of its own -- `2>&1` means its complaint is just more text to record,
+    # and it sits before `--END--` so a cluster that cannot run it still produces
+    # the marker that says the query worked.
     remote = ("squeue -u __USER__ -h -o '%F|%T|%r' | sort | uniq -c | "
              "awk '{print $2\"|\"$1}'; echo '--WD--'; "
              "for j in $(squeue -u __USER__ -h -o '%F' | sort -u); do "
              "printf '%s|%s\\n' \"$j\" \"$(sacct -j $j -X -n -P --format=WorkDir%%80 2>/dev/null | head -1)\"; done; "
+             "echo '--RES--'; scontrol show reservation 2>&1; "
              "echo '--END--'"
              ).replace("__USER__", CLUSTER["user"])
     out = sh("ssh", "-o", "ConnectTimeout=20", CLUSTER["ssh_host"], remote)
     # An empty squeue and a failed ssh both produce no job lines. Without a marker
     # the second reads as "no live work" -- and every dead watcher as FINISHED.
     ok = "--END--" in out.splitlines()
-    jobs, wd, phase = {}, {}, 0
+    jobs, wd, phase, res = {}, {}, 0, []
     for line in out.splitlines():
         if line.strip() == "--END--":
             break
         if line.strip() == "--WD--":
             phase = 1; continue
+        if line.strip() == "--RES--":
+            phase = 2; continue
+        if phase == 2:
+            # Collected, never parsed. See fleet.reach: whether this site uses
+            # MAINT reservations at all is the open question, and a parser
+            # written against a guess would answer it with its own assumptions.
+            res.append(line.rstrip())
+            continue
         p = line.strip().split("|")
         if phase == 0 and len(p) == 4:
             jid, state, reason, n = p[0], p[1], p[2], p[3]
@@ -119,7 +135,7 @@ def live_jobs():
         # unwatched two days later; this is the derived answer.)
         j["held"] = bool(j["reasons"]) and all(
             r in HELD for r in j["reasons"])
-    return jobs, ok
+    return jobs, ok, "\n".join(res).strip()
 
 TERMINAL = ("COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY", "NODE_FAIL",
             "PREEMPTED", "BOOT_FAIL", "DEADLINE", "REVOKED")
@@ -143,6 +159,9 @@ def final_states(jids):
     return res
 
 WATCHDIR = os.path.join(fc.state_dir(CFG), "watchers")
+CLUSTER_NAME = CLUSTER.get("name", "cluster")
+REACHFILE = reach.reach_path(fc.state_dir(CFG))
+RESFILE   = reach.reservations_path(fc.state_dir(CFG))
 
 # Delivery, not watching. Both are "is my work being seen?", so both belong here.
 NUDGELOG  = os.path.join(fc.state_dir(CFG), "nudges.log")
@@ -585,10 +604,68 @@ def parse_args(argv, known):
             session = a
     return session, want_json
 
+def down_line(down, entry):
+    """One line saying how long the cluster has been unreachable.
+
+    `None` is NOT zero. A fleet whose state directory was just created has not
+    observed a cluster that has been down for no time at all, and saying so would
+    invent an outage that started when the file did.
+
+    The absolute time is shown in the human's own zone and LABELLED, because an
+    unlabelled time in the wrong zone reads as right -- the same rule this
+    repository applies to every other timestamp a person reads.
+    """
+    if down is None:
+        return ("no successful query has ever been recorded, so there is no "
+                "duration to give -- this is the first failure seen, or the "
+                "state directory is new")
+    zone, _why = fc.display_zone(CFG)
+    try:
+        when = datetime.datetime.fromtimestamp(entry["last_good"], ZoneInfo(zone))
+    except Exception:
+        # The host's zone, still labelled by %Z. `time` is not imported in this
+        # module, and the first version of this fallback used it -- it would have
+        # raised precisely when the zone lookup had already failed, turning a
+        # cosmetic problem into a crash in the middle of an outage report.
+        when = datetime.datetime.now().astimezone().fromtimestamp(
+            entry["last_good"]).astimezone()
+    stamp = when.strftime("%Y-%m-%d %H:%M %Z")
+    return "unreachable for %s -- last good %s" % (duration(down), stamp)
+
+
+def duration(seconds):
+    """`1h 20m`, `3d 4h`, `45s`. Coarse on purpose: nobody acts on the seconds of
+    a two-day outage, and a bare count of them has to be divided by the reader."""
+    s = int(seconds)
+    if s < 90:
+        return "%ds" % s
+    if s < 3600:
+        return "%dm" % (s // 60)
+    # Hours and minutes from one hour, not from ninety: this threshold was
+    # borrowed from `fleetboard.age`, where it suits the age of a cached reading.
+    # An OUTAGE is read differently -- "80m" makes the reader do the division at
+    # the moment they are deciding whether to care.
+    if s < 172800:
+        return "%dh %dm" % (s // 3600, (s % 3600) // 60)
+    return "%dd %dh" % (s // 86400, (s % 86400) // 3600)
+
+
 def main():
     version_flag()
     only, want_json = parse_args(sys.argv[1:], known_sessions())
-    jobs, cluster_ok = live_jobs()
+    jobs, cluster_ok, reservations = live_jobs()
+    # Stamped on EVERY run, success or not: only a success moves `last_good`, but
+    # `last_checked` moving either way is what distinguishes "down since 08:35"
+    # from "nobody has looked since 08:35".
+    reach_entry = reach.record(REACHFILE, CLUSTER_NAME, cluster_ok)
+    # None while the cluster is READABLE. The elapsed time since the last good
+    # read is ~0 on a successful run, and "down_for: 0.0005" invites a consumer
+    # to render "down for 0s" on a cluster that is perfectly fine.
+    down = None if cluster_ok else reach.down_for(reach_entry)
+    if cluster_ok:
+        # Only when the query worked -- an empty string from a failed ssh is not
+        # an observation that the reservation table was empty.
+        reach.record_reservations(RESFILE, CLUSTER_NAME, reservations)
     reg, dead_reg, by_job = registered()
     # A registered watcher whose pid is gone is either DEAD (its job is still live:
     # alarm) or FINISHED (it exited because its job ended: the normal end of every
@@ -644,7 +721,10 @@ def main():
     stale, partway = (split_stale(w, by_job, jobs) if cluster_ok else ([], []))
 
     if want_json:
-        print(json.dumps({"cluster_ok": cluster_ok, "jobs": rows, "stale_watchers": stale,
+        print(json.dumps({"cluster_ok": cluster_ok,
+                          "cluster_last_good": reach_entry.get("last_good"),
+                          "cluster_down_for_s": down,
+                          "jobs": rows, "stale_watchers": stale,
                           "watchers_partway": partway,
                           "dead_watchers": dead_reg, "finished_watchers": finished,
                           "delivery": holes,
@@ -655,6 +735,12 @@ def main():
         print("!! CLUSTER QUERY FAILED (ssh %s) -- no job table. This is NOT \"no live"
               " work\";\n   nothing below about live work or watcher coverage can be trusted."
               % CLUSTER["ssh_host"])
+        # How LONG, which is the whole difference between a blip and an outage.
+        # The sentence above is honest and carries no duration, so a two-minute
+        # hiccup and a two-day maintenance window read identically -- and so does
+        # a cluster that has never been reachable at all. Three states a reader
+        # has to tell apart.
+        print("   %s" % down_line(down, reach_entry))
     elif not rows:
         # Naming the filter matters: "no live cluster work for <cluster user>"
         # under a session filter reads as a statement about the whole cluster.

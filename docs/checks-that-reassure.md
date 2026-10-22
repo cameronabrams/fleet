@@ -510,6 +510,34 @@ Three mechanisms produce it.
   is worth more than the first implementation of it.** Reverted uncommitted;
   nothing shipped.
 
+- **A true warning with no duration reads like any other.** `fleetwatch` said
+  `CLUSTER QUERY FAILED -- live work is UNKNOWN, not none`, which is honest, and
+  computed the fact every run while recording nothing. So a two-minute blip, a
+  two-day maintenance window and a cluster that had never been reachable printed
+  identical words, and a reader had no way to tell which they were looking at.
+  The cluster was down for maintenance on 2026-10-22 and nothing in the fleet could
+  say when it had started.
+
+  Not a false answer -- an answer with a missing dimension, which is the same
+  thing to whoever has to act on it. **A state worth reporting is usually worth
+  timing**, and the stamp costs one file. The inverse mattered as much: a cluster
+  with no recorded good read reports that, rather than an outage of zero length,
+  which would date every first failure to the creation of the state file.
+
+- **An empty table read after the fact proves nothing.** `scontrol show
+  reservation` answered `No reservations in the system` when the cluster came
+  back, and the tempting reading is "this site does not use MAINT reservations,
+  so advance warning is impossible". A completed reservation is REMOVED, so an
+  empty table just after a window is exactly what both cases look like. coord
+  caught this in its own proposal and said so before anyone acted on it.
+
+  The response is the part worth keeping: **build the recorder, not the parser.**
+  Nothing interprets the text; it is kept when it changes. If a `MAINT` entry
+  ever appears ahead of an outage the feature is real and can be built on
+  evidence, and if none ever does, that is the answer too. A parser written now
+  would have answered the open question with its own assumptions and then been
+  believed.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and

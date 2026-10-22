@@ -20,5 +20,6 @@ Submodules
    fleet.nudgelog
    fleet.panes
    fleet.procs
+   fleet.reach
    fleet.transcripts
    fleet.versions
