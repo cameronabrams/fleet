@@ -29,7 +29,7 @@ import argparse, glob, json, os, re, shlex, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
-from fleet.panes import LABELS, agent_label, belongs
+from fleet.panes import LABELS, agent_label, belongs, type_line
 from fleet.procs import alive, ancestors, children, claude_procs, named, ppid, starttime
 from fleet.agents import background_named, list_agents
 from fleet.transcripts import resume_handle, session_name
@@ -47,6 +47,11 @@ BACKGROUND_MARKER = "Background work is running"
 # pid exits, and a fork carries on under a new pid and session id.
 MOVED_MARKERS = ("Moving to background", "backgrounded ·")
 TYPE_WAIT = 5.0                            # seconds for typed text to reach the input line
+# Deliberately shorter than `fleet.panes.TYPE_WAIT` (10s) and NOT imported from
+# there: this tool is driven by a human watching the pane, and a retire that
+# hesitates twice as long reads as a hang. Importing the name as well as
+# defining it here shadowed one with the other, which is a question nobody
+# should have to answer by checking line order.
 
 def tmux(*a):
     r = subprocess.run(["tmux", *a], capture_output=True, text=True)
@@ -313,17 +318,22 @@ def stop(f, wait, name):
     Stopped means the pid is gone AND the session did not move to the background:
     the pane does not say so, and no background session answers to the name."""
     pane, pid, start = f["pane"]["pane"], f["pid"], f["start"]
-    tmux("send-keys", "-t", pane, "-l", "/exit")          # text, no Enter
-    # Typing opens the slash-command menu, which pushes the input line up, and a busy
-    # pane can take seconds to echo: search the whole screen, for a while.
-    typed, t_end = False, time.time() + TYPE_WAIT
-    while not typed and time.time() < t_end:
-        time.sleep(0.5)
-        typed = any(re.search(r"❯\s*/exit\s*$", l) for l in screen(pane).splitlines())
-    if not typed:
-        tmux("send-keys", "-t", pane, "C-u")
-        return 3, (f"the input line in {pane} did not read exactly '/exit' within {TYPE_WAIT:.0f}s "
-                   f"(a terminal reply can corrupt keys); cleared it and stopped")
+    # `type_line`, NOT a search of the screen. This typed `/exit` and then looked
+    # for `❯ /exit` ANYWHERE on the pane -- deliberately, because typing opens the
+    # slash-command menu and pushes the input line up. The reasoning was sound and
+    # the test was not: a RESUMED pane replays its transcript, and `/exit` records
+    # its farewell, so every exit the session has ever made is drawn above the live
+    # input line on every restart. One real pane carried five of them on
+    # 2026-10-23, all predating the running process by weeks. The search therefore
+    # matched on the first poll whether or not the keys had landed, and Enter went
+    # into whatever the input line actually held.
+    #
+    # `fleet.panes.type_line` reads only the input line, clears it on failure, and
+    # was already being used by `fleetcontext` to type `/color` and `/compact` --
+    # slash commands, so the menu concern it was written around is handled there.
+    err = type_line(tmux, pane, "/exit", TYPE_WAIT)
+    if err:
+        return 3, err
     tmux("send-keys", "-t", pane, "Enter")
     t_end = time.time() + wait
     while time.time() < t_end:

@@ -7,6 +7,17 @@ UUID = "aaaaaaaa-0000-4000-8000-000000000001"
 IDLE = "❯ \n──────\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent\n"
 BUSY = "· Working… (48s)\n❯ \n──────\n  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt\n"
 TYPED = "❯ /exit\n──────\n  /exit  Exit the REPL\n"
+# A RESUMED pane. `--resume` re-renders the transcript, and `/exit` records its
+# farewell as a local-command-stdout entry -- so every exit the session has ever
+# made is replayed above the live input line on every restart. Observed on a real
+# pane 2026-10-23: five `❯ /exit` lines above a live prompt, all predating the
+# running process by weeks, which a coordinator read as five failed exits.
+#
+# Here the keystrokes did NOT land: the input line holds something else.
+REPLAYED = ("❯ /exit\n  ⎿  Catch you later!\n"
+            "❯ /exit\n  ⎿  Bye!\n"
+            "❯ /exit\n  ⎿  Goodbye!\n"
+            "──────\n❯ half-typed\n──────\n")
 
 
 class Base(unittest.TestCase):
@@ -291,6 +302,29 @@ class Act(Base):
         self.assertEqual(code, 3, out)
         self.assertIn(("send-keys", "-t", "%7", "C-u"), self.calls)
         self.assertNotIn(("send-keys", "-t", "%7", "Enter"), self.calls)
+
+    def test_a_replayed_exit_in_scrollback_is_not_proof_the_keys_landed(self):
+        """THE BUG. `stop()` searched the WHOLE screen for `❯ /exit` -- deliberately,
+        because typing opens the slash-command menu and pushes the input line up.
+        But a resumed pane replays every `/exit` it has ever made, so the search
+        matches on the first poll whether or not the keystrokes arrived, and Enter
+        then goes into a pane holding something else entirely.
+
+        `fleet.panes.type_line` already did this correctly and `fleetcontext`
+        already used it to type `/color` and `/compact` -- slash commands, so the
+        menu concern was solved years of commits ago, in a module this tool
+        imports from."""
+        orig = self.tmux
+        def tmux(*a):
+            r = orig(*a)
+            if a[0] == "send-keys" and a[-1] == "/exit":
+                self.screen = REPLAYED        # keys did not land; history looks like they did
+            return r
+        self.tmux = tmux
+        code, out = self.main("alpha", "--park", "--go")
+        self.assertEqual(code, 3, out)
+        self.assertNotIn(("send-keys", "-t", "%7", "Enter"), self.calls,
+                         "Enter must not be sent into a pane holding 'half-typed'")
 
     def test_background_dialog_stops_with_3(self):
         orig = self.tmux

@@ -621,6 +621,30 @@ Three mechanisms produce it.
   authority. Caught by a peer session, after I had already verified the format
   question carefully enough to feel finished with it.
 
+- **Scrollback is not evidence about the process now running in the pane.**
+  `fleetretire` typed `/exit` and then searched the WHOLE screen for `❯ /exit`
+  before pressing Enter. The reasoning was explicit and sound -- typing opens the
+  slash-command menu, which pushes the input line up, so a narrow test would miss
+  it. The test was still wrong: `--resume` re-renders a session's transcript, and
+  `/exit` records its farewell, so **every exit the session has ever made is
+  replayed above the live input line on every restart.** One real pane carried
+  five of them on 2026-10-23, all predating the running process by weeks.
+
+  So the search matched on the first poll whether or not the keystrokes landed,
+  and Enter went into whatever the input line actually held. Reproduced before
+  fixing: with the farewells above and `half-typed` on the input line, the old
+  test says typed, `fleet.panes.input_line` says `'half-typed'`.
+
+  **A correct version was already in the module this tool imports from.**
+  `panes.type_line` reads only the input line and clears it on failure, and
+  `fleetcontext` was already typing `/color` and `/compact` through it -- slash
+  commands, so the menu concern had been solved where the reimplementation was
+  worried about it. The bug was not a missing idea; it was a second
+  implementation of one that existed.
+
+  Found by a peer misreading the same replayed farewells by eye and writing up
+  why, which sent me to look at whether any tool made the same mistake in code.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and
