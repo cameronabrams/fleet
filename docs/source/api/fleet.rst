@@ -21,5 +21,6 @@ Submodules
    fleet.panes
    fleet.procs
    fleet.reach
+   fleet.snapshot
    fleet.transcripts
    fleet.versions

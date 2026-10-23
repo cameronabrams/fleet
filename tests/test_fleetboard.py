@@ -665,7 +665,14 @@ class PendingUpdatesAreASourceLikeAnyOther(unittest.TestCase):
 
     # -- rendering -------------------------------------------------------------
 
-    def draw(self, doc=None, kernel=("current", {"running": "7.2.11-1-default"})):
+    def draw(self, doc=None, kernel=("current", {"running": "7.2.11-1-default"}),
+             superseded=False):
+        """`superseded` is PINNED for the same reason `kernel` is. Left to the
+        host, `snapshot.superseded` reads the real `/etc/os-release` -- and the
+        moment a fixture's `target_snapshot` happened to equal this machine's
+        actual VERSION_ID, an unrelated test about counts and ages started
+        getting the supersession line instead. Which is exactly how it was
+        found."""
         """`kernel` is PINNED, because the board now reads the running kernel
         live. Left to the host, every assertion about the reboot marker would be
         answered by whichever kernel the test machine happens to have booted:
@@ -682,6 +689,7 @@ class PendingUpdatesAreASourceLikeAnyOther(unittest.TestCase):
              mock.patch.object(self.b, "agents", lambda: {}), \
              mock.patch.object(self.b, "load_cache", lambda: None), \
              mock.patch.object(self.b.kernels, "state", lambda *a, **k: kernel), \
+             mock.patch.object(self.b.snapshot, "superseded", lambda d, **k: superseded), \
              mock.patch.object(self.b.versions, "installed", lambda *a, **k: "2.1.303"), \
              mock.patch.object(self.b.versions, "target", lambda *a, **k: ("2.1.302", "/v")):
             buf = io.StringIO()
@@ -1013,3 +1021,58 @@ class AFailedClusterQueryCarriesItsLength(unittest.TestCase):
         right. An outage is read at the moment someone decides whether to care."""
         self.assertEqual(self.b.short_duration(3599), "59m")
         self.assertEqual(self.b.short_duration(3600), "1h 0m")
+
+
+class ASupersededUpdateCountIsNotNews(unittest.TestCase):
+    """The board printed `updates: 47 updates -> 20261021` for nearly seven hours
+    after those 47 were installed. The age beside it was honest and the count was
+    about a machine that no longer existed."""
+
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.b = load_tool("fleetboard")
+        self.b.C = dict.fromkeys(self.b.C, "")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def line(self, doc, sup, now_id="20261021"):
+        with mock.patch.object(self.b.snapshot, "superseded", lambda d, **k: sup), \
+             mock.patch.object(self.b.snapshot, "current", lambda *a, **k: now_id):
+            return self.b.updates_line("ok", dict(doc, _age_s=6 * 3600))
+
+    DOC = {"total": 47, "snapshot": "20261020", "target_snapshot": "20261021"}
+
+    def test_a_superseded_document_says_so_instead_of_its_count(self):
+        out = self.line(self.DOC, True)
+        self.assertIn("SUPERSEDED", out)
+        self.assertIn("20261021", out)
+        self.assertIn("the check has not re-run", out)
+
+    def test_it_does_not_advertise_the_count_as_pending(self):
+        """`47 updates -> 20261021` reads as work to do. That is the whole
+        complaint: the line was not wrong about its age, it was wrong about
+        what it was describing."""
+        out = self.line(self.DOC, True)
+        self.assertNotIn("-> 20261021", out)
+
+    def test_a_current_document_is_unchanged(self):
+        out = self.line(self.DOC, False)
+        self.assertNotIn("SUPERSEDED", out)
+        self.assertIn("47 updates", out)
+
+    def test_unknown_leaves_the_line_exactly_as_it_was(self):
+        """None means it could not be told. The caller keeps saying what it said
+        before rather than guessing in either direction."""
+        out = self.line(self.DOC, None)
+        self.assertNotIn("SUPERSEDED", out)
+        self.assertIn("47 updates", out)
+
+    def test_the_age_is_still_carried(self):
+        """Supersession replaces the claim, not the provenance: a reader still
+        needs to know how old the thing being dismissed was."""
+        self.assertIn("6h", self.line(self.DOC, True))
+
+    def test_one_update_reads_as_one(self):
+        out = self.line(dict(self.DOC, total=1), True)
+        self.assertIn("1 update was pending", out)

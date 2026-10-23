@@ -204,6 +204,35 @@ fleet-ending fact at exactly the moment the other half of the check broke. Only
 an *unknown* source withholds it, because there the document could not be
 interpreted at all.
 
+A document the machine has moved past
+-------------------------------------
+
+The updates line carries its age, which is honest, and its **count**, which stops
+being true the moment a human installs the updates it lists. On 2026-10-23 the
+board advertised ``47 updates`` for nearly seven hours after those 47 had been
+installed — a line that was right about when it was written and wrong about what
+it described.
+
+An install does not need to reset anything, and nothing hooks the package
+manager. **The machine already says which snapshot it is on, and the document
+already says which one it was aiming at:**
+
+.. code-block:: text
+
+   updates: 47 updates were pending 6h ago -- SUPERSEDED, this machine is
+            on 20261021 now; the check has not re-run
+
+The test is deliberately narrow: a document is superseded only when the machine
+has reached the ``target_snapshot`` **the document itself named**, not merely
+when the ids differ. On a release distribution ``VERSION_ID`` is something like
+``15.5`` while a producer may record a date, so "differ" would be true for ever
+and the board would cry supersession permanently. Reaching the stated target
+cannot false-alarm, because it is the document's own definition of done.
+
+Unknown is not fine. If ``/etc/os-release`` cannot be read, or carries no
+``VERSION_ID``, or the document names no target, the line is printed exactly as
+it was before — the count with its age, which is never wrong, only incomplete.
+
 The kernel is read live, not from that document
 -----------------------------------------------
 

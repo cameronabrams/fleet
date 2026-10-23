@@ -32,6 +32,26 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- **`fleetboard` says when the updates document has been overtaken by events.**
+  It printed `updates: 47 updates -> 20261021` for nearly seven hours after those
+  47 were installed: the age beside the line was honest, the count was about a
+  machine that no longer existed. Now:
+
+      updates: 47 updates were pending 6h ago -- SUPERSEDED, this machine is
+               on 20261021 now; the check has not re-run
+
+  No hook into the package manager and no change to the producer. The machine
+  already says which snapshot it is on (`/etc/os-release` `VERSION_ID`) and the
+  document already says which one it was aiming at; new `fleet.snapshot` compares
+  them.
+
+  The test is narrow on purpose: superseded means the machine reached the
+  `target_snapshot` **the document itself named**, not that the two ids differ.
+  On a release distribution `VERSION_ID` is something like `15.5` while a
+  producer may record a date, so "differ" would hold for ever and the board would
+  report supersession permanently. Unknown — unreadable `/etc/os-release`, no
+  `VERSION_ID`, no target in the document — leaves the line exactly as it was.
+
 - **`fleetroll NAME` rolls one named session onto a target binary**, read-only
   until `--go`. It does not pick the session, decide target policy, consult the
   soak or lag gates, or write to `autoroll.log` — those stay with the caller, so

@@ -645,6 +645,30 @@ Three mechanisms produce it.
   Found by a peer misreading the same replayed farewells by eye and writing up
   why, which sent me to look at whether any tool made the same mistake in code.
 
+- **A line that was right about its age and wrong about its subject.** The board
+  printed `updates: 47 updates -> 20261021` with `checked 6h ago` beside it, for
+  nearly seven hours after those 47 updates had been installed. Nothing was
+  stale in the sense the board knew how to report: the document was exactly as
+  old as it said, and its count described a machine that no longer existed.
+
+  **An age is not a validity check.** Staleness answers "when was this written",
+  and the question a reader has is "does this still describe the thing". Those
+  come apart whenever something can happen between writes -- and the something
+  here was the very action the line exists to prompt. The owner's instinct was
+  that installing should reset the flag, which means hooking the package manager;
+  it was not needed, because both halves of the comparison were already on disk.
+
+  The narrowness is the other half. The rule is "the machine reached the target
+  THIS document named", not "the ids differ" -- on a release distribution the
+  latter is true permanently, and a board that cried supersession for ever would
+  be a worse version of the same fault.
+
+  Found by a human looking at the screen, not by any check. The same test class
+  then went red for an unrelated reason: a fixture's `target_snapshot` happened
+  to equal the real machine's `VERSION_ID`, so an existing test about counts and
+  ages started reading the host instead of its fixture. Pinned, like the kernel
+  state beside it.
+
 ## The rule that covers them all
 
 **Before writing "verified", state the outcome that would have falsified it, and

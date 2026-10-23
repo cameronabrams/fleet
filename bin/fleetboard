@@ -32,6 +32,7 @@ from fleet import config as fc
 from fleet import kernels
 from fleet import version_flag
 from fleet import versions
+from fleet import snapshot
 from fleet.panes import (LABELS, agent_label, belongs, fleet_label,
                          is_agent_pane)
 
@@ -373,6 +374,24 @@ def updates_line(u_state, u_data):
         n = u_data.get("total")
         k = u_data.get("kernel_update") or []
         tgt = u_data.get("target_snapshot")
+        # SUPERSEDED beats both the count and the age. A document written before
+        # a human installed the updates it lists is not merely old -- its count
+        # is about a state this machine has left, and printing "47 updates" for
+        # the rest of the day advertises work that no longer exists. The machine
+        # says which snapshot it is on; the document says which one it was aiming
+        # at; reaching it is the document's own definition of done.
+        #
+        # None means it could not be told, and then nothing changes: the count
+        # and its age are printed exactly as before.
+        if snapshot.superseded(u_data):
+            have = snapshot.current()
+            was = ("%d update%s %s" % (n, "" if n == 1 else "s",
+                                       "was" if n == 1 else "were")) if n \
+                else "nothing was"
+            return ("\n  %supdates: %s pending %s ago -- SUPERSEDED, this machine "
+                    "is on %s now; the check has not re-run%s"
+                    % (C['dim'], was, age(time.time() - u_data["_age_s"]),
+                       have, C['r']))
         if n:
             what = "%s update%s" % (n, "" if n == 1 else "s")
             if k:
