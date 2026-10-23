@@ -32,6 +32,35 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- **`fleetroll NAME` rolls one named session onto a target binary**, read-only
+  until `--go`. It does not pick the session, decide target policy, consult the
+  soak or lag gates, or write to `autoroll.log` — those stay with the caller, so
+  it is equally usable by hand.
+
+  Two reasons, and the second is the larger. The keystroke sequence was
+  hand-copied runbook prose, and prose is what failed: a coordinator read a
+  resumed pane's **replayed** `/exit` farewells as five live failed exits and
+  refused to roll a healthy session on nine consecutive fires. A tool that owns
+  the sequence cannot make that mistake, because it reads the input line and
+  never above it.
+
+  And under auto mode an agent's raw `tmux send-keys` is denied, while the rule
+  that unblocks it — `Bash(tmux send-keys:*)` — is a **prefix** rule that cannot
+  constrain which keys reach which pane. `Bash(fleetroll:*)` permits one verified
+  sequence against one named session. **The tool is what makes the grant narrow.**
+  Granting it is the fleet owner's decision and nothing here asks for it.
+
+  Eligibility is re-derived from `fleetupgrade --eligible --json` every run and
+  never taken from the caller; if that cannot be read the roll is **refused**,
+  because a roll that proceeded past an unreadable gate is a roll with no gate.
+  It refuses a session that is the one asking (tested on process ancestry, not on
+  the name), one already on target, one with no `--resume` uuid, a target with no
+  binary in the store, and a busy pane or any dialog — **it never answers a
+  dialog**. It never kills: a session that will not exit is holding something.
+  It relaunches from the versioned path, never a bare `claude`, and accepts the
+  session as back only when `claude agents` names it *and* its version equals the
+  target exactly. Exit codes `0`/`2`/`3`/`4`/`5` name the state it stopped in.
+
 - **The adoption log records `kind=`** — `roll`, `spawn`, `unpark`, `restore` or
   `adopt` — and `fleet.versions` gains `adoptions()`, `is_roll()`, `rolled_on()`
   and `rolled_today()` to read it.

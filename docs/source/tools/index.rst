@@ -33,6 +33,9 @@ version: they are released together.
    * - :doc:`fleetretire`
      - park or retire one session
      - tmux and state, with ``--go``
+   * - :doc:`fleetroll`
+     - roll ONE named session onto a target binary
+     - tmux, with ``--go``
    * - :doc:`fleetwatch`
      - which cluster work has a live watcher
      - nothing
@@ -79,6 +82,7 @@ Most tools read ``~/.claude/projects/`` (transcripts), ``/proc`` and
    fleetupgrade
    fleetspawn
    fleetretire
+   fleetroll
    fleetwatch
    fleetregister
    fleetwaiting

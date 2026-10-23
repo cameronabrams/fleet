@@ -1,0 +1,357 @@
+#!/usr/bin/env python3
+"""fleetroll - roll ONE named session onto a target binary, and say what happened.
+
+  fleetroll NAME                  plan only; print every step, change nothing
+  fleetroll NAME --go             perform the roll
+  fleetroll NAME --to VERSION     override the target (default: newest soaked)
+  fleetroll NAME --socket NAME    a throwaway tmux server, for trying it safely
+
+Exit: 0 rolled - 2 refused at preflight - 3 did not exit - 4 did not come back
+      - 5 came back on the wrong version.
+
+**This does not pick the session and does not decide policy.** `fleetupgrade`
+answers who is eligible and never acts; this acts on one name and never chooses.
+The caller still decides WHO. What moves in here is HOW -- the keystroke
+sequence, which was hand-copied runbook prose that an agent can misread, and did:
+a coordinator read a resumed pane's REPLAYED `/exit` farewells as five live
+failed exits and held every roll for nine consecutive fires on a healthy session
+(2026-10-23). A tool that owns the sequence cannot make that mistake, because it
+never reads above the input line.
+
+**The narrow grant is the other half of the point.** Under auto mode an agent's
+raw `tmux send-keys` is denied, and the rule that unblocks it --
+`Bash(tmux send-keys:*)` -- is a prefix rule: it cannot constrain which keys
+reach which pane, so it permits typing anything into any pane's shell.
+`Bash(fleetroll:*)` permits one verified sequence against one named session.
+Granting that rule is the fleet owner's decision and nothing here asks for it;
+the tool is equally useful driven by hand.
+
+Eligibility is RE-DERIVED from `fleetupgrade --eligible --json` on every run and
+never taken from the caller. A driver that has already decided to roll something
+is the last thing that should be trusted about whether it may.
+"""
+import argparse, json, os, shlex, subprocess, sys, time
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+from fleet import config as fc
+from fleet import version_flag
+from fleet import versions
+from fleet.agents import list_agents
+from fleet.panes import (CAPTURE, LABELS, LABEL_FIELDS, agent_label, belongs,
+                         screen_state, state_problem, type_line)
+from fleet.procs import alive, ancestors, children, starttime
+
+APP = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+BIN = os.path.dirname(os.path.realpath(__file__))
+CFG = fc.load()
+OURS = fc.fleet_name(CFG)
+SOCKET = None
+TYPE_WAIT = 10.0          # seconds for typed text to reach the input line
+EXIT_WAIT = 90.0          # seconds for the session to stop after Enter
+BACK_WAIT = 180.0         # seconds for it to come back and report its version
+
+
+def tmux(*args):
+    argv = ["tmux"] + (["-L", SOCKET] if SOCKET else []) + list(args)
+    r = subprocess.run(argv, capture_output=True, text=True)
+    return r.returncode, r.stdout, r.stderr
+
+
+def eligibility():
+    """`fleetupgrade --eligible --json`, or None if it could not be read.
+
+    None is never treated as "eligible". A roll that proceeded because the gate
+    could not be consulted is a roll with no gate, and the whole reason this
+    calls out rather than reimplementing is that there is one definition of
+    eligible and it lives there.
+    """
+    try:
+        r = subprocess.run([os.path.join(BIN, "fleetupgrade"), "--eligible", "--json"],
+                           capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        return None
+
+
+def find_pane(name):
+    """`(pane, pid, start, why)` for `name`'s live session; `why` is None on success.
+
+    Four values rather than three with the reason smuggled into the pid slot.
+    That is what this returned first, and `wait_back` then had to sniff the type
+    of the second value to tell a pid from an error string -- a field meaning two
+    things is the shape this repository keeps finding at the bottom of its own
+    bugs.
+
+    The pane carries `@agent`; the pid is the claude process under its shell. A
+    name that resolves to more than one live process is refused rather than
+    guessed between -- picking one would roll a session nobody named.
+    """
+    rc, out, err = tmux("list-panes", "-a", "-F",
+                        "#{pane_id}\t#{pane_pid}\t" + LABELS)
+    if rc != 0:
+        return None, None, None, "could not list panes: %s" % (err.strip() or "tmux failed")
+    hits = []
+    for row in out.strip("\n").splitlines():
+        f = row.split("\t")
+        if len(f) < 2 + LABEL_FIELDS:
+            continue
+        if agent_label(f[2]) != name or not belongs(f[3], OURS):
+            continue
+        hits.append((f[0], f[1]))
+    if not hits:
+        return None, None, None, "no pane in this fleet carries @agent=%s" % name
+    if len(hits) > 1:
+        return None, None, None, "%d panes carry @agent=%s: %s" % (
+            len(hits), name, ", ".join(p for p, _ in hits))
+    pane, pane_pid = hits[0]
+    kids = [k for k in children(pane_pid) if _is_claude(k)]
+    if not kids:
+        return None, None, None, "no claude process under %s (pane pid %s)" % (pane, pane_pid)
+    if len(kids) > 1:
+        return None, None, None, "%d claude processes under %s" % (len(kids), pane)
+    pid = kids[0]
+    return pane, pid, starttime(pid), None
+
+
+def _is_claude(pid):
+    try:
+        with open("/proc/%s/cmdline" % pid, "rb") as fh:
+            argv = fh.read().split(b"\0")
+    except OSError:
+        return False
+    return any(b"--name" == a for a in argv)
+
+
+def resume_uuid(pid):
+    """The `--resume` argument the process was launched with, or None."""
+    try:
+        with open("/proc/%s/cmdline" % pid, "rb") as fh:
+            argv = [a.decode("utf-8", "replace") for a in fh.read().split(b"\0") if a]
+    except OSError:
+        return None
+    for i, a in enumerate(argv[:-1]):
+        if a == "--resume":
+            return argv[i + 1]
+    return None
+
+
+def preflight(name, pane, pid, elig, target, to_override):
+    """Every reason not to start, named. Empty means go.
+
+    Re-derived, never asserted by the caller. The gates themselves stay in
+    `fleetupgrade`: this asks it and quotes its answer rather than keeping a
+    second opinion that can drift from the first.
+    """
+    out = []
+    if elig is None:
+        out.append("fleetupgrade --eligible --json could not be read, so "
+                   "eligibility is UNKNOWN -- refusing rather than assuming")
+        return out
+    if not target:
+        out.append("no target: nothing has soaked, and --to was not given")
+    # A session cannot roll itself: typing /exit into our own pane kills the
+    # process that is mid-roll, and nothing would be left to relaunch it. The
+    # pid test is the honest one -- a name can be changed, process ancestry
+    # cannot. `fleetupgrade` excludes itself by transcript uuid as well, which
+    # covers the case where we are not a descendant but are the same session.
+    if pid and int(pid) in set(ancestors(os.getpid())) | {os.getpid()}:
+        out.append("%s is the session asking: a session cannot roll itself" % name)
+    rows = {s["name"]: s for s in (elig.get("sessions") or [])}
+    if name not in rows:
+        out.append("%s is not in this fleet's roster as fleetupgrade sees it" % name)
+    elif not rows[name].get("eligible"):
+        out.append("fleetupgrade says not eligible: %s"
+                   % (rows[name].get("why_not") or "no reason given"))
+    now = rows.get(name, {}).get("version")
+    if now and target and now == target and not to_override:
+        out.append("%s is already on %s" % (name, target))
+    if pane:
+        rc, screen, _ = tmux(*CAPTURE, "-t", pane)
+        if rc != 0:
+            out.append("could not read %s" % pane)
+        else:
+            state = screen_state(screen)
+            # Never answer a dialog. A trust prompt, the background-work dialog
+            # and the resume-mode prompt each mean a human has been asked
+            # something, and typing past one answers it on their behalf.
+            problem = state_problem(state, name, pane)
+            if problem:
+                out.append(problem)
+    return out
+
+
+def versioned(target):
+    """The binary for `target`, or None. Never a bare `claude`: that resolves to
+    the NEWEST installed, which defeats the soak gate the target came from.
+
+    `versions.store()` derives the directory from the resolved binary rather than
+    hardcoding it, and returns None on an npm layout, which has no history to
+    choose from. A fleet on npm therefore cannot be rolled to a target and is
+    told so, rather than being silently rolled to whatever `claude` means today.
+    """
+    d = versions.store()
+    if not d:
+        return None
+    p = os.path.join(d, target)
+    return p if os.path.exists(p) else None
+
+
+def relaunch_cmd(name, target, uuid):
+    env = fc.launch_env(CFG)
+    return " ".join(x for x in (
+        env, shlex.quote(versioned(target)), "--name", shlex.quote(name),
+        "--resume", shlex.quote(uuid)) if x)
+
+
+def wait_gone(pid, start, wait):
+    t_end = time.time() + wait
+    while time.time() < t_end:
+        if not alive(pid, start):
+            return True
+        time.sleep(1.0)
+    return False
+
+
+def wait_back(pane, name, target, wait):
+    """`(pid, version)` once it is back, or `(None, reason)`.
+
+    The version must equal the TARGET, not merely be newer and not equal
+    `installed`. A session parked at the resume-mode prompt answers `--version`
+    while its transcript has not loaded, so the string alone is not the check:
+    the name has to be in `claude agents` too.
+    """
+    t_end = time.time() + wait
+    while time.time() < t_end:
+        rc, screen, _ = tmux(*CAPTURE, "-t", pane)
+        if rc == 0 and screen_state(screen) in ("trust", "resume"):
+            return None, ("%s is at the %s prompt -- a human has been asked "
+                          "something and this will not answer it" % (pane, screen_state(screen)))
+        agents = list_agents()
+        if agents is not None and any(a.get("name") == name for a in agents):
+            _, new, _, why = find_pane(name)
+            if new and not why:
+                got = versions.of_pid(new)
+                if got == target:
+                    return new, got
+                if got:
+                    return None, "came back on %s, wanted %s" % (got, target)
+        time.sleep(2.0)
+    return None, "did not report itself within %.0fs" % wait
+
+
+def roll(name, pane, pid, start, target, uuid, a):
+    """The sequence. Returns (code, message). Every step can fail and says so."""
+    print("\n  rolling %s  %s  pid %s -> %s" % (name, pane, pid, target))
+
+    # 2-3. /exit as its own send, then Enter -- and ONLY once the input line
+    # itself reads `/exit`. `type_line` reads the input line and nothing above
+    # it, which is the whole point: a resumed pane replays every `/exit` the
+    # session has ever made, so a screen-wide search for `❯ /exit` matches
+    # before a single keystroke has landed. That is not hypothetical -- it is
+    # the bug this tool was written after, and the same one `fleetretire`
+    # carried in shipped code until 2026-10-23.
+    err = type_line(tmux, pane, "/exit", TYPE_WAIT)
+    if err:
+        return 2, err
+    tmux("send-keys", "-t", pane, "Enter")
+    print("    typed /exit and pressed Enter")
+
+    # 4. Wait for THAT pid to go. Never kill, never signal: a session that will
+    # not exit is holding something, and killing it is how the thing it was
+    # holding becomes invisible.
+    if not wait_gone(pid, start, a.exit_wait):
+        return 3, ("%s (pid %s) did not exit within %.0fs. Nothing further was "
+                   "done and it was NOT killed -- look at the pane: it is "
+                   "holding something these checks did not see."
+                   % (name, pid, a.exit_wait))
+    print("    pid %s is gone" % pid)
+
+    # 5. Relaunch from the VERSIONED path.
+    cmd = relaunch_cmd(name, target, uuid)
+    tmux("send-keys", "-t", pane, cmd, "C-m")
+    print("    relaunched: %s" % cmd)
+
+    # 6. It is back only when `claude agents` names it AND its version is the
+    # target exactly.
+    new, detail = wait_back(pane, name, target, a.back_wait)
+    if new is None:
+        code = 5 if "came back on" in detail else 4
+        return code, "%s %s" % (name, detail)
+    print("    back as pid %s on %s" % (new, detail))
+
+    # 7. The color is dropped by the roll -- `fleetupgrade` documents this: a
+    # `/color` record does not survive, so a correctly named session can come
+    # back colorless. Re-applying is part of the roll, not a courtesy.
+    want = fc.colors(fc.load()).get(name)
+    if want:
+        cerr = type_line(tmux, pane, "/color %s" % want, TYPE_WAIT)
+        if cerr:
+            print("    ! color not re-applied: %s" % cerr)
+        else:
+            tmux("send-keys", "-t", pane, "Enter")
+            print("    re-applied /color %s" % want)
+    else:
+        print("    no [colors] entry for %s; nothing to re-apply" % name)
+    return 0, "%s rolled to %s" % (name, target)
+
+
+def main():
+    version_flag()
+    ap = argparse.ArgumentParser(prog="fleetroll", add_help=True)
+    ap.add_argument("name")
+    ap.add_argument("--to", metavar="VERSION",
+                    help="roll to this version instead of the newest soaked")
+    ap.add_argument("--socket", metavar="NAME",
+                    help="a tmux server other than the default, for trying this "
+                         "safely on a throwaway one")
+    ap.add_argument("--exit-wait", type=float, default=EXIT_WAIT, metavar="S")
+    ap.add_argument("--back-wait", type=float, default=BACK_WAIT, metavar="S")
+    ap.add_argument("--go", action="store_true")
+    a = ap.parse_args()
+    global SOCKET
+    SOCKET = a.socket
+
+    elig = eligibility()
+    target = a.to or (elig or {}).get("target")
+    pane, pid, start, why = find_pane(a.name)
+    if why:
+        print("\n  REFUSED: %s\n" % why)
+        return 2
+
+    problems = preflight(a.name, pane, pid, elig, target, bool(a.to))
+    uuid = resume_uuid(pid)
+    if not uuid:
+        problems.append("%s has no --resume uuid in its argv, so it cannot be "
+                        "relaunched into its own conversation" % a.name)
+    if target and not versioned(target):
+        problems.append("no binary for %s in the version store" % target)
+
+    print("\n  session %s  pane %s  pid %s" % (a.name, pane, pid))
+    print("  now     %s" % ((elig or {}).get("sessions") and next(
+        (s["version"] for s in elig["sessions"] if s["name"] == a.name), "?") or "?"))
+    print("  target  %s%s" % (target or "NONE", "  (--to)" if a.to else ""))
+    print("  resume  %s" % (uuid or "?"))
+    if problems:
+        print()
+        for p in problems:
+            print("  REFUSED: %s" % p)
+        print()
+        return 2
+    if not a.go:
+        print("\n  would: type /exit, wait for pid %s to go, relaunch from %s,"
+              "\n         verify it returns on %s, re-apply its color."
+              "\n\n  plan only -- re-run with --go\n" % (pid, versioned(target), target))
+        return 0
+
+    code, msg = roll(a.name, pane, pid, start, target, uuid, a)
+    print("\n  %s\n" % msg)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())
