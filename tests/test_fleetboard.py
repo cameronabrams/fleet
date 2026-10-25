@@ -1155,3 +1155,53 @@ class NoClusterConfigured(unittest.TestCase):
             f.write('\n[cluster.testcluster]\nssh_host = "nowhere.invalid"\n'
                     'user = "tester"\njob_id_re = "[0-9]+"\n')
         self.assertTrue(self.b.cluster_configured())
+
+
+class AConfigEditedMidWatchMustNotEndTheBoard(unittest.TestCase):
+    """`cluster_configured` is re-read on every draw so that `--watch` picks up
+    an edit — which is exactly when the file is most likely to be half-written.
+
+    `fc.load(required=False)` returns `{}` for a MISSING file but RAISES on a
+    malformed one, and the watch loop catches only KeyboardInterrupt. `parked`
+    returns None for this reason and `updates` reports that it could not read
+    the configuration; this was the third sibling and the one without a guard.
+    """
+
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.b = load_tool("fleetboard")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def break_config(self):
+        with open(os.path.join(self.cfg.config, "fleet.toml"), "w") as f:
+            f.write("[cluster.x\nthis = is not ] toml\n")
+
+    def test_a_malformed_config_is_none_not_an_exception(self):
+        self.break_config()
+        self.assertIsNone(self.b.cluster_configured())
+
+    def test_a_declared_cluster_is_still_true(self):
+        self.assertIs(self.b.cluster_configured(), True)
+
+    def test_a_missing_file_is_false_not_unknown(self):
+        """A configuration that is not there declares no cluster, which is an
+        answer. Only one that cannot be PARSED is unknown."""
+        os.unlink(os.path.join(self.cfg.config, "fleet.toml"))
+        self.assertIs(self.b.cluster_configured(), False)
+
+    def test_unknown_keeps_the_old_stamp_wording(self):
+        """`is False`, not falsy — already written that way, and this pins it:
+        None must not claim "no [cluster] configured, so no cluster work"."""
+        line = self.b.cache_lines({"at": 0, "cluster": None}, True, False)[0]
+        self.assertIn("cluster + context", line)
+        self.assertNotIn("no [cluster] configured", line)
+
+    def test_refreshing_the_cache_survives_a_malformed_config(self):
+        """The path that actually runs during `--watch`."""
+        self.break_config()
+        with mock.patch.object(self.b, "jobs_and_notes", lambda: (None, [])), \
+             mock.patch.object(self.b, "context", lambda: None):
+            c = self.b.refresh_cache()
+        self.assertIsNone(c["cluster"])

@@ -47,7 +47,12 @@ entries and makes you confirm the bump against this list.
 - **`fleetboard` showed `?` in every session's work column when no cluster was
   configured.** The column is now blank, and the stamp reads `context as of …;
   no [cluster] configured, so no cluster work`. A configured cluster that cannot
-  be read is still `?`.
+  be read is still `?`, and so is one whose `fleet.toml` cannot be **parsed**:
+  `cluster_configured()` returns `None` there rather than raising. It is re-read
+  on every draw so `--watch` picks up an edit, which is exactly when the file is
+  most likely to be half-written, and the watch loop catches only
+  `KeyboardInterrupt` — `parked` and `updates` already guarded this; it was the
+  third sibling and the one that did not.
 
 ### Added
 

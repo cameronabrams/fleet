@@ -146,8 +146,21 @@ def cluster_configured():
 
     For the STAMP only. The work itself still comes from `fleetwatch`, which
     answers "no cluster, so no work" on its own -- and asking it anyway keeps
-    the watcher and delivery warnings, which need no cluster at all."""
-    return bool(fc.load(required=False).get("cluster"))
+    the watcher and delivery warnings, which need no cluster at all.
+
+    **None when the configuration cannot be read.** `fc.load(required=False)`
+    returns `{}` for a MISSING file but RAISES on a malformed one, and this is
+    re-read on every draw so that `--watch` picks up an edit -- which is exactly
+    when a human is most likely to have the file half-written. The watch loop
+    catches only KeyboardInterrupt, so raising here ends the board. `parked`
+    returns None for this reason and `updates` reports that it could not read
+    the configuration; this is the third sibling and was the one without a
+    guard. The stamp already tests `is False`, so None keeps the old wording.
+    """
+    try:
+        return bool(fc.load(required=False).get("cluster"))
+    except Exception:
+        return None
 
 def jobs_and_notes():
     """(jobs or None, [notes]) from `fleetwatch --json`.
