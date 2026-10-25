@@ -342,3 +342,55 @@ class WhichConversationItResumes(Base):
         self.assertEqual(code, 2, out)
         self.assertIn("does not list pid 4242", out)
         self.assertFalse([a for a in self.calls if a[0] == "send-keys"])
+
+
+class TheNameMustAgreeWhicheverSourceAnswers(Base):
+    """The name check was inside the branch that uses claude's uuid, so it
+    applied only when the entry happened to carry a `sessionId`.
+
+    An entry naming this pid something else with NO `sessionId`, or a pid listed
+    twice, fell through to the argv fallback and was used — the exact outcome the
+    check exists to prevent, reached by the path it did not cover. The
+    disagreement is what matters, not which source would have answered it.
+    """
+
+    def uuid(self, agents, argv=None, name="alpha", pid=4242):
+        with mock.patch.object(self.r, "resume_uuid", side_effect=lambda p: argv):
+            return self.r.session_uuid(name, pid, agents)
+
+    def test_a_disagreeing_name_with_no_session_id_is_still_refused(self):
+        uuid, _, why = self.uuid([{"pid": 4242, "name": "beta"}], argv=SID)
+        self.assertIsNone(uuid, "argv must not rescue a name disagreement")
+        self.assertIn("not 'alpha'", why)
+
+    def test_a_pid_listed_twice_under_another_name_is_refused(self):
+        uuid, _, why = self.uuid([{"pid": 4242, "name": "beta"},
+                                  {"pid": 4242, "name": "beta"}], argv=SID)
+        self.assertIsNone(uuid)
+        self.assertIn("beta", why)
+
+    def test_the_refusal_names_every_name_claude_gave(self):
+        _, _, why = self.uuid([{"pid": 4242, "name": "beta"},
+                               {"pid": 4242, "name": "gamma"}], argv=SID)
+        self.assertIn("'beta'", why)
+        self.assertIn("'gamma'", why)
+
+    def test_a_pid_claude_does_not_list_still_falls_back_to_argv(self):
+        """No entry is no disagreement. This is the ordinary pre-2026-10-25
+        path and must keep working."""
+        uuid, src, why = self.uuid([{"pid": 999, "name": "other"}], argv=SID)
+        self.assertEqual((uuid, why), (SID, None))
+        self.assertIn("argv", src)
+
+    def test_an_unreadable_agents_list_still_falls_back_to_argv(self):
+        uuid, _, why = self.uuid(None, argv=SID)
+        self.assertEqual((uuid, why), (SID, None))
+
+    def test_a_pid_listed_twice_under_the_RIGHT_name_still_uses_argv(self):
+        """Ambiguous listing, no disagreement: argv is unambiguous evidence of
+        what the process was launched with, so it is still allowed to answer."""
+        uuid, src, why = self.uuid([{"pid": 4242, "name": "alpha", "sessionId": SID},
+                                    {"pid": 4242, "name": "alpha", "sessionId": SID}],
+                                   argv=SID)
+        self.assertEqual((uuid, why), (SID, None))
+        self.assertIn("argv", src)

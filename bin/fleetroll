@@ -166,13 +166,20 @@ def session_uuid(name, pid, agents):
     """
     argv = resume_uuid(pid)
     hit = [a for a in agents or [] if str(a.get("pid")) == str(pid)]
+    # The name is checked BEFORE a source is chosen, not inside the branch that
+    # uses claude's uuid. It was inside it, and so applied only when the entry
+    # happened to carry a `sessionId`: an entry naming this pid something else
+    # with no `sessionId`, or a pid listed twice, fell through to argv and was
+    # used -- the exact outcome the check exists to prevent, reached by the path
+    # it did not cover. The disagreement is what matters, not which source would
+    # have answered.
+    named = {a.get("name") for a in hit}
+    if hit and name not in named:
+        return None, None, (
+            "claude agents names pid %s %s, not %r -- refusing rather than "
+            "resume another session's conversation under this name"
+            % (pid, " and ".join(repr(n) for n in sorted(named, key=str)), name))
     if len(hit) == 1 and hit[0].get("sessionId"):
-        got = hit[0].get("name")
-        if got != name:
-            return None, None, (
-                "claude agents names pid %s %r, not %r -- refusing rather than "
-                "resume another session's conversation under this name"
-                % (pid, got, name))
         sid = hit[0]["sessionId"]
         src = "claude agents, pid %s" % pid
         if argv and argv != sid:

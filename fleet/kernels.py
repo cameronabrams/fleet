@@ -26,12 +26,31 @@ all, the answer is `unknown` and never `current`: a board that cannot see the
 kernels must not report a quiet machine, which is the whole doctrine of
 `docs/checks-that-reassure.md` applied to the one fact here that ends every
 session at once.
+
+UNDER WSL2 NONE OF THAT HOLDS. The kernel is not the distribution's: Windows
+supplies it, from one file on the Windows side that `wsl --update` replaces, and
+the new one is loaded only by `wsl --shutdown` -- a reboot of the distribution
+does not do it. `/lib/modules` holds one empty directory per kernel WSL has ever
+booted, plus the running one's modules mounted in at boot, and no image in any of
+them; so the scan above said `unknown` on every WSL machine, permanently. And a
+`kernel-default` package installed in the distribution would sort above the
+Microsoft release and read as a reboot owed forever, a reboot that cannot clear
+it. So under WSL2 the scan is not run at all, and the comparison is against the
+Windows-side image instead, whose release is read from its x86 boot header: one
+`read` of a few hundred bytes, still no subprocess.
+
+A custom kernel set by `kernel=` in `.wslconfig` is NOT supported: finding that
+file means knowing the Windows user's profile, which takes a call into Windows.
+Such a machine reads as `pending` for as long as it runs the custom kernel, which
+is loud and wrong rather than quiet and wrong, and is the reason it is said here.
 """
 import os
 import re
+import struct
 
 MODULES = "/lib/modules"
 IMAGES = ("vmlinuz", "vmlinux", "Image", "zImage", "bzImage")
+WSL_IMAGE = "/mnt/c/Program Files/WSL/tools/kernel"
 
 
 def running():
@@ -81,7 +100,7 @@ def installed(root=MODULES):
     return out
 
 
-def state(root=MODULES):
+def state(root=MODULES, wsl_image=WSL_IMAGE):
     """`(state, info)` where state is "current", "pending" or "unknown".
 
     * **pending** -- the newest installed kernel is not the running one. `info`
@@ -94,8 +113,14 @@ def state(root=MODULES):
     A running kernel that is not installed at all also reads as **pending**, and
     that is deliberate: it means the running kernel has been removed from under
     the machine, which a reboot is equally the answer to.
+
+    Under WSL2 the comparison is against `wsl_image` instead (see the module
+    docstring), and `info` also carries `remedy`, because the answer there is
+    `wsl --shutdown` and not a reboot.
     """
     now = running()
+    if is_wsl(now):
+        return _wsl_state(now, wsl_image)
     have = installed(root)
     if not have:
         return "unknown", {"running": now,
@@ -103,6 +128,67 @@ def state(root=MODULES):
     newest, since = have[0]
     info = {"running": now, "newest": newest, "since": since,
             "booted": _booted(), "installed": [r for r, _ in have]}
+    return ("current" if newest == now else "pending"), info
+
+
+def is_wsl(release):
+    """Whether `release` is a WSL2 kernel, whose image Windows supplies.
+
+    By the release alone, which every WSL2 kernel Microsoft ships ends in. WSL1
+    has no Linux kernel at all -- its "release" is a Windows build in costume --
+    and is deliberately not matched: comparing it against the WSL2 image would
+    report a restart owed that no restart clears.
+    """
+    return release.endswith("-WSL2")
+
+
+def image_release(path):
+    """The release string an x86 kernel image announces in its boot header, or None.
+
+    The boot protocol puts the magic `HdrS` at 0x202, its version at 0x206, and
+    from version 2.00 a pointer at 0x20E to a NUL-terminated banner whose first
+    word is the release -- the same string `uname -r` will print once it boots.
+    Anything that does not look like that is None, never a guess: an unreadable
+    image must come back `unknown`, not compared as if it said something.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(0x210)
+            if len(head) < 0x210 or head[0x202:0x206] != b"HdrS" \
+                    or struct.unpack_from("<H", head, 0x206)[0] < 0x200:
+                return None
+            # A null pointer needs no guard of its own: it points at 0x200,
+            # the header's own jump instruction, which the release check below
+            # rejects like any other banner that is not a release.
+            fh.seek(struct.unpack_from("<H", head, 0x20E)[0] + 0x200)
+            banner = fh.read(256).split(b"\0")[0]
+    except OSError:
+        return None
+    words = banner.decode("ascii", "replace").split()
+    if not words or not re.fullmatch(r"[\w.+~-]+", words[0]):
+        return None
+    return words[0]
+
+
+def _wsl_state(now, path):
+    """`state()` for WSL2: the running kernel against the Windows-side image.
+
+    `since` is the image's CHANGE time, not its modification time. The file is
+    copied in by the WSL package with its build date preserved as the mtime --
+    on the machine this was written for, built 31 Jul and installed 30 Sep -- so
+    the mtime would overstate the wait by two months.
+    """
+    newest = image_release(path)
+    if newest is None:
+        return "unknown", {"running": now, "wsl": True,
+                           "error": f"WSL kernel image unreadable: {path}"}
+    try:
+        since = os.stat(path).st_ctime
+    except OSError:
+        since = None
+    info = {"running": now, "newest": newest, "since": since,
+            "booted": _booted(), "installed": [newest], "wsl": True,
+            "remedy": "wsl --shutdown"}
     return ("current" if newest == now else "pending"), info
 
 

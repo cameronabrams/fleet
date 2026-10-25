@@ -30,7 +30,41 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Changed
+
+- **`fleetwatch` runs with no cluster configured.** It raised `ConfigError` at
+  import, exit 1, when `fleet.toml` had no `[cluster.<name>]`. Every caller read
+  that as "runtime unknown": `fleetupgrade` (and so `fleetroll`) refused every
+  session on such a machine, and `fleetboard` drew `?` in every work cell. Now no
+  ssh is attempted and the report says there is no cluster work, with the
+  watcher, nudge-delivery and client sections intact. **`--json` gains
+  `cluster_configured`**, and `cluster_ok` is `true` in this case because the
+  empty job list can be trusted. Exit status 0 where it was 1. Several clusters
+  with none named is still an error.
+
 ### Fixed
+
+- **`fleetboard` read `kernel: ?` on every WSL2 machine, permanently.** Windows
+  supplies the WSL2 kernel, so `/lib/modules` holds no image and `fleet.kernels`
+  found nothing to compare. For a release ending in `-WSL2` it now compares the
+  running kernel against the release in the boot header of the Windows-side image
+  that `wsl --update` replaces. When they differ, the header says
+  `(kernel A -> B, waiting 3d; wsl --shutdown)`, because a reboot of the
+  distribution does not load the new kernel. An unreadable image is
+  `kernel: ? (WSL kernel image unreadable)`. `/lib/modules` is no longer read
+  under WSL2, because a distribution kernel package would sort above the
+  Microsoft release and read as a reboot owed for ever. A custom `.wslconfig`
+  kernel is not supported and reads as pending.
+
+- **`fleetboard` showed `?` in every session's work column when no cluster was
+  configured.** The column is now blank, and the stamp reads `context as of …;
+  no [cluster] configured, so no cluster work`. A configured cluster that cannot
+  be read is still `?`, and so is one whose `fleet.toml` cannot be **parsed**:
+  `cluster_configured()` returns `None` there rather than raising. It is re-read
+  on every draw so `--watch` picks up an edit, which is exactly when the file is
+  most likely to be half-written, and the watch loop catches only
+  `KeyboardInterrupt` — `parked` and `updates` already guarded this; it was the
+  third sibling and the one that did not.
 
 - **`fleetroll` refused every session `fleetspawn` had started.** It read the
   session's uuid only from `--resume` in argv, and `fleetspawn` launches with
@@ -39,6 +73,14 @@ entries and makes you confirm the bump against this list.
   refused. argv `--resume` is the fallback; with neither source it refuses as
   before. The plan's `resume` line says which source it used. When the two
   disagree, as after a `/clear`, claude's answer wins and the plan says so.
+
+  The name on that entry must agree with the session being rolled, and that
+  check applies **whichever source supplies the uuid**. It was inside the
+  branch that uses claude's answer, so it fired only when the entry happened
+  to carry a `sessionId`: an entry naming the pid something else without one,
+  or a pid listed twice, fell through to the argv fallback and was used --
+  the wrong conversation under the right label, which is the outcome the
+  check exists to prevent, reached by the path it did not cover.
 
 ### Added
 
