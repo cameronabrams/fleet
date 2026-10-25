@@ -1097,3 +1097,132 @@ class ASupersededUpdateCountIsNotNews(unittest.TestCase):
     def test_one_update_reads_as_one(self):
         out = self.line(dict(self.DOC, total=1), True)
         self.assertIn("1 update was pending", out)
+
+
+class NoClusterConfigured(unittest.TestCase):
+    """A fleet.toml with no `[cluster.<name>]` is a choice, not a failure.
+
+    `fleetwatch` used to crash without one, and the board drew that as `?` in
+    the work column of every session -- "could not tell" about a question whose
+    answer is known: no cluster, so no cluster work. `fleetwatch` now says so
+    itself; the board's part is the stamp, which says why the column is blank."""
+
+    def setUp(self):
+        import re
+        from tests.support import BASE_TOML
+        self.cfg = FakeConfig(toml=re.sub(r"\[cluster\.testcluster\]\n(?:[^\[\n].*\n|\n)*", "",
+                                          BASE_TOML))
+        self.b = load_tool("fleetboard")
+        self.calls = []
+
+    def tearDown(self):
+        self.cfg.close()
+
+    # What `fleetwatch --json` says with no cluster configured.
+    WATCH = {"cluster_ok": True, "cluster_configured": False, "jobs": [],
+             "dead_watchers": [{"session": "alpha", "job": "1"}]}
+
+    def run_json(self, cmd, timeout=120):
+        self.calls.append(os.path.basename(cmd[0]))
+        return self.WATCH if "fleetwatch" in cmd[0] else None
+
+    def draw(self):
+        import io, contextlib
+        panes = {"alpha": {"win": "1", "winname": "w", "pane": "%1",
+                           "quiet": False, "current": False}}
+        with mock.patch.object(self.b, "run_json", self.run_json), \
+             mock.patch.object(self.b, "panes", lambda: panes), \
+             mock.patch.object(self.b, "agents", lambda: {"alpha": {"name": "alpha"}}), \
+             mock.patch.object(self.b.kernels, "state",
+                               lambda *a, **k: ("current", {"running": "7.2.11-1-default"})), \
+             mock.patch.object(self.b.snapshot, "superseded", lambda d, **k: False), \
+             mock.patch.object(self.b.versions, "installed", lambda *a, **k: "2.1.303"), \
+             mock.patch.object(self.b.versions, "target", lambda *a, **k: ("2.1.303", "/v")):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.b.draw(full=True)
+        return buf.getvalue()
+
+    def test_fleetwatch_is_still_asked_and_its_warnings_kept(self):
+        """Skipping it would blank the work column just as well, and silently
+        drop every warning that needs no cluster -- a dead watcher among them."""
+        with mock.patch.object(self.b, "run_json", self.run_json):
+            jobs, notes = self.b.jobs_and_notes()
+        self.assertIn("fleetwatch", self.calls)
+        self.assertEqual(jobs, [], "no cluster declared: no work, not None")
+        self.assertIn("a registered watcher is dead", notes)
+
+    def test_the_work_column_is_blank_and_the_stamp_says_why(self):
+        import re
+        out = re.sub(r"\x1b\[[0-9;]*m", "", self.draw())
+        lines = out.splitlines()
+        col = [l for l in lines if "session" in l and "work" in l][0].index("work")
+        row = [l for l in lines if "alpha" in l][0]
+        self.assertEqual(row[col:].strip(), "", row)
+        self.assertIn("no [cluster] configured, so no cluster work", out)
+        self.assertNotIn("cluster + context as of", out)
+
+    def test_a_cache_from_before_the_field_keeps_the_old_stamp(self):
+        """Written by a board that predates `cluster` in the cache: it says
+        nothing about the cluster, so it must not be read as "none configured"."""
+        lines = self.b.cache_lines({"at": time.time(), "jobs": None, "notes": []},
+                                   full=True, auto=False)
+        self.assertIn("cluster + context as of", lines[0])
+
+    def test_a_cluster_added_under_watch_is_picked_up(self):
+        """Re-read per draw: `--watch` outlives an edit to fleet.toml."""
+        self.assertFalse(self.b.cluster_configured())
+        with open(os.path.join(self.cfg.config, "fleet.toml"), "a") as f:
+            f.write('\n[cluster.testcluster]\nssh_host = "nowhere.invalid"\n'
+                    'user = "tester"\njob_id_re = "[0-9]+"\n')
+        self.assertTrue(self.b.cluster_configured())
+
+
+class AConfigEditedMidWatchMustNotEndTheBoard(unittest.TestCase):
+    """`cluster_configured` is re-read on every draw so that `--watch` picks up
+    an edit — which is exactly when the file is most likely to be half-written.
+
+    `fc.load(required=False)` returns `{}` for a MISSING file but RAISES on a
+    malformed one, and the watch loop catches only KeyboardInterrupt. `parked`
+    returns None for this reason and `updates` reports that it could not read
+    the configuration; this was the third sibling and the one without a guard.
+    """
+
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.b = load_tool("fleetboard")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def break_config(self):
+        with open(os.path.join(self.cfg.config, "fleet.toml"), "w") as f:
+            f.write("[cluster.x\nthis = is not ] toml\n")
+
+    def test_a_malformed_config_is_none_not_an_exception(self):
+        self.break_config()
+        self.assertIsNone(self.b.cluster_configured())
+
+    def test_a_declared_cluster_is_still_true(self):
+        self.assertIs(self.b.cluster_configured(), True)
+
+    def test_a_missing_file_is_false_not_unknown(self):
+        """A configuration that is not there declares no cluster, which is an
+        answer. Only one that cannot be PARSED is unknown."""
+        os.unlink(os.path.join(self.cfg.config, "fleet.toml"))
+        self.assertIs(self.b.cluster_configured(), False)
+
+    def test_unknown_keeps_the_old_stamp_wording(self):
+        """`is False`, not falsy — already written that way, and this pins it:
+        None must not claim "no [cluster] configured, so no cluster work"."""
+        line = self.b.cache_lines({"at": 0, "cluster": None}, True, False)[0]
+        self.assertIn("cluster + context", line)
+        self.assertNotIn("no [cluster] configured", line)
+
+    def test_refreshing_the_cache_survives_a_malformed_config(self):
+        """The path that actually runs during `--watch`."""
+        self.break_config()
+        with mock.patch.object(self.b, "jobs_and_notes", lambda: (None, [])), \
+             mock.patch.object(self.b, "context", lambda: None):
+            c = self.b.refresh_cache()
+        self.assertIsNone(c["cluster"])

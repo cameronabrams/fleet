@@ -30,6 +30,18 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Changed
+
+- **`fleetwatch` runs with no cluster configured.** It raised `ConfigError` at
+  import, exit 1, when `fleet.toml` had no `[cluster.<name>]`. Every caller read
+  that as "runtime unknown": `fleetupgrade` (and so `fleetroll`) refused every
+  session on such a machine, and `fleetboard` drew `?` in every work cell. Now no
+  ssh is attempted and the report says there is no cluster work, with the
+  watcher, nudge-delivery and client sections intact. **`--json` gains
+  `cluster_configured`**, and `cluster_ok` is `true` in this case because the
+  empty job list can be trusted. Exit status 0 where it was 1. Several clusters
+  with none named is still an error.
+
 ### Fixed
 
 - **`fleetboard` read `kernel: ?` on every WSL2 machine, permanently.** Windows
@@ -43,6 +55,16 @@ entries and makes you confirm the bump against this list.
   under WSL2, because a distribution kernel package would sort above the
   Microsoft release and read as a reboot owed for ever. A custom `.wslconfig`
   kernel is not supported and reads as pending.
+
+- **`fleetboard` showed `?` in every session's work column when no cluster was
+  configured.** The column is now blank, and the stamp reads `context as of …;
+  no [cluster] configured, so no cluster work`. A configured cluster that cannot
+  be read is still `?`, and so is one whose `fleet.toml` cannot be **parsed**:
+  `cluster_configured()` returns `None` there rather than raising. It is re-read
+  on every draw so `--watch` picks up an edit, which is exactly when the file is
+  most likely to be half-written, and the watch loop catches only
+  `KeyboardInterrupt` — `parked` and `updates` already guarded this; it was the
+  third sibling and the one that did not.
 
 ### Added
 

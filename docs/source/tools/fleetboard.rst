@@ -385,6 +385,22 @@ job that **ended badly** reached the screen.
 would mean "asked, and there is nothing". Only the first is true when a cache is
 absent or will not parse, and only the first draws ``?``.
 
+**No cluster configured is no work, not unknown work.** That is the same rule
+applied the other way. With no ``[cluster.<name>]`` in ``fleet.toml``, the answer
+to "what is running on the cluster" is known: nothing. ``fleetwatch`` used to crash
+without a cluster, and the board drew that as ``?`` in every row. ``fleetwatch`` now
+answers for itself (see :doc:`fleetwatch`). The board still asks it, because its
+watcher and delivery warnings need no cluster. The work column is blank, and the
+stamp says why:
+
+.. code-block:: text
+
+   context as of 2m ago; no [cluster] configured, so no cluster work
+
+``fleetretire`` already treated this configuration as a choice rather than a
+failure. The configuration is read again on every draw, so a ``--watch`` board
+picks up a cluster added while it runs.
+
 Under ``--watch`` the slow sources are re-run whenever the cache is older than ten
 minutes. Without that, a watched board shows one measurement forever and merely
 ages it in the footer — which is how it survived its own data loss for an hour on

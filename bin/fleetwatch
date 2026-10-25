@@ -46,9 +46,16 @@ from fleet.transcripts import session_name
 
 CFG     = fc.load()
 OURS    = fc.fleet_name(CFG)   # which fleet this one is; "" before fleetinit has run
-CLUSTER = fc.cluster(CFG)
-JOB_RE  = re.compile(r"\b(" + CLUSTER["job_id_re"] + r")\b")
-HELD    = tuple(CLUSTER.get("held_reasons", ["JobHeldUser", "JobHeldAdmin"]))
+# No `[cluster.<name>]` at all is a configuration, not a failure: a machine with
+# no scheduler has no cluster work, and that is known rather than unknown. It
+# used to raise here, at import, and take the rest of this report down with it --
+# watcher liveness, nudge delivery, attached clients, none of which needs a
+# cluster -- while every consumer read the traceback as "runtime unknown":
+# `fleetupgrade` refused every session and the board drew `?` in every row.
+# Several clusters with none named still raises; that one IS a mistake.
+CLUSTER = fc.cluster(CFG) if CFG.get("cluster") else None
+JOB_RE  = re.compile(r"\b(" + CLUSTER["job_id_re"] + r")\b") if CLUSTER else None
+HELD    = tuple((CLUSTER or {}).get("held_reasons", ["JobHeldUser", "JobHeldAdmin"]))
 
 # WorkDir -> owning session. Explicit rather than heuristic: an unmatched path is
 # reported as UNATTRIBUTED, never guessed. Add rows as campaigns appear.
@@ -81,7 +88,13 @@ def owner_of(workdir):
     return "UNATTRIBUTED"
 
 def live_jobs():
-    """Array-parent job id -> {tasks, states, workdir}. One ssh round trip."""
+    """Array-parent job id -> {tasks, states, workdir}. One ssh round trip.
+
+    With no cluster configured: no jobs, and that answer is GOOD (`ok` True) --
+    there is nothing a query could have found. No ssh is attempted.
+    """
+    if CLUSTER is None:
+        return {}, True, ""
     # `scontrol show reservation` rides the SAME round trip. coord proposed it as
     # "one ssh call on a schedule that already exists"; folding it into the call
     # that is already being made is cheaper still, and it cannot add a failure
@@ -159,7 +172,7 @@ def final_states(jids):
     return res
 
 WATCHDIR = os.path.join(fc.state_dir(CFG), "watchers")
-CLUSTER_NAME = CLUSTER.get("name", "cluster")
+CLUSTER_NAME = (CLUSTER or {}).get("name", "cluster")
 REACHFILE = reach.reach_path(fc.state_dir(CFG))
 RESFILE   = reach.reservations_path(fc.state_dir(CFG))
 
@@ -283,7 +296,7 @@ def polled_jobs(cmdline):
     a job looks watched because somebody merely looked at it.
     Require positive evidence of a POLL LOOP -- a monitor sleeps between polls; a
     transient command does not."""
-    if not re.search(r"\bsleep\s+\d", cmdline):
+    if JOB_RE is None or not re.search(r"\bsleep\s+\d", cmdline):
         return set()
     return set(JOB_RE.findall(cmdline))
 
@@ -657,12 +670,17 @@ def main():
     # Stamped on EVERY run, success or not: only a success moves `last_good`, but
     # `last_checked` moving either way is what distinguishes "down since 08:35"
     # from "nobody has looked since 08:35".
-    reach_entry = reach.record(REACHFILE, CLUSTER_NAME, cluster_ok)
+    # Not stamped at all without a cluster: there is nothing to have reached, and
+    # a `last_good` recorded for a cluster named by default would be invented.
+    reach_entry = (reach.record(REACHFILE, CLUSTER_NAME, cluster_ok)
+                   if CLUSTER else {})
     # None while the cluster is READABLE. The elapsed time since the last good
     # read is ~0 on a successful run, and "down_for: 0.0005" invites a consumer
     # to render "down for 0s" on a cluster that is perfectly fine.
     down = None if cluster_ok else reach.down_for(reach_entry)
     if cluster_ok:
+        # With no cluster this is a no-op: the table is "", which `reach`
+        # refuses to record as an observation.
         # Only when the query worked -- an empty string from a failed ssh is not
         # an observation that the reservation table was empty.
         reach.record_reservations(RESFILE, CLUSTER_NAME, reservations)
@@ -674,7 +692,13 @@ def main():
     # ended. Not-in-squeue alone is not proof: a failed query looks the same.
     # Raised 2026-09-13 by a production session whose watcher exited as designed.
     finished = []
-    if cluster_ok:
+    if CLUSTER is None:
+        # A registration with no cluster to have run its job on. Kept as dead
+        # rather than dropped, because something registered it: that is worth a
+        # look, and sacct is not there to say it finished.
+        for r in dead_reg:
+            r["_why"] = "no cluster configured -- cannot tell dead from finished"
+    elif cluster_ok:
         gone = {str(r.get("job")) for r in dead_reg if str(r.get("job")) not in jobs}
         fs = final_states(gone)
         keep = []
@@ -721,7 +745,12 @@ def main():
     stale, partway = (split_stale(w, by_job, jobs) if cluster_ok else ([], []))
 
     if want_json:
+        # `cluster_ok` is True with no cluster configured: the job list is
+        # empty and that emptiness can be trusted, which is all a consumer
+        # branching on it has ever asked. `cluster_configured` is for one that
+        # wants to say WHY there is no work.
         print(json.dumps({"cluster_ok": cluster_ok,
+                          "cluster_configured": CLUSTER is not None,
                           "cluster_last_good": reach_entry.get("last_good"),
                           "cluster_down_for_s": down,
                           "jobs": rows, "stale_watchers": stale,
@@ -731,7 +760,9 @@ def main():
                           "clients": {"attached": attached, "error": attach_err}},
                          indent=1, default=str)); return
 
-    if not cluster_ok:
+    if CLUSTER is None:
+        print("no [cluster] configured in fleet.toml -- no cluster work to watch.")
+    elif not cluster_ok:
         print("!! CLUSTER QUERY FAILED (ssh %s) -- no job table. This is NOT \"no live"
               " work\";\n   nothing below about live work or watcher coverage can be trusted."
               % CLUSTER["ssh_host"])
