@@ -280,6 +280,36 @@ Unreadable is ``kernel: ?`` in the header, never silence — this is read locall
 so failing means something odd about the machine itself, and omitting it reads
 exactly like a machine with nothing to report.
 
+Under WSL2 the kernel is Windows's, not the distribution's
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Windows supplies a WSL2 machine's kernel from one image,
+``C:\Program Files\WSL\tools\kernel``, which ``wsl --update`` replaces. The new
+kernel loads only after ``wsl --shutdown``; a reboot of the distribution does not
+load it. ``/lib/modules`` holds an empty directory for each kernel WSL has ever
+booted and no image in any of them, so the scan above read ``kernel: ?`` on every
+WSL machine. Worse, a distribution ``kernel-default`` package would sort above the
+Microsoft release and read as a reboot owed for ever.
+
+So for a release ending in ``-WSL2`` the scan is not run. The running kernel is
+compared against the release the Windows image names in its x86 boot header (a
+few hundred bytes read, still no subprocess). When they differ the header names
+the command that clears it:
+
+.. code-block:: text
+
+   REBOOT NEEDED (kernel 6.18.33.2 -> 6.18.40.1, waiting 3d; wsl --shutdown)
+
+The wait is measured from the image's **change** time. The WSL package keeps the
+build date as the modification time, which can be months before the install.
+An unreadable or unrecognised image is
+``kernel: ? (WSL kernel image unreadable)``: ``/mnt/c`` not mounted, WSL installed
+somewhere else, or an ARM64 image, which has no such header.
+
+A custom kernel set with ``kernel=`` in ``.wslconfig`` is **not supported**.
+Finding that file means asking Windows for the user's profile. On such a machine
+the board reads pending for as long as the custom kernel runs: wrong, but loudly.
+
 What scrolls off is what does not change
 ----------------------------------------
 

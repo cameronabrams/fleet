@@ -44,6 +44,18 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **`fleetboard` read `kernel: ?` on every WSL2 machine, permanently.** Windows
+  supplies the WSL2 kernel, so `/lib/modules` holds no image and `fleet.kernels`
+  found nothing to compare. For a release ending in `-WSL2` it now compares the
+  running kernel against the release in the boot header of the Windows-side image
+  that `wsl --update` replaces. When they differ, the header says
+  `(kernel A -> B, waiting 3d; wsl --shutdown)`, because a reboot of the
+  distribution does not load the new kernel. An unreadable image is
+  `kernel: ? (WSL kernel image unreadable)`. `/lib/modules` is no longer read
+  under WSL2, because a distribution kernel package would sort above the
+  Microsoft release and read as a reboot owed for ever. A custom `.wslconfig`
+  kernel is not supported and reads as pending.
+
 - **`fleetboard` showed `?` in every session's work column when no cluster was
   configured.** The column is now blank, and the stamp reads `context as of …;
   no [cluster] configured, so no cluster work`. A configured cluster that cannot
