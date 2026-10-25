@@ -66,6 +66,22 @@ entries and makes you confirm the bump against this list.
   `KeyboardInterrupt` — `parked` and `updates` already guarded this; it was the
   third sibling and the one that did not.
 
+- **`fleetroll` refused every session `fleetspawn` had started.** It read the
+  session's uuid only from `--resume` in argv, and `fleetspawn` launches with
+  `--name X '<prompt>'`. The uuid now comes from `claude agents --json`, matched
+  by pid, and only when that entry carries the same name. A different name is
+  refused. argv `--resume` is the fallback; with neither source it refuses as
+  before. The plan's `resume` line says which source it used. When the two
+  disagree, as after a `/clear`, claude's answer wins and the plan says so.
+
+  The name on that entry must agree with the session being rolled, and that
+  check applies **whichever source supplies the uuid**. It was inside the
+  branch that uses claude's answer, so it fired only when the entry happened
+  to carry a `sessionId`: an entry naming the pid something else without one,
+  or a pid listed twice, fell through to the argv fallback and was used --
+  the wrong conversation under the right label, which is the outcome the
+  check exists to prevent, reached by the path it did not cover.
+
 ### Added
 
 - **`fleetboard` says when the updates document has been overtaken by events.**

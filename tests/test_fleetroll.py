@@ -44,6 +44,7 @@ class Base(unittest.TestCase):
         self.alive_pids = {4242}
         self.version_of = {4242: "2.1.302", 5555: "2.1.304"}
         self.agents = [{"name": "alpha"}]
+        self.argv_uuid = UUID         # what /proc says the claude was --resume'd with
         self.elig = {
             "asking": None, "installed": "2.1.308", "target": "2.1.304",
             "eligible": ["alpha"],
@@ -93,7 +94,7 @@ class Base(unittest.TestCase):
         with mock.patch.object(r, "tmux", side_effect=self.tmux), \
              mock.patch.object(r, "eligibility", side_effect=lambda: self.elig), \
              mock.patch.object(r, "find_pane", side_effect=find_pane), \
-             mock.patch.object(r, "resume_uuid", side_effect=lambda p: UUID), \
+             mock.patch.object(r, "resume_uuid", side_effect=lambda p: self.argv_uuid), \
              mock.patch.object(r, "versioned",
                                side_effect=lambda t: "/vers/%s" % t if t == "2.1.304" else None), \
              mock.patch.object(r, "ancestors", side_effect=lambda p: self.anc), \
@@ -252,3 +253,144 @@ class TheSequence(Base):
         self.assertEqual(code, 0, out)
         self.assertTrue(any("/color" in " ".join(map(str, c)) for c in self.calls),
                         "the color was not re-applied")
+
+
+SID = "bbbbbbbb-0000-4000-8000-000000000002"
+
+
+class WhichConversationItResumes(Base):
+    """`fleetspawn` starts a session as `claude --name X '<prompt>'`, with no
+    `--resume` in argv, and until 2026-10-25 argv was the only place this looked:
+    every session `fleetspawn` had ever made was refused on its first roll.
+    `claude agents --json` pairs each pid with its session id, from claude
+    itself rather than from a transcript guess."""
+
+    def uuid(self, agents, argv=None, name="alpha", pid=4242):
+        with mock.patch.object(self.r, "resume_uuid", side_effect=lambda p: argv):
+            return self.r.session_uuid(name, pid, agents)
+
+    def test_claude_agents_supplies_the_uuid_argv_lacks(self):
+        uuid, src, why = self.uuid([{"pid": 4242, "name": "alpha", "sessionId": SID}])
+        self.assertIsNone(why)
+        self.assertEqual(uuid, SID)
+        self.assertIn("claude agents", src)
+
+    def test_the_pid_is_matched_whatever_its_type(self):
+        """`/proc` gives strings and `claude agents` gives ints."""
+        uuid, _, why = self.uuid([{"pid": 4242, "name": "alpha", "sessionId": SID}],
+                                 pid="4242")
+        self.assertEqual((uuid, why), (SID, None))
+
+    def test_another_name_on_that_pid_is_refused(self):
+        """The wrong conversation under the right label is worse than no roll:
+        every tool downstream would believe the label."""
+        uuid, _, why = self.uuid([{"pid": 4242, "name": "beta", "sessionId": SID}],
+                                 argv=UUID)
+        self.assertIsNone(uuid)
+        self.assertIn("'beta'", why)
+
+    def test_claude_agents_wins_over_a_stale_argv(self):
+        """argv is where the process STARTED; a /clear since then moved it."""
+        uuid, src, why = self.uuid([{"pid": 4242, "name": "alpha", "sessionId": SID}],
+                                   argv=UUID)
+        self.assertEqual(uuid, SID)
+        self.assertIn("superseded", src)
+
+    def test_argv_is_the_fallback_when_claude_agents_cannot_be_read(self):
+        uuid, src, why = self.uuid(None, argv=UUID)
+        self.assertEqual((uuid, src, why), (UUID, "--resume in argv", None))
+
+    def test_argv_is_the_fallback_when_the_pid_is_not_listed(self):
+        uuid, _, why = self.uuid([{"pid": 1, "name": "alpha", "sessionId": SID}],
+                                 argv=UUID)
+        self.assertEqual((uuid, why), (UUID, None))
+
+    def test_neither_source_is_a_refusal_that_says_why(self):
+        for agents, says in ((None, "could not be read"),
+                             ([], "does not list pid 4242"),
+                             ([{"pid": 4242, "name": "alpha", "sessionId": SID}] * 2,
+                              "2 times")):
+            uuid, _, why = self.uuid(agents)
+            self.assertIsNone(uuid)
+            self.assertIn(says, why)
+
+    def test_an_entry_without_a_session_id_is_not_a_uuid(self):
+        uuid, _, why = self.uuid([{"pid": 4242, "name": "alpha"}])
+        self.assertIsNone(uuid)
+        self.assertIsNotNone(why)
+
+    def test_a_spawned_session_rolls_and_resumes_its_own_conversation(self):
+        """End to end through the sequence: no `--resume` in argv, the uuid from
+        `claude agents`, and that uuid in the relaunch command."""
+        self.agents = [{"pid": 4242, "name": "alpha", "sessionId": SID}, {"name": "alpha"}]
+        self.argv_uuid = None
+        code, out = self.run_tool("alpha", "--go")
+        self.assertEqual(code, 0, out)
+        sent = [a for a in self.calls if a[0] == "send-keys" and "--resume" in str(a)]
+        self.assertTrue(sent and SID in str(sent[0]), sent)
+
+    def test_the_plan_says_where_the_uuid_came_from(self):
+        self.agents = [{"pid": 4242, "name": "alpha", "sessionId": SID}]
+        self.argv_uuid = None
+        code, out = self.run_tool("alpha")
+        self.assertEqual(code, 0, out)
+        self.assertIn("%s  (claude agents, pid 4242)" % SID, out)
+
+    def test_a_session_with_neither_is_refused_before_a_key_is_typed(self):
+        self.argv_uuid = None
+        code, out = self.run_tool("alpha", "--go")
+        self.assertEqual(code, 2, out)
+        self.assertIn("does not list pid 4242", out)
+        self.assertFalse([a for a in self.calls if a[0] == "send-keys"])
+
+
+class TheNameMustAgreeWhicheverSourceAnswers(Base):
+    """The name check was inside the branch that uses claude's uuid, so it
+    applied only when the entry happened to carry a `sessionId`.
+
+    An entry naming this pid something else with NO `sessionId`, or a pid listed
+    twice, fell through to the argv fallback and was used — the exact outcome the
+    check exists to prevent, reached by the path it did not cover. The
+    disagreement is what matters, not which source would have answered it.
+    """
+
+    def uuid(self, agents, argv=None, name="alpha", pid=4242):
+        with mock.patch.object(self.r, "resume_uuid", side_effect=lambda p: argv):
+            return self.r.session_uuid(name, pid, agents)
+
+    def test_a_disagreeing_name_with_no_session_id_is_still_refused(self):
+        uuid, _, why = self.uuid([{"pid": 4242, "name": "beta"}], argv=SID)
+        self.assertIsNone(uuid, "argv must not rescue a name disagreement")
+        self.assertIn("not 'alpha'", why)
+
+    def test_a_pid_listed_twice_under_another_name_is_refused(self):
+        uuid, _, why = self.uuid([{"pid": 4242, "name": "beta"},
+                                  {"pid": 4242, "name": "beta"}], argv=SID)
+        self.assertIsNone(uuid)
+        self.assertIn("beta", why)
+
+    def test_the_refusal_names_every_name_claude_gave(self):
+        _, _, why = self.uuid([{"pid": 4242, "name": "beta"},
+                               {"pid": 4242, "name": "gamma"}], argv=SID)
+        self.assertIn("'beta'", why)
+        self.assertIn("'gamma'", why)
+
+    def test_a_pid_claude_does_not_list_still_falls_back_to_argv(self):
+        """No entry is no disagreement. This is the ordinary pre-2026-10-25
+        path and must keep working."""
+        uuid, src, why = self.uuid([{"pid": 999, "name": "other"}], argv=SID)
+        self.assertEqual((uuid, why), (SID, None))
+        self.assertIn("argv", src)
+
+    def test_an_unreadable_agents_list_still_falls_back_to_argv(self):
+        uuid, _, why = self.uuid(None, argv=SID)
+        self.assertEqual((uuid, why), (SID, None))
+
+    def test_a_pid_listed_twice_under_the_RIGHT_name_still_uses_argv(self):
+        """Ambiguous listing, no disagreement: argv is unambiguous evidence of
+        what the process was launched with, so it is still allowed to answer."""
+        uuid, src, why = self.uuid([{"pid": 4242, "name": "alpha", "sessionId": SID},
+                                    {"pid": 4242, "name": "alpha", "sessionId": SID}],
+                                   argv=SID)
+        self.assertEqual((uuid, why), (SID, None))
+        self.assertIn("argv", src)
