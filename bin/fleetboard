@@ -140,6 +140,11 @@ def agents():
     items = d if isinstance(d, list) else d.get("agents", [])
     return {a["name"]: a for a in items if a.get("name")}
 
+def cluster_configured():
+    """Whether fleet.toml declares any `[cluster.<name>]`. Re-read on every call,
+    like `stopped`, because `--watch` outlives an edit to the file."""
+    return bool(fc.load(required=False).get("cluster"))
+
 def jobs_and_notes():
     """(jobs or None, [notes]) from `fleetwatch --json`.
 
@@ -150,6 +155,13 @@ def jobs_and_notes():
     which the board drew as a blank work column for every session. An unreachable
     cluster rendered as a calm fleet. `cluster_ok` is a field; a banner is not.
     """
+    if not cluster_configured():
+        # Nothing to ask, so nothing is unknown: there is no work on a cluster
+        # that was never declared. Not a call that fails -- `fleetwatch` cannot
+        # start without a cluster, and its traceback read as `?` in every row,
+        # which says "could not tell" about a question with a known answer.
+        # `fleetretire` already treats this case as a choice, not a failure.
+        return [], []
     d = run_json([os.path.join(BIN, "fleetwatch"), "--json"])
     if d is None:
         return None, []
@@ -200,7 +212,8 @@ def context():
 
 def refresh_cache():
     jobs, notes = jobs_and_notes()
-    c = {"at": time.time(), "jobs": jobs, "ctx": context(), "notes": notes}
+    c = {"at": time.time(), "jobs": jobs, "ctx": context(), "notes": notes,
+         "cluster": cluster_configured()}
     try:
         os.makedirs(os.path.dirname(CACHE), exist_ok=True)
         with open(CACHE,"w") as fh: json.dump(c, fh)
@@ -419,7 +432,13 @@ def cache_lines(cache, full, auto):
     """
     if not cache:
         return [f"  {C['dim']}no cluster/context data yet -- fleetboard --full{C['r']}"]
-    stamp = f"{C['dim']}cluster + context as of {age(cache['at'])} ago"
+    # `is False`, not falsy: a cache written before the field existed says
+    # nothing about the cluster either way, and keeps the old wording.
+    if cache.get("cluster") is False:
+        stamp = (f"{C['dim']}context as of {age(cache['at'])} ago"
+                 "; no [cluster] configured, work not checked")
+    else:
+        stamp = f"{C['dim']}cluster + context as of {age(cache['at'])} ago"
     if not full and not auto:
         stamp += "; fleetboard --full to refresh"
     out = ["  " + stamp + C['r']]

@@ -30,6 +30,17 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`fleetboard` showed `?` in every session's work column when no cluster was
+  configured.** `fleetwatch` cannot start without a `[cluster.<name>]`, and the
+  board drew its failure as unknown work. With no cluster declared there is
+  nothing to ask, so the board no longer runs `fleetwatch`. The work column is
+  blank and the stamp reads `context as of …; no [cluster] configured, work not
+  checked`. A configured cluster that cannot be read is still `?`. `fleetwatch`
+  itself still requires a cluster, so its watcher and nudge-delivery notes stay
+  unavailable on such a machine.
+
 ### Added
 
 - **`fleetboard` says when the updates document has been overtaken by events.**

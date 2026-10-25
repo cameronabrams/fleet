@@ -1076,3 +1076,78 @@ class ASupersededUpdateCountIsNotNews(unittest.TestCase):
     def test_one_update_reads_as_one(self):
         out = self.line(dict(self.DOC, total=1), True)
         self.assertIn("1 update was pending", out)
+
+
+class NoClusterConfigured(unittest.TestCase):
+    """A fleet.toml with no `[cluster.<name>]` is a choice, not a failure.
+
+    `fleetwatch` cannot start without one, and the board drew its traceback as
+    `?` in the work column of every session -- "could not tell" about a question
+    whose answer is known: no cluster, so no cluster work. `fleetretire` already
+    treated the same configuration as a choice."""
+
+    def setUp(self):
+        import re
+        from tests.support import BASE_TOML
+        self.cfg = FakeConfig(toml=re.sub(r"\[cluster\.testcluster\]\n(?:[^\[\n].*\n|\n)*", "",
+                                          BASE_TOML))
+        self.b = load_tool("fleetboard")
+        self.calls = []
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def run_json(self, cmd, timeout=120):
+        self.calls.append(os.path.basename(cmd[0]))
+        return None
+
+    def draw(self):
+        import io, contextlib
+        panes = {"alpha": {"win": "1", "winname": "w", "pane": "%1",
+                           "quiet": False, "current": False}}
+        with mock.patch.object(self.b, "run_json", self.run_json), \
+             mock.patch.object(self.b, "panes", lambda: panes), \
+             mock.patch.object(self.b, "agents", lambda: {"alpha": {"name": "alpha"}}), \
+             mock.patch.object(self.b.kernels, "state",
+                               lambda *a, **k: ("current", {"running": "7.2.11-1-default"})), \
+             mock.patch.object(self.b.snapshot, "superseded", lambda d, **k: False), \
+             mock.patch.object(self.b.versions, "installed", lambda *a, **k: "2.1.303"), \
+             mock.patch.object(self.b.versions, "target", lambda *a, **k: ("2.1.303", "/v")):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.b.draw(full=True)
+        return buf.getvalue()
+
+    def test_no_cluster_is_no_work_not_unknown_work(self):
+        with mock.patch.object(self.b, "run_json", self.run_json):
+            jobs, notes = self.b.jobs_and_notes()
+        self.assertEqual(jobs, [], "no cluster declared: no work, not None")
+        self.assertEqual(notes, [])
+        self.assertNotIn("fleetwatch", self.calls,
+                         "fleetwatch cannot start without a cluster; do not ask it")
+
+    def test_the_work_column_is_blank_and_the_stamp_says_why(self):
+        import re
+        out = re.sub(r"\x1b\[[0-9;]*m", "", self.draw())
+        lines = out.splitlines()
+        col = [l for l in lines if "session" in l and "work" in l][0].index("work")
+        row = [l for l in lines if "alpha" in l][0]
+        self.assertEqual(row[col:].strip(), "", row)
+        self.assertIn("no [cluster] configured, work not checked", out)
+        self.assertNotIn("cluster + context as of", out)
+
+    def test_a_cache_from_before_the_field_keeps_the_old_stamp(self):
+        """Written by a board that predates `cluster` in the cache: it says
+        nothing about the cluster, so it must not be read as "none configured"."""
+        lines = self.b.cache_lines({"at": time.time(), "jobs": None, "notes": []},
+                                   full=True, auto=False)
+        self.assertIn("cluster + context as of", lines[0])
+
+    def test_a_configured_cluster_still_asks_fleetwatch(self):
+        with open(os.path.join(self.cfg.config, "fleet.toml"), "a") as f:
+            f.write('\n[cluster.testcluster]\nssh_host = "nowhere.invalid"\n'
+                    'user = "tester"\njob_id_re = "[0-9]+"\n')
+        with mock.patch.object(self.b, "run_json", self.run_json):
+            jobs, _ = self.b.jobs_and_notes()
+        self.assertIn("fleetwatch", self.calls)
+        self.assertIsNone(jobs, "an unreadable fleetwatch is still unknown")
