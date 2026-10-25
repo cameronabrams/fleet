@@ -41,6 +41,15 @@ entries and makes you confirm the bump against this list.
   itself still requires a cluster, so its watcher and nudge-delivery notes stay
   unavailable on such a machine.
 
+  A configuration that cannot be **parsed** is a third state and reads as `?`
+  too. `fc.load(required=False)` returns `{}` for a missing file but raises on a
+  malformed one, and this is re-read on every draw so that `--watch` picks up an
+  edit — so a human mid-edit would otherwise have taken the board down, the
+  watch loop catching only `KeyboardInterrupt`. `cluster_configured()` returns
+  `True`/`False`/`None`, like `parked` before it: two answers cannot carry three
+  states, and an unreadable configuration is not a decision to declare no
+  cluster.
+
 ### Added
 
 - **`fleetboard` says when the updates document has been overtaken by events.**

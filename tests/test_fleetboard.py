@@ -1151,3 +1151,57 @@ class NoClusterConfigured(unittest.TestCase):
             jobs, _ = self.b.jobs_and_notes()
         self.assertIn("fleetwatch", self.calls)
         self.assertIsNone(jobs, "an unreadable fleetwatch is still unknown")
+
+
+class AnUnreadableConfigIsNotAnUndeclaredCluster(unittest.TestCase):
+    """The third state `cluster_configured` was missing.
+
+    `fc.load(required=False)` returns `{}` for a MISSING file but RAISES on a
+    malformed one, and this is re-read on every draw precisely so that `--watch`
+    picks up an edit. So a human mid-edit took the whole board down: the watch
+    loop catches only KeyboardInterrupt.
+
+    Two answers cannot carry three states. `parked` returns None for this reason
+    and `updates` says "the fleet configuration could not be read"; a bool made
+    an unreadable configuration indistinguishable from a deliberate decision not
+    to declare a cluster, which is the distinction this whole change draws.
+    """
+
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.b = load_tool("fleetboard")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def break_config(self):
+        with open(os.path.join(self.cfg.config, "fleet.toml"), "w") as f:
+            f.write("[cluster.x\nthis = is not ] toml\n")
+
+    def test_a_malformed_config_does_not_raise(self):
+        """It is read on every draw, and the watch loop catches only
+        KeyboardInterrupt -- so raising here ends the board."""
+        self.break_config()
+        self.assertIsNone(self.b.cluster_configured())
+
+    def test_it_reads_as_unknown_work_not_as_no_work(self):
+        self.break_config()
+        with mock.patch.object(self.b, "run_json", lambda *a, **k: None):
+            jobs, notes = self.b.jobs_and_notes()
+        self.assertIsNone(jobs, "unreadable config must draw ? , not a blank column")
+        self.assertTrue(any("could not be read" in n for n in notes))
+
+    def test_a_declared_cluster_is_still_true(self):
+        self.assertIs(self.b.cluster_configured(), True)
+
+    def test_a_missing_file_is_false_not_unknown(self):
+        """A configuration that is not there declares no cluster, which is an
+        answer. Only one that cannot be PARSED is unknown."""
+        os.unlink(os.path.join(self.cfg.config, "fleet.toml"))
+        self.assertIs(self.b.cluster_configured(), False)
+
+    def test_the_cache_keeps_the_old_wording_when_it_could_not_tell(self):
+        """`is False`, not falsy: None must not claim "no [cluster] configured"."""
+        line = self.b.cache_lines({"at": 0, "cluster": None}, True, False)[0]
+        self.assertIn("cluster + context", line)
+        self.assertNotIn("no [cluster] configured", line)
