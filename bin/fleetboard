@@ -140,6 +140,15 @@ def agents():
     items = d if isinstance(d, list) else d.get("agents", [])
     return {a["name"]: a for a in items if a.get("name")}
 
+def cluster_configured():
+    """Whether fleet.toml declares any `[cluster.<name>]`. Re-read on every call,
+    like `stopped`, because `--watch` outlives an edit to the file.
+
+    For the STAMP only. The work itself still comes from `fleetwatch`, which
+    answers "no cluster, so no work" on its own -- and asking it anyway keeps
+    the watcher and delivery warnings, which need no cluster at all."""
+    return bool(fc.load(required=False).get("cluster"))
+
 def jobs_and_notes():
     """(jobs or None, [notes]) from `fleetwatch --json`.
 
@@ -200,7 +209,8 @@ def context():
 
 def refresh_cache():
     jobs, notes = jobs_and_notes()
-    c = {"at": time.time(), "jobs": jobs, "ctx": context(), "notes": notes}
+    c = {"at": time.time(), "jobs": jobs, "ctx": context(), "notes": notes,
+         "cluster": cluster_configured()}
     try:
         os.makedirs(os.path.dirname(CACHE), exist_ok=True)
         with open(CACHE,"w") as fh: json.dump(c, fh)
@@ -419,7 +429,13 @@ def cache_lines(cache, full, auto):
     """
     if not cache:
         return [f"  {C['dim']}no cluster/context data yet -- fleetboard --full{C['r']}"]
-    stamp = f"{C['dim']}cluster + context as of {age(cache['at'])} ago"
+    # `is False`, not falsy: a cache written before the field existed says
+    # nothing about the cluster either way, and keeps the old wording.
+    if cache.get("cluster") is False:
+        stamp = (f"{C['dim']}context as of {age(cache['at'])} ago"
+                 "; no [cluster] configured, so no cluster work")
+    else:
+        stamp = f"{C['dim']}cluster + context as of {age(cache['at'])} ago"
     if not full and not auto:
         stamp += "; fleetboard --full to refresh"
     out = ["  " + stamp + C['r']]

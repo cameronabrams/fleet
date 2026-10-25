@@ -723,3 +723,94 @@ class TheOutageLineReachesTheReport(Base):
         self.report("--WD--\n--RES--\nReservationName=half Flags=MAI")   # cut off
         self.assertEqual(open(self.w.RESFILE).read(), before,
                          "a truncated read is not an observation")
+
+
+class NoClusterConfigured(unittest.TestCase):
+    """No `[cluster.<name>]` is a configuration, not a failure.
+
+    It raised at import until 2026-10-25, taking the whole report with it --
+    watcher liveness, nudge delivery, attached clients, none of which needs a
+    cluster. Every consumer read the traceback as "runtime unknown":
+    `fleetupgrade` refused every session on such a machine, and so did the
+    `fleetroll` that asks it."""
+
+    def setUp(self):
+        from tests.support import BASE_TOML
+        self.cfg = FakeConfig(toml=re.sub(
+            r"\[cluster\.testcluster\]\n(?:[^\[\n].*\n|\n)*", "", BASE_TOML))
+        self.w = load_tool("fleetwatch")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def no_ssh(self, *a, **k):
+        raise AssertionError("no cluster configured, yet something ran: %r" % (a,))
+
+    def report(self, *args, registered=({}, [], {})):
+        buf = io.StringIO()
+        with mock.patch.object(self.w, "sh", self.no_ssh), \
+             mock.patch.object(self.w, "known_sessions", return_value=set()), \
+             mock.patch.object(self.w, "watchers", return_value={}), \
+             mock.patch.object(self.w, "registered", return_value=registered), \
+             mock.patch.object(self.w, "nudge_holes", return_value=NO_HOLES), \
+             mock.patch.object(self.w, "clients", return_value=([], None)), \
+             mock.patch.object(self.w.sys, "argv", ["fleetwatch", *args]), \
+             contextlib.redirect_stdout(buf):
+            self.w.main()
+        return buf.getvalue()
+
+    def test_no_jobs_is_a_good_answer_and_asks_nobody(self):
+        with mock.patch.object(self.w, "sh", self.no_ssh):
+            self.assertEqual(self.w.live_jobs(), ({}, True, ""))
+
+    def test_json_says_the_empty_job_list_can_be_trusted_and_why(self):
+        """`cluster_ok` is what `fleetupgrade`, `fleetretire` and the board
+        branch on, and the job list behind it is truthfully empty."""
+        d = json.loads(self.report("--json"))
+        self.assertTrue(d["cluster_ok"])
+        self.assertFalse(d["cluster_configured"])
+        self.assertEqual(d["jobs"], [])
+        self.assertIsNone(d["cluster_down_for_s"])
+        self.assertIn("delivery", d, "the local half of the report still runs")
+
+    def test_fleetupgrade_reads_it_as_no_runtime_not_unknown(self):
+        """The refusal that started this, checked at the seam rather than by
+        trusting the field name: `runtime_owners` None is the refusal."""
+        u = load_tool("fleetupgrade")
+        self.assertEqual(u.runtime_owners(json.loads(self.report("--json"))), set())
+
+    def test_the_report_says_there_is_no_cluster_rather_than_failure(self):
+        out = self.report()
+        self.assertIn("no [cluster] configured", out)
+        self.assertNotIn("CLUSTER QUERY FAILED", out)
+
+    def test_no_reachability_is_recorded_for_a_cluster_that_does_not_exist(self):
+        self.report("--json")
+        self.assertFalse(os.path.exists(self.w.REACHFILE))
+        self.assertFalse(os.path.exists(self.w.RESFILE))
+
+    def test_a_dead_registration_is_kept_not_called_finished(self):
+        dead = [{"session": "alpha", "job": "123456", "pid": 1}]
+        d = json.loads(self.report("--json", registered=({}, dead, {})))
+        self.assertEqual(d["finished_watchers"], [])
+        self.assertEqual(len(d["dead_watchers"]), 1)
+        self.assertIn("no cluster configured", d["dead_watchers"][0]["_why"])
+
+    def test_no_job_ids_are_read_out_of_command_lines(self):
+        self.assertEqual(self.w.polled_jobs("while sleep 60; do sacct -j 123456; done"),
+                         set())
+
+
+class AConfiguredClusterSaysSo(Base):
+    def test_cluster_configured_is_true(self):
+        buf = io.StringIO()
+        with mock.patch.object(self.w, "sh", return_value="--WD--\n--END--\n"), \
+             mock.patch.object(self.w, "known_sessions", return_value=set()), \
+             mock.patch.object(self.w, "watchers", return_value={}), \
+             mock.patch.object(self.w, "registered", return_value=({}, [], {})), \
+             mock.patch.object(self.w, "nudge_holes", return_value=NO_HOLES), \
+             mock.patch.object(self.w, "clients", return_value=([], None)), \
+             mock.patch.object(self.w.sys, "argv", ["fleetwatch", "--json"]), \
+             contextlib.redirect_stdout(buf):
+            self.w.main()
+        self.assertTrue(json.loads(buf.getvalue())["cluster_configured"])

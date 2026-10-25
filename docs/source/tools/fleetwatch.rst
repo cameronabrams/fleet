@@ -197,8 +197,9 @@ produced by failing.
 ``--json``
 ----------
 
-Two tools in this repository read this output — :doc:`fleetretire`, before it
-stops a session, and :doc:`fleetboard` — so its shape is a public interface, and
+Three tools in this repository read this output — :doc:`fleetretire`, before it
+stops a session, :doc:`fleetboard`, and :doc:`fleetupgrade`, which refuses to restart
+a session whose runtime it cannot see — so its shape is a public interface, and
 this repository's rule makes "the shape of its ``--json``" part of the versioned
 surface. It is written down here so that rule can be applied.
 
@@ -209,7 +210,12 @@ Top-level keys:
 
    * - ``cluster_ok``
      - **false when the cluster query failed.** Everything else about live work is
-       then meaningless, not empty. Read this first.
+       then meaningless, not empty. Read this first. **True** with no cluster
+       configured: the job list is then empty and that emptiness can be trusted.
+   * - ``cluster_configured``
+     - false when ``fleet.toml`` declares no ``[cluster.<name>]``. For a caller
+       that wants to say *why* there is no work; ``cluster_ok`` alone is enough to
+       decide whether the job list can be believed.
    * - ``jobs``
      - live jobs: ``job``, ``tasks``, ``states``, ``workdir``, ``owner``,
        ``reasons``, ``held``, ``watched_by`` (a list — empty means nobody)
@@ -241,6 +247,24 @@ command prints a banner and **exits 0** when its ssh query fails, so a caller
 reading the display table instead finds no job rows and concludes there is no
 work. :doc:`fleetboard` did exactly that until 2026-10-04 and drew an unreachable
 cluster as a calm fleet.
+
+No cluster configured
+`````````````````````
+
+A machine with no scheduler declares no ``[cluster.<name>]``, and then the answer
+to "what is running on the cluster" is known: nothing. Until 2026-10-25 this tool
+raised at import instead, and took the rest of the report with it — watcher
+liveness, nudge delivery and attached clients, none of which needs a cluster.
+Every caller read the traceback as *unknown*: :doc:`fleetupgrade` refused every
+session on the machine ("fleetwatch could not read the cluster, so runtime is
+unknown"), and the board drew ``?`` in every work cell.
+
+Now no ssh is attempted, ``jobs`` is empty, ``cluster_ok`` is true,
+``cluster_configured`` is false, and nothing is recorded as the cluster's
+reachability. The display says ``no [cluster] configured in fleet.toml -- no
+cluster work to watch.`` A registered watcher on such a machine stays in
+``dead_watchers``, never ``finished_watchers``: there is no sacct to prove its
+job ended. Several clusters with none named is still an error.
 
 Why some keys begin with an underscore
 ``````````````````````````````````````
