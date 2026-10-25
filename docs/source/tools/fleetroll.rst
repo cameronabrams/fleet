@@ -45,11 +45,36 @@ because the gate could not be consulted is a roll with no gate.
 
 It also refuses when the name is not live or resolves to more than one process,
 when the session is **the one asking** (tested on process ancestry, not on the
-name — a name can be changed), when it is already on the target, when there is no
-``--resume`` uuid in its argv, when no binary for the target is in the version
-store, and when the pane is busy or showing a dialog. **It never answers a
-dialog**: a trust prompt, the background-work dialog and the resume-mode prompt
-each mean a human has been asked something.
+name — a name can be changed), when it is already on the target, when it cannot
+tell which conversation to resume (below), when no binary for the target is in
+the version store, and when the pane is busy or showing a dialog. **It never
+answers a dialog**: a trust prompt, the background-work dialog and the
+resume-mode prompt each mean a human has been asked something.
+
+Which conversation it resumes
+-----------------------------
+
+The relaunch is ``claude --name NAME --resume UUID``, and the uuid comes from
+**claude's own answer first**: the ``claude agents --json`` entry whose pid is the
+session's. That entry must carry the **same name**. A pid that claude reports
+under another name is refused, because relaunching onto another session's
+conversation would put the wrong session in the pane under the right label.
+
+``--resume`` in the process's argv is the fallback, for a claude whose ``agents``
+command cannot be read or does not list the pid. When the two disagree, claude's
+answer wins: argv is where the process started, and a ``/clear`` since then moves
+the session to a new transcript. That claude reports the post-``/clear`` id is
+expected but not yet observed, so the plan names the superseded argv uuid and the
+first such roll can be checked by eye. Neither source is a refusal, never a guess. The
+plan prints which source it used:
+
+.. code-block:: text
+
+   resume  bbbbbbbb-0000-4000-8000-000000000002  (claude agents, pid 4242)
+
+Until 2026-10-25 argv was the only source. ``fleetspawn`` starts a session as
+``claude --name NAME '<prompt>'``, with no ``--resume``, so every session it had
+ever made was refused on its first roll.
 
 The sequence
 ------------

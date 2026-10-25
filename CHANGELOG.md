@@ -30,6 +30,16 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`fleetroll` refused every session `fleetspawn` had started.** It read the
+  session's uuid only from `--resume` in argv, and `fleetspawn` launches with
+  `--name X '<prompt>'`. The uuid now comes from `claude agents --json`, matched
+  by pid, and only when that entry carries the same name. A different name is
+  refused. argv `--resume` is the fallback; with neither source it refuses as
+  before. The plan's `resume` line says which source it used. When the two
+  disagree, as after a `/clear`, claude's answer wins and the plan says so.
+
 ### Added
 
 - **`fleetboard` says when the updates document has been overtaken by events.**

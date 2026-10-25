@@ -140,6 +140,57 @@ def resume_uuid(pid):
     return None
 
 
+def session_uuid(name, pid, agents):
+    """`(uuid, source, problem)` for the conversation `pid` is in; `problem` is
+    None on success, and then `uuid` is set.
+
+    **Claude's own answer first.** `claude agents --json` pairs each live pid with
+    the session id it is writing to, so a session `fleetspawn` started -- whose
+    argv is `--name X '<prompt>'`, with no `--resume` in it -- has a uuid after
+    all, from the one source that is not an inference. Until 2026-10-25 only argv
+    was read, and every session `fleetspawn` had ever made was refused on its
+    first roll. It should also be the CURRENT id: argv is where the process
+    started, and a `/clear` since then moves the session to a new transcript
+    that argv knows nothing about. That claude reports the post-`/clear` id is
+    expected but NOT yet observed (2026-10-25); when the two disagree the plan
+    says so, so the first such roll can be checked by eye.
+
+    **The name must agree.** The entry is found by pid, then checked against
+    `name`. A pid claude reports under another name is refused rather than used:
+    relaunching `name` with `--resume` on another session's conversation would
+    put the wrong session in the pane under the right label, which every tool
+    downstream would then believe.
+
+    argv `--resume` is the fallback, for a claude whose `agents` command cannot
+    be read or does not list the pid. Neither is a refusal, never a guess.
+    """
+    argv = resume_uuid(pid)
+    hit = [a for a in agents or [] if str(a.get("pid")) == str(pid)]
+    if len(hit) == 1 and hit[0].get("sessionId"):
+        got = hit[0].get("name")
+        if got != name:
+            return None, None, (
+                "claude agents names pid %s %r, not %r -- refusing rather than "
+                "resume another session's conversation under this name"
+                % (pid, got, name))
+        sid = hit[0]["sessionId"]
+        src = "claude agents, pid %s" % pid
+        if argv and argv != sid:
+            src += "; argv --resume %s superseded (a /clear since launch)" % argv[:8]
+        return sid, src, None
+    if argv:
+        return argv, "--resume in argv", None
+    if agents is None:
+        why = "claude agents could not be read"
+    elif len(hit) > 1:
+        why = "claude agents lists pid %s %d times" % (pid, len(hit))
+    else:
+        why = "claude agents does not list pid %s" % pid
+    return None, None, ("%s has no session uuid: %s, and its argv has no --resume, "
+                        "so it cannot be relaunched into its own conversation"
+                        % (name, why))
+
+
 def preflight(name, pane, pid, elig, target, to_override):
     """Every reason not to start, named. Empty means go.
 
@@ -324,10 +375,9 @@ def main():
         return 2
 
     problems = preflight(a.name, pane, pid, elig, target, bool(a.to))
-    uuid = resume_uuid(pid)
-    if not uuid:
-        problems.append("%s has no --resume uuid in its argv, so it cannot be "
-                        "relaunched into its own conversation" % a.name)
+    uuid, uuid_src, why = session_uuid(a.name, pid, list_agents())
+    if why:
+        problems.append(why)
     if target and not versioned(target):
         problems.append("no binary for %s in the version store" % target)
 
@@ -335,7 +385,7 @@ def main():
     print("  now     %s" % ((elig or {}).get("sessions") and next(
         (s["version"] for s in elig["sessions"] if s["name"] == a.name), "?") or "?"))
     print("  target  %s%s" % (target or "NONE", "  (--to)" if a.to else ""))
-    print("  resume  %s" % (uuid or "?"))
+    print("  resume  %s%s" % (uuid or "?", "  (%s)" % uuid_src if uuid_src else ""))
     if problems:
         print()
         for p in problems:
