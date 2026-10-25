@@ -539,12 +539,21 @@ def draw(full=False, auto=False, show_parked=False):
                 # duration reconstructs an epoch in 1970 and prints the wait as
                 # half a million hours. `since` is already an epoch.
                 waited = ", waiting %s" % age(k_info["since"])
+            # Under WSL a reboot of the distribution does not load the new
+            # kernel; naming the command that does saves looking it up.
+            if k_info.get("remedy"):
+                waited += "; " + k_info["remedy"]
             head += f"{C['red']} (kernel {was} -> {now_}{waited}){C['r']}"
     elif k_state == "unknown" or not k_info.get("running"):
         # Said out loud rather than passed over. This is read live and locally, so
         # it failing means something odd about the machine itself, and a silent
         # omission here reads exactly like a machine with nothing to report.
         head += f"   {C['red']}kernel: ?{C['r']}"
+        if k_info.get("wsl"):
+            # Under WSL the cause is nearly always one thing -- `/mnt/c` not
+            # mounted, or WSL installed somewhere else -- and it is not one a
+            # reader would guess from a bare `?`.
+            head += f"{C['red']} (WSL kernel image unreadable){C['r']}"
     else:
         # The quiet case says something too, and it took a reader going to look
         # for the warning to find out why that matters: Cameron checked the board
