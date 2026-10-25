@@ -776,6 +776,27 @@ class PendingUpdatesAreASourceLikeAnyOther(unittest.TestCase):
         self.assertIn("kernel: ?", head)
         self.assertNotIn("REBOOT NEEDED", head)
 
+    def test_a_pending_wsl_kernel_names_the_shutdown(self):
+        """Under WSL a reboot of the distribution does not load the new kernel,
+        so the header says what does."""
+        out = self.draw(kernel=("pending", {"running": "9.1.2.1-microsoft-standard-WSL2",
+                                            "newest": "9.1.5.1-microsoft-standard-WSL2",
+                                            "since": time.time() - 86400,
+                                            "wsl": True, "remedy": "wsl --shutdown"}))
+        head = [l for l in out.splitlines() if "FLEET" in l][0]
+        self.assertIn("kernel 9.1.2.1 -> 9.1.5.1", head)
+        self.assertIn("; wsl --shutdown)", head)
+
+    def test_an_unreadable_wsl_image_says_why(self):
+        out = self.draw(kernel=("unknown", {"running": "9.1.2.1-microsoft-standard-WSL2",
+                                            "wsl": True, "error": "unreadable"}))
+        head = [l for l in out.splitlines() if "FLEET" in l][0]
+        self.assertIn("kernel: ? (WSL kernel image unreadable)", head)
+
+    def test_an_ordinary_unknown_kernel_does_not_blame_wsl(self):
+        out = self.draw(kernel=("unknown", {"error": "no kernel image found"}))
+        self.assertNotIn("WSL", out)
+
     def test_a_current_kernel_says_so_rather_than_saying_nothing(self):
         """Found by a reader, not by a test. Cameron checked the board for a
         pending reboot the day after this landed, saw nothing, and could not tell

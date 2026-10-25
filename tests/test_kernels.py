@@ -140,6 +140,100 @@ class OnlyTheDifferingPart(unittest.TestCase):
         self.assertEqual(kernels.differing("a", "b"), ("a", "b"))
 
 
+class UnderWSL(Modules):
+    """WSL2, where Windows supplies the kernel from one image `wsl --update`
+    replaces. Fake releases throughout: the real one is whatever WSL the test
+    host happens to run, if any."""
+
+    OLD = "9.1.2.1-microsoft-standard-WSL2"
+    NEW = "9.1.5.1-microsoft-standard-WSL2"
+
+    def image(self, release, magic=b"HdrS", version=0x20F, ptr=0x300):
+        """A file laid out as the x86 boot protocol lays out a bzImage header:
+        only the fields `image_release` reads, the rest zeros."""
+        import struct
+        buf = bytearray(0x600)
+        buf[0x202:0x206] = magic
+        struct.pack_into("<H", buf, 0x206, version)
+        struct.pack_into("<H", buf, 0x20E, ptr)
+        banner = (release + " (builder@host) #1 SMP PREEMPT_DYNAMIC").encode()
+        buf[ptr + 0x200:ptr + 0x200 + len(banner)] = banner
+        path = os.path.join(self.root, "wsl-kernel")
+        with open(path, "wb") as fh:
+            fh.write(buf)
+        return path
+
+    def state(self, running, path=None):
+        from unittest import mock
+        path = path or os.path.join(self.root, "wsl-kernel")
+        with mock.patch.object(kernels, "running", lambda: running):
+            return kernels.state(os.path.join(self.root, "modules"), path)
+
+    def test_the_image_matching_the_running_kernel_is_current(self):
+        self.image(self.OLD)
+        st, info = self.state(self.OLD)
+        self.assertEqual(st, "current")
+        self.assertEqual(info["newest"], self.OLD)
+
+    def test_a_different_image_is_pending_and_names_the_shutdown(self):
+        """A reboot of the distribution does not load the new kernel; only
+        `wsl --shutdown` does, so the remedy travels with the state."""
+        path = self.image(self.NEW)
+        st, info = self.state(self.OLD)
+        self.assertEqual(st, "pending")
+        self.assertEqual((info["running"], info["newest"]), (self.OLD, self.NEW))
+        self.assertEqual(info["remedy"], "wsl --shutdown")
+
+    def test_since_is_the_change_time_not_the_build_date(self):
+        """The WSL package keeps the build date as the image's mtime, months
+        before it was installed; the change time is when it arrived."""
+        path = self.image(self.NEW)
+        os.utime(path, (time.time() - 90 * 86400,) * 2)
+        info = self.state(self.OLD)[1]
+        self.assertEqual(info["since"], os.stat(path).st_ctime)
+        self.assertGreater(info["since"], time.time() - 3600)
+
+    def test_lib_modules_is_not_consulted(self):
+        """A distribution kernel package sorts above the Microsoft release, and
+        under WSL it is never booted: read, it would be a reboot owed forever."""
+        d = os.path.join(self.root, "modules", "10.0.1-1-default")
+        os.makedirs(d)
+        open(os.path.join(d, "vmlinuz"), "w").close()
+        self.image(self.OLD)
+        self.assertEqual(self.state(self.OLD)[0], "current")
+
+    def test_a_missing_image_is_unknown_not_current(self):
+        st, info = self.state(self.OLD, os.path.join(self.root, "absent"))
+        self.assertEqual(st, "unknown")
+        self.assertTrue(info["wsl"])
+
+    def test_a_file_without_the_boot_header_is_unknown(self):
+        """An ARM64 `Image`, a truncated copy, anything else: not a guess."""
+        self.image(self.OLD, magic=b"\0\0\0\0")
+        self.assertEqual(self.state(self.OLD)[0], "unknown")
+
+    def test_a_header_too_old_to_carry_a_banner_is_unknown(self):
+        self.image(self.OLD, version=0x1FF)
+        self.assertEqual(self.state(self.OLD)[0], "unknown")
+
+    def test_a_null_banner_pointer_is_unknown(self):
+        """Caught by the release check, not a guard of its own: a pointer of 0
+        lands on the header itself, which is not a release."""
+        self.image(self.OLD, ptr=0)
+        self.assertEqual(self.state(self.OLD)[0], "unknown")
+
+    def test_a_banner_that_is_not_a_release_is_unknown(self):
+        self.image("<garbage!>")
+        self.assertEqual(self.state(self.OLD)[0], "unknown")
+
+    def test_an_ordinary_kernel_ignores_the_wsl_image(self):
+        """Only a WSL2 release is compared against the Windows image; WSL1's
+        release is a Windows build and has no kernel to replace."""
+        self.image(self.NEW)
+        self.assertEqual(self.state("7.2.11-1-default")[0], "unknown")
+        self.assertEqual(self.state("4.4.0-19041-Microsoft")[0], "unknown")
+
+
 class AbsenceIsNotAPass(Modules):
     """The doctrine, on the one fact here that ends every session at once."""
 
