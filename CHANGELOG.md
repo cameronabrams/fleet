@@ -30,7 +30,48 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Added
+
+- **`fleetnudge` leaves undelivered results on disk, and `fleetboard` says so.**
+  The tool had two delivery channels and no durable one: when the pane would not
+  take the keystrokes *and* the phone push was muted, the result existed only in
+  `nudges.log` — and the caller holding it had already exited, because a detached
+  watcher's last act *is* the nudge, so exiting non-zero tells a caller that is
+  gone. Every give-up in one fleet's log that exhausted its wait window, three for
+  three, had the push muted as well; the longest sat finished and unreported for
+  7h47m and surfaced only because a human asked, and one of the three was inbound
+  cross-fleet mail. **A give-up now writes the content to
+  `<state>/pending/<session>__<job>.md`**, addressed to the session that was owed
+  it and holding the text rather than a pointer to it. `fleetboard` draws a line
+  above the updates count while any exist, and **`fleetnudge --pending [SESSION]`**
+  prints them. Cleared by delivery or by the existing `--delivered`, which already
+  means "this reached its reader" and already makes the caller say how it knows.
+  Nothing is written when the news was not lost. An unreadable directory is
+  `UNKNOWN` on both the board and `--pending`, never zero, and an unparsable file
+  is counted rather than skipped. The positionals are now optional so `--pending`
+  can stand alone; a plain misuse still names what is missing. Reported by a
+  watcher that had been working around it per-caller. New module `fleet.pending`.
+
 ### Changed
+
+- **`fleetnudge` can reach a session that is holding a background shell.** It
+  could not, for that shell's whole life — which is the session a watcher nudge is
+  most often aimed at. `claude agents` reports "at the prompt with a shell
+  running" and "mid-turn" identically (`pid`, `kind` and `status` all agree, and a
+  mid-turn `Bash` call and a detached shell are both a `bash` child), so an idle
+  pane plus a `busy` status was refused as mid-turn. `fleetnudge` already held the
+  rule that covers it — at the prompt while holding runtime is typeable — but keyed
+  it on the statuses `shell` and `monitor`, which this version does not emit for
+  that condition. The count now comes off the status bar, where the two differ, via
+  new `fleet.panes.shells_running`; **`fleet.panes.reconcile` takes a third
+  argument**, defaulting to `None` so an untaught caller keeps the refusing answer.
+  The marker still wins: the screen is only `idle` when `esc to interrupt` appears
+  nowhere, so mid-turn-and-holding-a-shell resolves to busy before the count is
+  read. A grant is recorded on the delivery record (`shells`, `why_typeable`) and
+  printed, because it is the one case where a line is typed into a session the
+  status called busy. `fleetcontext` reports the same reconciliation; roll
+  eligibility is untouched, since `fleetupgrade` reads `claude agents` itself and
+  still sees `busy`.
 
 - **`fleetwatch` runs with no cluster configured.** It raised `ConfigError` at
   import, exit 1, when `fleet.toml` had no `[cluster.<name>]`. Every caller read

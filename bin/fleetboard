@@ -30,6 +30,7 @@ import json, os, shutil, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import kernels
+from fleet import pending
 from fleet import version_flag
 from fleet import versions
 from fleet import snapshot
@@ -433,6 +434,30 @@ def updates_line(u_state, u_data):
     return None
 
 
+def pending_line():
+    """What never reached a session, as one line at the top of the board.
+
+    The whole defect this answers was a result that existed only in a log nobody
+    opens: it sat finished and unreported for 7h47m and surfaced because a human
+    asked. So the count belongs where a human is already looking, and UNKNOWN
+    must look different from zero -- an unreadable directory is the one that
+    would otherwise read as "nothing is pending" for ever.
+    """
+    recs, bad = pending.read_all(STATE)
+    if recs is None:
+        return (f"  {C['red']}undelivered results: UNKNOWN -- "
+                f"{pending.pending_dir(STATE)} could not be read{C['r']}")
+    if not recs and not bad:
+        return None
+    who = ", ".join(sorted({r.get("session") or "?" for r in recs}))
+    parts = []
+    if recs:
+        parts.append(f"{len(recs)} undelivered result(s) for {who}")
+    if bad:
+        parts.append(f"{bad} unreadable")
+    return (f"  {C['red']}! {'; '.join(parts)} -- "
+            f"fleetnudge --pending{C['r']}")
+
 def cache_lines(cache, full, auto):
     """The cluster/context provenance stamp, and the `!` warnings it carries.
 
@@ -585,6 +610,11 @@ def draw(full=False, auto=False, show_parked=False):
     if pk is None:
         status.append(f"  {C['red']}parked sessions could not be read from the "
                       f"configuration{C['r']}")
+    # Above the updates count: an undelivered result is news that a session is
+    # missing right now, where a package count is a chore that keeps.
+    line = pending_line()
+    if line:
+        status.append(line)
     line = updates_line(u_state, u_data)
     if line:
         status.append(line)

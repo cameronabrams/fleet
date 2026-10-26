@@ -221,17 +221,91 @@ class Reconcile(unittest.TestCase):
         self.assertEqual(state, "busy")
         self.assertIn("busy marker may have moved", why)
 
-    def test_the_named_cause_is_not_the_only_cause(self):
-        """A moved marker was named as THE cause from 2026-10-01 to 2026-10-26,
-        and it was the wrong one: `claude agents` reports a session sitting at its
+    def test_the_refusal_says_the_shell_was_ruled_out(self):
+        """A moved marker was named as THE cause from 2026-10-01 to 2026-10-26 and
+        it was the wrong one: `claude agents` reports a session sitting at its
         prompt with a background shell as `busy` too, and the marker was verified
-        present on the version in use. A watcher that holds a long shell then
-        reads as mid-turn for that shell's whole life, so a reader sent after a
-        moved marker is sent after the rarer limb. Both directions still resolve
-        to busy -- what is pinned here is that the sentence names both."""
-        _, why = panes.reconcile("idle", "busy")
-        self.assertIn("background shell", why)
+        present in every pane genuinely mid-turn. Now that the bar is read, the
+        refusal may only reach for the marker once the shell has been excluded --
+        and must say that it was."""
+        _, why = panes.reconcile("idle", "busy", 0)
+        self.assertIn("no background shell", why)
         self.assertIn("busy marker may have moved", why)
+
+    def test_a_shell_in_the_bar_accounts_for_a_busy_status(self):
+        """The case the refusal cost: a session whose work IS a long background
+        shell reports `busy` for that shell's whole life, so a nudge aimed at it
+        could never be delivered. Its pane is at an idle prompt and typeable."""
+        state, why = panes.reconcile("idle", "busy", 1)
+        self.assertEqual(state, "idle")
+        self.assertIn("holding 1 background shell", why)
+        self.assertIsNone(panes.state_problem(state, "alpha", "%7"))
+
+    def test_the_marker_still_wins_over_the_shell_count(self):
+        """A session can be mid-turn AND holding a shell. `screen` is only "idle"
+        when BUSY_MARKER appears nowhere, so the count is never even consulted in
+        that case -- if it were, a shell would license typing mid-turn, which is
+        the one thing this module exists to prevent."""
+        self.assertEqual(panes.reconcile("busy", "busy", 3), ("busy", None))
+        self.assertEqual(panes.reconcile("busy", "idle", 3)[0], "busy")
+
+    def test_a_caller_that_cannot_read_the_bar_still_refuses(self):
+        """The count only ever GRANTS typeability, so every way of not having it
+        -- an old caller, a pane with no bar, a bar with no shell in it -- has to
+        land on the refusing answer. Absence is not a pass."""
+        for shells in (None, 0):
+            self.assertEqual(panes.reconcile("idle", "busy", shells)[0], "busy", shells)
+        self.assertEqual(panes.reconcile("idle", "busy")[0], "busy")
+
+
+class StatusBar(unittest.TestCase):
+    """The bar below the input line is the only place the two meanings of `busy`
+    look different, so what counts as reading it is pinned here."""
+
+    RULE = "─" * 40
+    def pane(self, bar, above="⏺ done"):
+        return f"{above}\n{self.RULE}\n❯ \n{self.RULE}\n{bar}\n"
+
+    # the bars as they were drawn on 2026-10-26 (2.1.302, 2.1.308)
+    NO_SHELL = "  ⏵⏵ auto mode on (shift+tab to cycle)        ✔ Update installed · Restart to update"
+    ONE_SHELL = "  ⏵⏵ auto mode on · 1 shell · ↓ to manage      ✔ Update installed · Restart to update"
+    TASKS = "  ⏵⏵ auto mode on (shift+tab to cycle) · ⧉ 2   ✔ Update installed · Restart to update"
+
+    def test_it_reads_the_count_off_the_bar(self):
+        self.assertEqual(panes.shells_running(self.pane(self.ONE_SHELL)), 1)
+        self.assertEqual(panes.shells_running(self.pane(self.NO_SHELL)), 0)
+
+    def test_a_background_task_is_not_a_shell(self):
+        """`⧉ <name>` is a different indicator and does NOT make `claude agents`
+        report busy: three panes carried one while reporting idle on 2026-10-26.
+        Counting it would hand out typeability on evidence of nothing."""
+        self.assertEqual(panes.shells_running(self.pane(self.TASKS)), 0)
+
+    def test_a_count_inside_the_bar_still_needs_the_bar_s_own_slot(self):
+        """Scoping to the bar is not enough by itself: the bar carries other
+        operators' text, and `⧉ <name>` takes a name from whatever started the
+        task. The count is only the count when it follows the bar's own `·`
+        separator -- which was unprotected until this test, because the decoy in
+        the test below sits ABOVE the input line, where scoping already stops it."""
+        bar = "  ⏵⏵ auto mode on (shift+tab to cycle) · ⧉ 3 shells · ↓ to manage"
+        self.assertEqual(panes.shells_running(self.pane(bar)), 0)
+        self.assertEqual(panes.reconcile("idle", "busy",
+                                         panes.shells_running(self.pane(bar)))[0], "busy")
+
+    def test_the_phrase_above_the_input_line_is_not_the_bar(self):
+        """A session that has been TALKING about shells, or whose completed-turn
+        summary says `1 shell still running`, must not thereby become typeable
+        while mid-turn. Only the bar's own `·`-separated slot counts."""
+        for above in ("⏺ I started 1 shell for the build",
+                      "✻ Sauteed for 6m 36s · done 9:30 AM · 1 shell still running"):
+            self.assertEqual(panes.shells_running(self.pane(self.NO_SHELL, above)), 0, above)
+
+    def test_no_input_line_means_no_answer_rather_than_zero(self):
+        """A dialog or menu draws no prompt. That is UNKNOWN, not "no shells" --
+        both refuse today, and the distinction is what keeps a later caller from
+        reading a confident zero off a pane that was never parsed."""
+        self.assertIsNone(panes.shells_running("Background work is running\n"))
+        self.assertIsNone(panes.status_bar("no prompt here\n"))
 
     def test_the_other_direction_is_also_reported(self):
         state, why = panes.reconcile("busy", "idle")

@@ -1226,3 +1226,64 @@ class AConfigEditedMidWatchMustNotEndTheBoard(unittest.TestCase):
              mock.patch.object(self.b, "context", lambda: None):
             c = self.b.refresh_cache()
         self.assertIsNone(c["cluster"])
+
+
+class UndeliveredResultsOnTheBoard(unittest.TestCase):
+    """The defect was a result that existed only in a log nobody opens: it sat
+    finished and unreported for 7h47m and surfaced because a human asked. So the
+    count goes where a human is already looking -- and UNKNOWN has to look
+    different from zero, because an unreadable directory would otherwise read as
+    "nothing is pending" for ever."""
+
+    def setUp(self):
+        self.cfg = FakeConfig(toml=BASE_TOML, briefs=("alpha",))
+        self.b = load_tool("fleetboard")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def test_nothing_pending_prints_no_line(self):
+        self.assertIsNone(self.b.pending_line())
+
+    def test_a_pending_result_names_the_session_and_the_tool(self):
+        from fleet import pending
+        pending.write(self.cfg.state, "alpha", "123456", "the result", "why", 4)
+        line = self.b.pending_line()
+        self.assertIn("1 undelivered result", line)
+        self.assertIn("alpha", line)
+        self.assertIn("fleetnudge --pending", line)
+
+    def test_an_unreadable_directory_is_unknown_not_quiet(self):
+        from fleet import pending
+        d = pending.pending_dir(self.cfg.state)
+        os.makedirs(d)
+        os.chmod(d, 0)
+        try:
+            line = self.b.pending_line()
+        finally:
+            os.chmod(d, 0o700)
+        if os.geteuid() == 0:
+            self.skipTest("root reads an unreadable directory")
+        self.assertIsNotNone(line, "an unreadable directory drew no line at all")
+        self.assertIn("UNKNOWN", line)
+
+    def test_an_unreadable_file_alone_still_draws_the_line(self):
+        """The case the test below could not reach: with no readable record
+        beside it, a board that keys on the record count alone falls silent on a
+        directory that is entirely unreadable news."""
+        from fleet import pending
+        os.makedirs(pending.pending_dir(self.cfg.state))
+        with open(os.path.join(pending.pending_dir(self.cfg.state), "junk.md"), "w") as f:
+            f.write("not a record\n")
+        line = self.b.pending_line()
+        self.assertIsNotNone(line, "an unreadable record drew no line at all")
+        self.assertIn("1 unreadable", line)
+
+    def test_an_unreadable_file_is_not_hidden_by_a_readable_one(self):
+        from fleet import pending
+        pending.write(self.cfg.state, "alpha", "1", "the result", "why", 4)
+        with open(os.path.join(pending.pending_dir(self.cfg.state), "junk.md"), "w") as f:
+            f.write("not a record\n")
+        line = self.b.pending_line()
+        self.assertIn("1 undelivered result", line)
+        self.assertIn("1 unreadable", line)

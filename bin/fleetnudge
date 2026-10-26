@@ -47,10 +47,11 @@ import argparse, contextlib, fcntl, glob, json, os, re, subprocess, sys, time, u
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import nudgelog
+from fleet import pending
 from fleet import version_flag
 from fleet.agents import list_agents
 from fleet.panes import (is_agent_pane, ours_agent_pane, CAPTURE, reconcile, screen_state,
-                         state_problem, type_line)
+                         shells_running, state_problem, type_line)
 from fleet.procs import ancestors, claude_procs, ppid
 from fleet.transcripts import PROJECTS, session_name
 
@@ -217,9 +218,19 @@ def resolve(session):
         return None, ("refuse", f"transcript not verified ({r['how']}); delivery could not be confirmed")
     pane_pids = panes()
     r["pane"] = pane_pids.get(r["pid"]) or pane_pids.get(ppid(r["pid"]))
-    seen = screen_state(screen(r["pane"])) if r["pane"] else "no-pane"
-    # `shell` and `monitor` mean at the prompt while holding runtime: typeable.
-    r["state"], r["disagree"] = reconcile(seen, r["agent"].get("status"))
+    text = screen(r["pane"]) if r["pane"] else ""
+    seen = screen_state(text) if r["pane"] else "no-pane"
+    # "At the prompt while holding runtime" is typeable, and the statuses `shell`
+    # and `monitor` were the whole of how that was recognized. They are not how
+    # this version says it: a session sitting at its prompt with a background shell
+    # running reports plain `busy`, indistinguishably from one that is mid-turn
+    # (measured across every pane 2026-10-26). So the count comes off the status
+    # bar, where the two differ, and `reconcile` uses it to resolve exactly that
+    # disagreement. Until 2026-10-26 the rule below could not fire for the
+    # sessions it was written for: a watcher's work IS a long background shell, so
+    # it read as mid-turn for that shell's whole life and its nudge never landed.
+    r["shells"] = shells_running(text) if r["pane"] else None
+    r["state"], r["disagree"] = reconcile(seen, r["agent"].get("status"), r["shells"])
     why = state_problem(r["state"], session, r["pane"])
     if why:
         # Say it on the refusal. A screen and a status that disagree is what a
@@ -322,25 +333,70 @@ def do_delivered(a, session, job, text):
     # each were a hole, when two were.
     recs, _bad = nudgelog.read(LOG)
     open_ = nudgelog.open_trouble(recs or [], session, job)
+    # The pending record is checked INDEPENDENTLY of the log hole, not as a
+    # consequence of it. They are written together, so they are normally both
+    # here -- but a hole cleared by hand, or aged past the report's window, would
+    # otherwise leave the content file behind for ever with nothing offering to
+    # remove it, and the directory a session reads on reorientation would fill
+    # with news that had already arrived.
+    pend = pending.path(STATE, session, job)
+    has_pending = os.path.exists(pend)
     print(f"\n  record: {session} job {job} was told another way")
     print(f"  how:    {text}")
-    if not open_:
+    if not open_ and not has_pending:
         print(f"\n  NOTHING TO CLEAR: no failed or stalled nudge for {session} "
-              f"job {job}.\n  Writing this anyway would assert something about "
-              f"nothing.\n")
+              f"job {job}, and nothing pending.\n  Writing this anyway would assert "
+              f"something about nothing.\n")
         return 3
     for r in open_:
         print("  clears: %s  %s -- %s" % (r.get("time"), r.get("outcome"),
                                           str(r.get("reason"))[:60]))
+    if has_pending:
+        print(f"  removes: {pend}")
     if not a.go:
         print("\n  plan only -- re-run with --go\n")
         return 0
     log(session=session, job=job, text=text, outcome=INFORMED_OUTCOME,
         notified_otherwise=True, reason=text,
         by=os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("USER") or "?")
+    # The log is appended to and the pending record is removed, and the asymmetry
+    # is the point: the log is the history of what happened, which this does not
+    # get to edit, while the pending file is a piece of undelivered mail, which
+    # has now been delivered.
+    pending.clear(STATE, session, job)
     print(f"\n  written to {LOG}\n")
     return 0
 
+
+def do_pending(only=None):
+    """Print the undelivered content, which is the whole reason it is on disk.
+
+    `fleetwatch` reports that a nudge was lost; this prints what was lost. The
+    two are deliberately different: a session reorienting after a restart needs
+    the text, not a count, and a count is what it had before.
+    """
+    recs, bad = pending.for_session(STATE, only) if only else pending.read_all(STATE)
+    where = pending.pending_dir(STATE)
+    if recs is None:
+        print(f"\n  ? {where} could not be read, so whether anything is pending is "
+              f"UNKNOWN.\n    Not the same as nothing pending.\n")
+        return 1
+    if bad:
+        print(f"\n  !! {bad} unreadable file(s) in {where} -- undelivered news "
+              f"could be in any of them.")
+    if not recs:
+        print(f"\n  nothing pending{f' for {only}' if only else ''} in {where}\n")
+        return 0 if not bad else 1
+    print(f"\n  {len(recs)} undelivered result(s) in {where}:\n")
+    for r in recs:
+        mail = f"  mail from {r['mail-from']}" if r.get("mail-from") else ""
+        print(f"  {r.get('written')}  {r.get('session')} job {r.get('job')}  "
+              f"(exit {r.get('code')}){mail}")
+        print(f"      {r.get('text')}")
+        print(f"      not delivered: {r.get('reason')}")
+        print(f"      clear: fleetnudge {r.get('session')} {r.get('job')} "
+              f"--delivered \"<how>\" --go\n")
+    return 0
 
 def give_up(code, session, job, text, reason, mail_from=None, informed=False):
     # ONE value, both channels. The phone push and the log field are the same claim
@@ -368,6 +424,16 @@ def give_up(code, session, job, text, reason, mail_from=None, informed=False):
         reason=reason, push=pushed, mail_from=mail_from,
         notified_otherwise=notified_otherwise)
     print(f"\n  NOT DELIVERED: {reason}\n  {pushed}\n")
+    # The log says a nudge failed; this says WHAT failed to arrive, addressed to
+    # the session that was owed it. Written on every give-up, not only the ones
+    # where the caller has exited: a preflight refusal is correctable by a live
+    # caller, but only if there IS one, and nothing here can tell. Skipped when the
+    # content reached its reader another way -- there is nothing pending then, and
+    # a record asserting otherwise is the false alarm one field along.
+    if not notified_otherwise:
+        where = pending.write(STATE, session, job, text, reason, code, mail_from)
+        print(f"  left for {session} to read: {where}\n"
+              f"  clear it with: fleetnudge {session} {job} --delivered \"<how>\" --go\n")
     sys.exit(code)
 
 def deliver(r, session, job, text, mail_from=None):
@@ -390,10 +456,13 @@ def deliver(r, session, job, text, mail_from=None):
 def main():
     version_flag()
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("session")
-    ap.add_argument("job")
+    ap.add_argument("session", nargs="?")
+    ap.add_argument("job", nargs="?")
     ap.add_argument("text", nargs="?", default="")
     ap.add_argument("--go", action="store_true")
+    ap.add_argument("--pending", action="store_true",
+                    help="do not nudge: print what never reached a session, newest "
+                         "last. With SESSION, only that session's. Read-only.")
     ap.add_argument("--delivered", action="store_true",
                     help="do not nudge: record that this result reached SESSION by "
                          "another route, clearing it from fleetwatch's holes. TEXT "
@@ -404,6 +473,13 @@ def main():
                     help="relayed mail: tag the line as coming from that remote address "
                          "(fleetmail's use; no watcher registration is required)")
     a = ap.parse_args()
+    if a.pending:
+        sys.exit(do_pending(a.session))
+    # The positionals are optional only so that --pending can stand alone. A plain
+    # misuse must still say what is missing, in the words argparse would have used.
+    missing = [n for n, v in (("session", a.session), ("job", a.job)) if v is None]
+    if missing:
+        ap.error("the following arguments are required: " + ", ".join(missing))
     session, job, text = a.session, a.job, a.text.strip()
     mail_from = a.mail_from
     if a.delivered:
@@ -444,10 +520,25 @@ def main():
                 if problem is None:
                     code, detail = deliver(r, session, job, text, mail_from)
                     if code == 0:
+                        # The disagreement travels with a SUCCESS too, not only
+                        # with a refusal. This is the one case where a line is
+                        # typed into a session that `claude agents` called busy,
+                        # on the strength of a parse of the status bar -- so the
+                        # reason has to be in the record, where a reader looking
+                        # at a nudge that should not have landed will find it.
+                        # Printed as well as logged, because the caller is often
+                        # a detached watcher whose stdout is the only thing a
+                        # human reads.
                         log(session=session, job=job, text=text, outcome="delivered",
                             attempt=attempt, pane=r["pane"], detail=detail,
+                            shells=r.get("shells"), why_typeable=r.get("disagree"),
                             mail_from=mail_from)
+                        if pending.clear(STATE, session, job):
+                            print("  (cleared the pending record this job left earlier)")
                         print(f"  {detail}\n")
+                        if r.get("disagree"):
+                            print(f"  typed although `claude agents` reports "
+                                  f"{r['agent'].get('status')!r}: {r['disagree']}\n")
                         return
                     give_up(code, session, job, text, detail, mail_from)
         kind, why = problem

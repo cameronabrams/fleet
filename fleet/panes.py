@@ -19,6 +19,19 @@ BUSY_MARKER = "esc to interrupt"           # footer while a turn runs (2.1.285;
 TRUST_MARKERS = ("trust this folder", "Is this a project you created")
 BACKGROUND_MARKER = "Background work is running"
 PROMPT = "❯"                              # the input line, followed by a no-break space when empty (2.1.272)
+# The status bar, BELOW the input line's closing rule: `⏵⏵ auto mode on ...`. Its
+# middle slot reads `(shift+tab to cycle)` when the session holds nothing and
+# `· N shell · ↓ to manage` while a shell the session started is still running.
+# `· esc to interrupt` is appended to the SAME bar mid-turn. The two are
+# independent -- one pane read mid-turn with a shell in its bar and then idle with
+# the same shell a minute later (2026-10-26), so a session can hold both -- which
+# is why the marker has to win (see `reconcile`).
+#
+# Matched only inside the bar, and only with the bar's own `·` separator, so that
+# the phrase occurring in transcript text above cannot grant typeability. The
+# background-TASK indicator (`⧉ <name>`, `⧉ 2`) is a DIFFERENT thing and does not
+# make `claude agents` report busy: three panes carried one while reporting idle.
+SHELL_IN_BAR = re.compile(r"·\s*(\d+)\s+shells?\b")
 RULE = re.compile(r"^\s*─{3,}")           # the rules drawn above and below the input line
 TYPE_WAIT = 10.0                           # seconds for typed text to reach the input line
 CAPTURE = ("capture-pane", "-p", "-e")     # -e keeps the attributes that mark a suggestion
@@ -150,13 +163,14 @@ def undimmed(line):
         out.append(line[pos:])
     return "".join(out)
 
-def input_line(text):
-    """What the input line holds, whitespace-collapsed ("" when empty), or None if
-    no input line is drawn. The input line is a PROMPT line followed, after any
-    wrapped continuation, by a rule; earlier prompt lines on screen are history,
-    so the last such line wins. Dim text (a prompt suggestion) is not counted."""
-    raw = text.splitlines()
-    lines = [strip_escapes(l) for l in raw]
+def _input_block(lines):
+    """(first, after) line indices of the input line and its closing rule, or None.
+
+    The input line is a PROMPT line followed, after any wrapped continuation, by a
+    rule; earlier prompt lines on screen are history, so the last such line wins.
+    `input_line` reads what is inside the block and `status_bar` reads what is
+    below it, and they share this so the two cannot disagree about where the
+    block ended."""
     found = None
     for i, line in enumerate(lines):
         if not re.match(r"^\s*" + PROMPT, line):
@@ -165,10 +179,37 @@ def input_line(text):
         while j < len(lines) and not RULE.match(lines[j]):
             j += 1
         if j < len(lines):
-            held = [undimmed(l) for l in raw[i:j]]
-            held[0] = held[0].split(PROMPT, 1)[1] if PROMPT in held[0] else ""
-            found = " ".join(held)
-    return None if found is None else " ".join(found.split())
+            found = (i, j)
+    return found
+
+def input_line(text):
+    """What the input line holds, whitespace-collapsed ("" when empty), or None if
+    no input line is drawn. Dim text (a prompt suggestion) is not counted."""
+    raw = text.splitlines()
+    block = _input_block([strip_escapes(l) for l in raw])
+    if block is None:
+        return None
+    i, j = block
+    held = [undimmed(l) for l in raw[i:j]]
+    held[0] = held[0].split(PROMPT, 1)[1] if PROMPT in held[0] else ""
+    return " ".join(" ".join(held).split())
+
+def status_bar(text):
+    """The status bar below the input line, or None when no input line is drawn."""
+    lines = [strip_escapes(l) for l in text.splitlines()]
+    block = _input_block(lines)
+    return None if block is None else "\n".join(lines[block[1] + 1:])
+
+def shells_running(text):
+    """How many background shells the status bar says the session is holding, or
+    None when there is no bar to read. **Zero and None both mean "do not treat a
+    busy status as explained"** -- the count only ever grants typeability, so an
+    unreadable bar refuses, which is the direction this module fails in."""
+    bar = status_bar(text)
+    if bar is None:
+        return None
+    m = SHELL_IN_BAR.search(bar)
+    return int(m.group(1)) if m else 0
 
 def screen_state(text):
     """idle, busy, trust, dialog, input (text already typed) or no-prompt."""
@@ -193,8 +234,9 @@ BUSY_STATUSES = ("busy", "waiting")
 # prompt, a background-work dialog or a half-typed draft is on the pane.
 SCREEN_ONLY = ("trust", "dialog", "input", "no-prompt", "no-pane")
 
-def reconcile(screen, status):
-    """(state, disagreement or None) from the pane and `claude agents`' status.
+def reconcile(screen, status, shells=None):
+    """(state, disagreement or None) from the pane, `claude agents`' status, and
+    the status bar's background-shell count (`shells_running`).
 
     The screen is a parse of a TUI that moves. `BUSY_MARKER` and `PROMPT` each
     carry the version they were last checked against, and they carry DIFFERENT
@@ -229,9 +271,21 @@ def reconcile(screen, status):
     work, not the transient skew the branch was written for. A watcher whose whole
     job is a long shell reports busy for that shell's entire life, and a caller
     that resolves the disagreement to busy never reaches it at all.
-    `fleetnudge` already holds the rule that covers the case -- a session at its
-    prompt holding runtime is typeable -- but keys it on the statuses `shell` and
-    `monitor`, which this version does not emit for it."""
+    `fleetnudge` already held the rule that covers the case -- a session at its
+    prompt holding runtime is typeable -- but keyed it on the statuses `shell` and
+    `monitor`, which this version does not emit for it. So `shells` resolves the
+    disagreement where the status cannot: an idle screen whose busy status is
+    accounted for by a shell in the bar is TYPEABLE, and the explanation is
+    returned so the delivery records why it went ahead.
+
+    Three things keep that from becoming the thing this module exists to prevent.
+    The marker wins: `screen` is only "idle" when `BUSY_MARKER` appears nowhere on
+    the pane, so a session that is mid-turn AND holding a shell -- a state one pane
+    passed through on 2026-10-26 -- resolves to busy before the count is
+    consulted. The count only
+    ever grants, never withholds. And `shells` defaults to None, so a caller that
+    has not been taught to read the bar gets the old, refusing answer rather than
+    a permissive one."""
     # Belt and braces: only "idle" and "busy" are reconciled below, so any other
     # screen state would fall through to the same answer. Removing this line
     # changes nothing TODAY -- proved by breaking it -- and it is kept so that a
@@ -240,9 +294,13 @@ def reconcile(screen, status):
         return screen, None
     reported_busy = status in BUSY_STATUSES
     if screen == "idle" and reported_busy:
+        if shells:
+            return "idle", (f"the session reports {status!r} because it is at its prompt "
+                            f"holding {shells} background shell{'s' if shells != 1 else ''}; "
+                            f"the pane itself is idle")
         return "busy", (f"the pane reads idle but the session reports {status!r} -- "
-                        f"the session may be at its prompt holding a background "
-                        f"shell, or the busy marker may have moved")
+                        f"the status bar shows no background shell to account for it, "
+                        f"so the busy marker may have moved")
     if screen == "busy" and not reported_busy:
         return "busy", (f"the pane reads busy but the session reports {status!r} -- "
                         f"one of the two is stale")

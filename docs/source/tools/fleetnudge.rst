@@ -76,7 +76,8 @@ With ``--go``
 Each attempt resolves the session afresh from ``claude agents --json`` and ``/proc``.
 It types only when the pane is idle, shows no dialog and has an empty input line. A dim
 prompt suggestion counts as empty, as in :doc:`fleetcontext`. A
-``busy`` or ``waiting`` status also counts as not typeable. ``shell`` and ``monitor``
+``busy`` or ``waiting`` status also counts as not typeable, **unless the status bar
+accounts for it with a background shell** (see below). ``shell`` and ``monitor``
 mean the session is at its prompt, so they are typeable. The typed line must read back
 before Enter, as in :doc:`fleetcontext` (compared ignoring whitespace, since a line that
 wraps mid-word gains a space at the wrap). A trailing ``;`` in ``TEXT`` is sent as a key
@@ -84,17 +85,68 @@ code: tmux reads one at the end of a ``send-keys`` argument as its own command s
 and drops it, which cost a production nudge its readback on 2026-09-17. Delivery is confirmed when the tag
 appears once more in the session's transcript.
 
-.. warning::
+A background shell is not mid-turn
+----------------------------------
 
-   **A session holding a background shell reports** ``busy``, **not** ``shell``.
-   Measured 2026-10-26 on 2.1.302 and 2.1.308: a session sitting at its prompt
-   with a shell still running is indistinguishable in ``claude agents --json``
-   from one that is mid-turn -- ``pid``, ``kind`` and ``status`` are identical --
-   and only the pane's status bar separates them. So the ``shell`` rule above
-   does not fire for it, and a session whose work *is* a long background shell is
-   not typeable for that shell's whole life, which is the session a watcher nudge
-   is most often aimed at. Such a nudge exhausts its wait window and exits 4; if
-   the push is muted too, the result survives only in ``nudges.log``.
+**A session holding a background shell reports** ``busy``, **not** ``shell``.
+Measured 2026-10-26 on 2.1.302 and 2.1.308: a session sitting at its prompt with a
+shell still running is indistinguishable in ``claude agents --json`` from one that
+is mid-turn -- ``pid``, ``kind`` and ``status`` are identical, and the child
+processes do not separate them either, since a mid-turn ``Bash`` call and a
+detached shell are both a ``bash`` child. Only the pane's status bar differs:
+``⏵⏵ auto mode on · 1 shell · ↓ to manage`` against
+``⏵⏵ auto mode on (shift+tab to cycle)``.
+
+Until 2026-10-26 that made the ``shell`` rule above unreachable for the sessions
+it was written for. A watcher's work *is* a long background shell, so it read as
+mid-turn for that shell's whole life and its nudge never landed: two of the three
+give-ups in one fleet's log were this, one of them sitting finished and unreported
+for 7h47m.
+
+So the count is read off the bar (``fleet.panes.shells_running``) and
+``fleet.panes.reconcile`` uses it to resolve exactly that disagreement. Three
+things keep it from becoming the thing the reconciliation exists to prevent:
+
+* **The marker wins.** The screen is only ``idle`` when ``esc to interrupt``
+  appears nowhere on the pane, so a session that is mid-turn *and* holding a shell
+  resolves to busy before the count is consulted.
+* **The count only ever grants.** No bar, no shell in the bar, or a caller that
+  does not pass one all land on the refusing answer.
+* **The grant is recorded.** A line typed into a session that ``claude agents``
+  called busy is logged with ``shells`` and ``why_typeable``, and printed, because
+  the caller is often a detached watcher whose stdout is the only thing a human
+  reads.
+
+Undelivered results
+-------------------
+
+``fleetnudge`` has two delivery channels and, until 2026-10-26, no durable one.
+When the pane will not take the keystrokes *and* the phone push is muted, the
+result existed only in ``nudges.log`` -- and the caller holding it had already
+exited, because a detached watcher's last act *is* the nudge. Every give-up in one
+fleet's log that exhausted its wait window, three for three, had the push muted as
+well, and one of those was inbound cross-fleet mail.
+
+A give-up now writes the undelivered content to
+``<state>/pending/<session>__<job>.md``, addressed to the session that was owed
+it, holding the text itself rather than a pointer to it. ``fleetboard`` draws a
+line while any exist::
+
+    fleetnudge --pending            everything undelivered, oldest first
+    fleetnudge --pending SESSION    only that session's
+
+It is cleared by delivery, or by ``fleetnudge SESSION JOB "<how>" --delivered
+--go``, which already means "this reached its reader" and already makes the caller
+say how it knows. Nothing is written when the news was not lost: a nudge that
+declines because it is running *inside* the session it would type into has already
+notified it.
+
+.. note::
+
+   An unreadable ``pending`` directory is ``UNKNOWN``, not zero, on both the board
+   and ``--pending``, and an unparsable file in it is counted rather than skipped.
+   A lost result rendered as a clean report is the failure this whole mechanism
+   answers, one level down.
 
 **One nudge types into a session at a time.** A second one waits for the first
 instead of interleaving keystrokes with it: two watchers nudged one session within

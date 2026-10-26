@@ -204,6 +204,26 @@ fleet-ending fact at exactly the moment the other half of the check broke. Only
 an *unknown* source withholds it, because there the document could not be
 interpreted at all.
 
+Results that never reached a session
+------------------------------------
+
+Above the updates count, because an undelivered result is news a session is
+missing *now* where a package count is a chore that keeps::
+
+   ! 1 undelivered result(s) for alpha -- fleetnudge --pending
+
+``fleetnudge`` writes the undelivered content to ``<state>/pending/`` when both of
+its channels are shut; see :doc:`fleetnudge`. The line exists because the defect
+it answers was a result that lived only in a log nobody opens: it sat finished and
+unreported for 7h47m and surfaced because a human asked. A count belongs where a
+human is already looking.
+
+An unreadable ``pending`` directory draws ``UNKNOWN``, not silence, and an
+unparsable file in it is counted beside the readable ones. A directory that is
+entirely unreadable news must not read as nothing pending — which it did until a
+test was written for exactly that case, because the first one keyed on the record
+count and a readable record was sitting beside the broken one.
+
 A document the machine has moved past
 -------------------------------------
 

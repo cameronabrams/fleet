@@ -1,5 +1,6 @@
 import contextlib, io, itertools, json, os, sys, tempfile, unittest
 from unittest import mock
+from fleet import pending
 from tests.support import BASE_TOML, FakeConfig, load_tool
 
 UUID = "aaaaaaaa-0000-4000-8000-000000000001"
@@ -7,6 +8,12 @@ RULE = "─" * 40
 IDLE = f"⏺ done\n{RULE}\n❯ \n{RULE}\n  footer\n"
 BUSY = f"· Working…\n{RULE}\n❯ \n{RULE}\n  esc to interrupt\n"
 DRAFT = f"⏺ done\n{RULE}\n❯ half a thought\n{RULE}\n  footer\n"
+# A pane at an idle prompt whose status bar says a background shell is still
+# running. `claude agents` reports such a session as `busy`, identically to one
+# that is mid-turn (measured across every pane 2026-10-26), and the bar is the only
+# place the two differ. The bar is drawn BELOW the input line's closing rule.
+SHELL = (f"⏺ done\n{RULE}\n❯ \n{RULE}\n"
+         f"  ⏵⏵ auto mode on · 1 shell · ↓ to manage      ✔ Update installed\n")
 TAG = "[watcher: alpha job 123456]"
 
 def typed(line):
@@ -185,6 +192,30 @@ class Deliver(Base):
             self.calls, self.agents[0]["status"] = [], status
             code, out = self.go()
             self.assertEqual(code, 0, f"{status}: {out}")
+
+    def test_a_session_holding_a_background_shell_is_delivered_to(self):
+        """The rule above -- at the prompt while holding runtime is typeable --
+        could not fire for the sessions it was written for. This version reports
+        such a session as plain `busy`, not `shell`, so an idle pane plus a busy
+        status was refused as mid-turn; and a watcher's work IS a long background
+        shell, so the refusal lasted that shell's whole life and its nudge never
+        landed. Two of the three give-ups in this fleet's log were this."""
+        self.agents[0]["status"] = "busy"
+        self.screens = [SHELL]
+        code, out = self.go()
+        self.assertEqual(code, 0, out)
+        self.assertIn("holding 1 background shell", out)
+
+    def test_an_idle_pane_with_no_shell_to_explain_busy_is_still_refused(self):
+        """The count only ever grants. With the bar read and no shell in it, the
+        disagreement is unexplained again -- and a moved BUSY_MARKER is what that
+        looks like, so this must stay a refusal rather than inherit the grant."""
+        self.agents[0]["status"] = "busy"
+        self.screens = [IDLE]
+        code, out = self.go()
+        self.assertEqual(code, 4, out)
+        self.assertEqual(self.keys(), [])
+        self.assertIn("no background shell", out)
 
     def test_session_not_running_yet_is_retried(self):
         live = self.procs
@@ -461,6 +492,102 @@ class GiveUp(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ADurableRecord(Base):
+    """Two channels and no durable one. When the pane will not take the keystrokes
+    AND the phone push is muted, the result existed only in `nudges.log` and the
+    caller holding it had already exited -- a detached watcher's last act IS the
+    nudge, so exiting non-zero tells a caller that is gone. Every give-up in this
+    fleet's log that exhausted its wait window, three for three, had the push
+    muted too; the longest sat finished and unreported for 7h47m and surfaced only
+    because a human asked. One of the three was inbound cross-fleet mail.
+
+    So a give-up now leaves the CONTENT where its reader will find it. Reported by
+    a watcher that had been working around it per-caller."""
+
+    def pend(self, session="alpha", job="123456"):
+        return pending.read_all(self.cfg.state)
+
+    def test_a_give_up_leaves_the_result_behind(self):
+        self.agents[0]["status"] = "busy"
+        self.screens = [IDLE]
+        code, out = self.go()
+        self.assertEqual(code, 4, out)
+        recs, bad = self.pend()
+        self.assertEqual((len(recs), bad), (1, 0), out)
+        self.assertEqual(recs[0]["text"], "round 4 finished: COMPLETED")
+        self.assertEqual(recs[0]["session"], "alpha")
+        self.assertIn("still not typeable", recs[0]["reason"])
+
+    def test_a_preflight_refusal_leaves_one_too(self):
+        """Written on EVERY give-up, not only the ones that exhausted the window.
+        A preflight refusal is correctable by a live caller -- but only if there is
+        one, and nothing here can tell whether the caller is still running."""
+        code, out = self.go("x" * 500)
+        self.assertEqual(code, 2, out)
+        recs, _ = self.pend()
+        self.assertEqual(len(recs), 1, out)
+
+    def test_nothing_is_left_when_the_news_was_not_lost(self):
+        """Running inside the session it would type into: the in-session task
+        already notifies it, so there is nothing pending. A record asserting
+        otherwise is the same false alarm one field along that `notified_otherwise`
+        exists to stop."""
+        self.ancestors = {4242}
+        code, out = self.go()
+        self.assertEqual(code, 2, out)
+        self.assertEqual(self.pend(), ([], 0), out)
+
+    def test_delivering_the_news_clears_it(self):
+        self.agents[0]["status"] = "busy"
+        self.screens = [IDLE]
+        self.go()
+        self.assertEqual(len(self.pend()[0]), 1)
+        self.calls, self.agents[0]["status"], self.screens = [], "idle", [IDLE]
+        code, out = self.go()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.pend(), ([], 0), out)
+
+    def test_delivered_by_hand_removes_it(self):
+        self.agents[0]["status"] = "busy"
+        self.screens = [IDLE]
+        self.go()
+        code, out = self.run_main("alpha", "123456", "told in person", "--delivered", "--go")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.pend(), ([], 0), out)
+
+    def test_a_record_with_no_log_hole_left_is_still_clearable(self):
+        """The two are checked independently. A hole cleared by hand, or aged out
+        of the report's window, would otherwise strand the content file for ever
+        with nothing offering to remove it -- and the directory a session reads on
+        reorientation would fill with news that had already arrived."""
+        from fleet import pending as pd
+        pd.write(self.cfg.state, "alpha", "123456", "the result", "why", 4)
+        code, out = self.run_main("alpha", "123456", "told in person", "--delivered", "--go")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.pend(), ([], 0), out)
+
+    def test_pending_prints_the_text_not_a_count(self):
+        """`fleetwatch` already reported that a nudge was lost. What no reader had
+        was WHAT was lost, and a session reorienting after a restart needs the text."""
+        self.agents[0]["status"] = "busy"
+        self.screens = [IDLE]
+        self.go()
+        code, out = self.run_main("--pending")
+        self.assertEqual(code, 0, out)
+        self.assertIn("round 4 finished: COMPLETED", out)
+        self.assertIn("alpha job 123456", out)
+
+    def test_pending_with_nothing_pending_says_so(self):
+        code, out = self.run_main("--pending")
+        self.assertEqual(code, 0, out)
+        self.assertIn("nothing pending", out)
+
+    def test_the_positionals_are_still_required_without_pending(self):
+        """They became optional only so --pending could stand alone."""
+        code, out = self.run_main("alpha")
+        self.assertEqual(code, 2, out)
 
 
 class NotDeliveredIsNotAlwaysLost(Base):

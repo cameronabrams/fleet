@@ -19,6 +19,7 @@ Submodules
    fleet.kernels
    fleet.nudgelog
    fleet.panes
+   fleet.pending
    fleet.procs
    fleet.reach
    fleet.snapshot

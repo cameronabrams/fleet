@@ -45,7 +45,7 @@ from fleet import version_flag
 from fleet.agents import by_session_prefix, list_agents
 from fleet.procs import alive, ancestors, children, claude_procs, ppid, starttime
 from fleet.panes import (CAPTURE, fleet_label, is_agent_pane, ours_agent_pane,
-                         input_line, reconcile, screen_state,
+                         input_line, reconcile, screen_state, shells_running,
                          strip_escapes,
                          state_problem, type_line)
 from fleet.transcripts import agent_color, compactions, context_stats, session_name
@@ -189,7 +189,13 @@ def enrich(r, now=None):
                         if l.strip()), "") if text else ""
     # One reconciliation for both tools: this one used to count only "busy" while
     # fleetnudge also counted "waiting", so they disagreed about what busy means.
-    r["state"], r["disagree"] = reconcile(seen, r.get("status"))
+    # The shell count travels with it for the same reason -- a session holding a
+    # background shell reports `busy` while its pane is idle, and a report that
+    # calls that mid-turn is wrong about the one thing a reader checks here.
+    # This does not reach roll eligibility: `fleetupgrade` reads `claude agents`
+    # itself and still sees `busy`, so a session holding a shell stays ineligible.
+    r["shells"] = shells_running(text) if text else None
+    r["state"], r["disagree"] = reconcile(seen, r.get("status"), r["shells"])
     kids = children(r["pid"])
     r["runtime"] = [f"{len(kids)} child process(es)"] if kids else []
     if r["name"]:
