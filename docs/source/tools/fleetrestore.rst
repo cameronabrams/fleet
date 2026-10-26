@@ -41,9 +41,9 @@ Behavior
   group's panes are split into the existing window and its name and layout are left
   alone. This is the ordinary case, because liveness filtering turns "one session
   died" into a partial restore while that session's window is still on screen
-  holding its neighbours. If *two* windows already carry the name the restore stops
+  holding its neighbors. If *two* windows already carry the name the restore stops
   for that group and names both, rather than placing a session beside the wrong
-  neighbours. Windows named ``claude`` are never matched — ``automatic-rename``
+  neighbors. Windows named ``claude`` are never matched — ``automatic-rename``
   writes that over any window whose real name was lost, so it identifies nothing.
 - Each window this tool creates is named and ``automatic-rename`` turned off, so the
   next snapshot records the real name. A recorded name of ``claude`` is warned

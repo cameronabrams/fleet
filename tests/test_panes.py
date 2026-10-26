@@ -211,13 +211,26 @@ class Reconcile(unittest.TestCase):
     """The screen is a parse of a TUI that moves; `claude agents` is not. Where
     both can answer, the structured source decides -- and a disagreement is
     returned rather than resolved quietly, because a screen that reads idle while
-    the session reports busy is what a moved busy marker looks like."""
+    the session reports busy is one of the things a moved busy marker looks
+    like."""
 
     def test_the_dangerous_direction_is_caught_and_named(self):
         # BUSY_MARKER moves -> a mid-turn pane falls through to "idle" -> a tool
         # types into a session mid-turn. The status is what catches it.
         state, why = panes.reconcile("idle", "busy")
         self.assertEqual(state, "busy")
+        self.assertIn("busy marker may have moved", why)
+
+    def test_the_named_cause_is_not_the_only_cause(self):
+        """A moved marker was named as THE cause from 2026-10-01 to 2026-10-26,
+        and it was the wrong one: `claude agents` reports a session sitting at its
+        prompt with a background shell as `busy` too, and the marker was verified
+        present on the version in use. A watcher that holds a long shell then
+        reads as mid-turn for that shell's whole life, so a reader sent after a
+        moved marker is sent after the rarer limb. Both directions still resolve
+        to busy -- what is pinned here is that the sentence names both."""
+        _, why = panes.reconcile("idle", "busy")
+        self.assertIn("background shell", why)
         self.assertIn("busy marker may have moved", why)
 
     def test_the_other_direction_is_also_reported(self):

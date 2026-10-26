@@ -292,7 +292,7 @@ if __name__ == "__main__":
 @unittest.skipUnless(have_tmux(), "tmux is not installed")
 class PartialRestoreIntoAnExistingWindow(unittest.TestCase):
     """One session dies; the window it lived in is still there, holding its
-    neighbours. Restoring just that session must put it back into THAT window.
+    neighbors. Restoring just that session must put it back into THAT window.
 
     `fleetrestore` templated a window per manifest group and asked only whether
     the tmux SESSION existed, never whether the WINDOW did. So a partial restore
@@ -394,12 +394,12 @@ class PartialRestoreIntoAnExistingWindow(unittest.TestCase):
                          "a second window was created instead of reusing `deps`"
                          "\n" + r.stdout)
         self.assertEqual(self.panes_in("deps"), ["alpha", "beta"],
-                         "beta did not rejoin the window holding its neighbour"
+                         "beta did not rejoin the window holding its neighbor"
                          "\n" + r.stdout)
 
     def test_two_windows_of_that_name_is_refused_not_guessed(self):
         """The state this bug used to produce. Picking one would put a session
-        beside the wrong neighbours, and both candidates look equally right from
+        beside the wrong neighbors, and both candidates look equally right from
         the manifest -- so the tool stops and names them."""
         self.assertEqual(self.restore().returncode, 0)
         self.lose_beta()

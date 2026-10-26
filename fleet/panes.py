@@ -14,7 +14,8 @@ a pane: `❯\xa0\x1b[39mzq`). So dim text in the input line is not a draft.
 import re
 import time
 
-BUSY_MARKER = "esc to interrupt"           # footer while a turn runs (2.1.285)
+BUSY_MARKER = "esc to interrupt"           # footer while a turn runs (2.1.285;
+                                           # still present 2026-10-26 on 2.1.302)
 TRUST_MARKERS = ("trust this folder", "Is this a project you created")
 BACKGROUND_MARKER = "Background work is running"
 PROMPT = "❯"                              # the input line, followed by a no-break space when empty (2.1.272)
@@ -208,10 +209,29 @@ def reconcile(screen, status):
     RETURNED rather than resolved quietly.
 
     The dangerous direction is a screen that reads idle while the session reports
-    busy: that is what a moved busy marker looks like, and acting on it types into
-    a session mid-turn. Both directions resolve to busy -- never typing is the
-    safe error -- but a caller that hides the disagreement turns a moved marker
-    into silence, which is how this repository's worst bugs have all read."""
+    busy: a moved busy marker looks like that, and acting on it types into a
+    session mid-turn. Both directions resolve to busy -- never typing is the safe
+    error -- but a caller that hides the disagreement turns a moved marker into
+    silence, which is how this repository's worst bugs have all read.
+
+    A MOVED MARKER IS NOT THE ONLY CAUSE, and until 2026-10-26 this said it was.
+    `claude agents` reports a session that is sitting at its prompt with a
+    background shell still running as `busy`, identically to one that is mid-turn:
+    measured across every labeled pane on 2026-10-26 (2.1.302 and 2.1.308), the
+    three sessions reporting busy with an idle screen were exactly the three whose
+    status bar carried a live shell, and the two reporting busy with a busy screen
+    were exactly the two with none -- and the marker was present in both of those.
+    Nothing in the agent JSON separates the two; `pid`, `kind` and `status` are
+    identical, and the child processes are not a discriminator either (a mid-turn
+    Bash tool call and a detached background shell are both a `bash` child).
+
+    So this disagreement is PERSISTENT for a session that runs long background
+    work, not the transient skew the branch was written for. A watcher whose whole
+    job is a long shell reports busy for that shell's entire life, and a caller
+    that resolves the disagreement to busy never reaches it at all.
+    `fleetnudge` already holds the rule that covers the case -- a session at its
+    prompt holding runtime is typeable -- but keys it on the statuses `shell` and
+    `monitor`, which this version does not emit for it."""
     # Belt and braces: only "idle" and "busy" are reconciled below, so any other
     # screen state would fall through to the same answer. Removing this line
     # changes nothing TODAY -- proved by breaking it -- and it is kept so that a
@@ -221,7 +241,8 @@ def reconcile(screen, status):
     reported_busy = status in BUSY_STATUSES
     if screen == "idle" and reported_busy:
         return "busy", (f"the pane reads idle but the session reports {status!r} -- "
-                        f"the busy marker may have moved")
+                        f"the session may be at its prompt holding a background "
+                        f"shell, or the busy marker may have moved")
     if screen == "busy" and not reported_busy:
         return "busy", (f"the pane reads busy but the session reports {status!r} -- "
                         f"one of the two is stale")

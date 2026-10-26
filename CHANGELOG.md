@@ -44,6 +44,24 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **A screen/status disagreement named the wrong cause, and named it as the only
+  one.** When the pane reads idle but `claude agents` reports `busy`,
+  `fleet.panes.reconcile` said "the busy marker may have moved" — a guess that
+  sent two sessions after a stale TUI marker for eleven days. Measured across
+  every labeled pane on 2026-10-26 (2.1.302 and 2.1.308): the marker was present
+  in every pane that was genuinely mid-turn, and the panes reporting `busy` with
+  an idle screen were exactly those holding a live background shell. `claude
+  agents` reports "at the prompt with a background shell" and "mid-turn"
+  identically, and nothing else in its JSON separates them. The sentence now
+  names both possibilities. **Behavior is unchanged** — both directions still
+  resolve to busy, because never typing is the safe error — but the consequence
+  is not cosmetic: a session whose work *is* a long background shell reports
+  `busy` for that shell's whole life, so a nudge to it can never be delivered,
+  and two of the three delivery give-ups in this fleet's log are that case.
+  `fleetnudge` already holds the rule that would cover it (a session at its
+  prompt holding runtime is typeable) but keys it on the statuses `shell` and
+  `monitor`, which this version does not emit for it.
+
 - **`fleetboard` read `kernel: ?` on every WSL2 machine, permanently.** Windows
   supplies the WSL2 kernel, so `/lib/modules` holds no image and `fleet.kernels`
   found nothing to compare. For a release ending in `-WSL2` it now compares the
@@ -869,14 +887,14 @@ entries and makes you confirm the bump against this list.
 
   **The partial restore is the common case, not the edge one.** Liveness filtering
   turns every "one session died" into a partial restore, and the window that session
-  lived in is still there holding its neighbours — so the path most likely to be
+  lived in is still there holding its neighbors — so the path most likely to be
   used was the one that had never been built for. The whole-fleet path onto a bare
   server, which is the case the tool was written for and tested on, is the rarer
   one and was always correct.
 
   A group whose name matches **two** open windows is refused and both are named,
   rather than picking one: from the manifest both look equally right, and a wrong
-  pick puts a session beside the wrong neighbours. That ambiguous state is what this
+  pick puts a session beside the wrong neighbors. That ambiguous state is what this
   bug produced, so the fix has to cope with its own wreckage.
 
   Windows named `claude` are never matched. `automatic-rename` writes that name over

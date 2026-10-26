@@ -97,12 +97,38 @@ Three mechanisms produce it.
 
   The general form: **reading today's value onto a historical record.** The
   check — "was this configured then?" — came back yes and was answering a
-  neighbouring question. It fails toward *inexplicable* rather than toward calm,
+  neighboring question. It fails toward *inexplicable* rather than toward calm,
   which is the one mercy: the contradiction was at least visible, and got flagged
   as unresolved rather than given an invented cause. A peer resolved it in one
   look at `git show <rev>:fleet.toml`. The same day, that peer made the mirrored
   error in the other direction — generalizing six log entries from the three a
   tool had printed — so neither party's version of the record was the record.
+
+- **A status of `busy` stands for "cannot take a typed line", and a session
+  sitting at its prompt with a background shell running reports it too.**
+  `fleet.panes.reconcile` deliberately trusts `claude agents` over the screen for
+  busy-vs-idle, on the ground that the structured source does not depend on how a
+  frame was drawn. It does not — but it answers a *different question*: measured
+  across every labeled pane on 2026-10-26 (2.1.302 and 2.1.308), the panes
+  reporting `busy` with an idle screen were exactly those holding a live shell,
+  and `pid`, `kind` and `status` are identical for the two conditions. The child
+  processes do not separate them either: a mid-turn Bash call and a detached
+  background shell are both a `bash` child.
+
+  **What makes this a member of this catalog is the direction the refusal
+  fails in.** Both directions of the disagreement resolve to busy, because never
+  typing is the safe error — and that is right. But "we declined to type into a
+  busy pane" reads as correct caution from the tool's side while the caller
+  silently loses its result, and for a session whose work *is* a long background
+  shell the refusal is not transient but permanent: it reports busy for that
+  shell's whole life. A watcher's last act is its nudge, so exiting non-zero
+  tells a caller that has already gone. Two of the three delivery give-ups in
+  this fleet's log are that exact case, 7h47m and unreported until a human asked.
+  **A refusal that is always safe and sometimes permanent is indistinguishable
+  from a refusal that is always safe**, and the tool's own log said so with
+  confidence: it named a moved TUI marker as the cause, which sent two sessions
+  after the wrong hypothesis for eleven days while the marker was verifiably
+  present in every pane that was genuinely mid-turn.
 
 ## C. The check had only one possible outcome
 
@@ -261,7 +287,7 @@ Three mechanisms produce it.
   answer to "they expire on their own" was *"I don't like looking at them and I
   don't like not resolving them"* -- which is the whole argument above, from the
   person the alarm is for. `fleetnudge --delivered SESSION JOB "how you know"`
-  appends an assertion that the result arrived another way; `fleetwatch` honours
+  appends an assertion that the result arrived another way; `fleetwatch` honors
   it and counts it. The retry half is still undecided and is the harder question:
   a nudge has no recurring driver, so "try again" has nowhere to live.
 

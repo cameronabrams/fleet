@@ -412,7 +412,7 @@ class FormatMatchesItsUnpack(unittest.TestCase):
     def test_the_row_unpacks_to_the_fields_the_format_asks_for(self):
         """The defect this class exists for, in its post-retirement form: a row
         must unpack so that the NAME comes from the label field and nothing
-        downstream reads a neighbouring column by accident. The format has lost a
+        downstream reads a neighboring column by accident. The format has lost a
         field twice now -- the grouping, then the old name -- and each time every
         index after it moved."""
         row = ["0", "1", "win", "0", "%1", "alpha",

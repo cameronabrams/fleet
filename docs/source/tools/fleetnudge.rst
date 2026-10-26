@@ -84,6 +84,18 @@ code: tmux reads one at the end of a ``send-keys`` argument as its own command s
 and drops it, which cost a production nudge its readback on 2026-09-17. Delivery is confirmed when the tag
 appears once more in the session's transcript.
 
+.. warning::
+
+   **A session holding a background shell reports** ``busy``, **not** ``shell``.
+   Measured 2026-10-26 on 2.1.302 and 2.1.308: a session sitting at its prompt
+   with a shell still running is indistinguishable in ``claude agents --json``
+   from one that is mid-turn -- ``pid``, ``kind`` and ``status`` are identical --
+   and only the pane's status bar separates them. So the ``shell`` rule above
+   does not fire for it, and a session whose work *is* a long background shell is
+   not typeable for that shell's whole life, which is the session a watcher nudge
+   is most often aimed at. Such a nudge exhausts its wait window and exits 4; if
+   the push is muted too, the result survives only in ``nudges.log``.
+
 **One nudge types into a session at a time.** A second one waits for the first
 instead of interleaving keystrokes with it: two watchers nudged one session within
 the same second on 2026-09-17, and neither line read back. The lock
