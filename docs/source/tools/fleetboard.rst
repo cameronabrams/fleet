@@ -57,9 +57,32 @@ their age, never as current**: a value on this screen is evidence as of a time.
 The header stamp
 ----------------
 
-The first line carries the **date and the time**, not the time alone::
+The first line names **which fleet** this is, and carries the **date and the
+time**, not the time alone::
 
-   FLEET  2026-10-13 10:34 EDT   claude 2.1.296 installed
+   FLEET abrams  2026-10-13 10:34 EDT   claude 2.1.296 installed
+
+A host can run more than one fleet — that is the whole reason ``@fleet`` exists,
+after a second fleet's sessions counted as this one's and ``fleetsnap`` asked for
+a brief and a color for them. A board that does not say which fleet it is leaves
+the reader to assume.
+
+The name is re-read on each draw, like the parked list and for the same reason: a
+``--watch`` board outlives the configuration, so a fleet renamed while a board is
+up starts filtering — and saying so — without a restart. The header and the
+membership filtering take it from one place, since they sit on the same screen and
+would otherwise be two readers of one fact, each with its own fallback.
+
+Two absences, drawn differently::
+
+   FLEET (unnamed)           no [fleet].name and no [mail].fleet
+   FLEET (name unreadable)   fleet.toml would not load
+
+They filter **identically** — :func:`fleet.panes.belongs` gets ``None`` either way
+and excludes nothing — so the screen is the only place the difference can appear.
+An unnamed fleet is a working state the membership rule is built around; a
+configuration that would not load is a fleet whose name is unknown, on a machine
+that may be running somebody else's sessions.
 
 The board is normally read on a ``--watch`` pane that was started some time ago
 and is glanced at in passing, and a bare clock cannot distinguish a board that

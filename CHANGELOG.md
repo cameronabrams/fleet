@@ -32,6 +32,16 @@ entries and makes you confirm the bump against this list.
 
 ### Added
 
+- **`fleetboard`'s top line names the fleet**: `FLEET abrams  2026-10-13 10:34 EDT
+  …`. A host can run more than one — the reason `@fleet` exists at all — and the
+  header said only `FLEET`. Re-read on each draw, like the parked list, so a
+  rename reaches a `--watch` board without a restart; the header and the
+  membership filtering now take it from one helper rather than reading the name
+  two ways. An unnamed fleet draws `(unnamed)` and a `fleet.toml` that will not
+  load draws `(name unreadable)`: the two filter identically, since
+  `fleet.panes.belongs` gets `None` either way, so the screen is the only place
+  the difference can appear. Requested by Cameron.
+
 - **`fleetnudge` leaves undelivered results on disk, and `fleetboard` says so.**
   The tool had two delivery channels and no durable one: when the pane would not
   take the keystrokes *and* the phone push was muted, the result existed only in

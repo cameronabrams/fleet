@@ -9,7 +9,7 @@ Both regressions pinned here are of one kind -- a source that fails must reach
 the screen as unknown. That is the board's own stated rule, and it was broken in
 two places on arrival.
 """
-import json, os, time, unittest
+import contextlib, io, json, os, textwrap, time, unittest
 from unittest import mock
 from tests.support import APP, BASE_TOML, FakeConfig, load_tool
 
@@ -507,6 +507,91 @@ class TheConfigurationIsReReadEachDraw(unittest.TestCase):
         out = self.draw()
         self.assertIn("could not be read", out)
         self.assertIn("old-talk", out, "the live table must still draw")
+
+
+class TheHeaderNamesTheFleet(unittest.TestCase):
+    """Two fleets can share a machine -- which is why `@fleet` exists at all, after
+    a second fleet's sessions counted as this one's -- and the header said only
+    `FLEET`. An unnamed fleet and a configuration that would not load filter
+    identically, so the screen is the only place the difference can appear."""
+
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.b = load_tool("fleetboard")
+        self.b.C = dict.fromkeys(self.b.C, "")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def toml(self, text):
+        with open(os.path.join(self.cfg.config, "fleet.toml"), "w") as f:
+            f.write(textwrap.dedent(text).format(state=self.cfg.state))
+
+    def draw(self):
+        with mock.patch.object(self.b, "panes", lambda: {}), \
+             mock.patch.object(self.b, "agents", lambda: {}), \
+             mock.patch.object(self.b, "load_cache", lambda: None), \
+             mock.patch.object(self.b.versions, "installed", lambda *a, **k: "2.1.0"):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.b.draw()
+            return buf.getvalue()
+
+    def head(self):
+        return self.draw().splitlines()[1]
+
+    def test_the_name_is_on_the_top_line(self):
+        self.assertIn("testfleet", self.head())
+
+    def test_an_unnamed_fleet_says_so_rather_than_leaving_a_gap(self):
+        """A bare `FLEET` is what this looked like before the name was added, so
+        it reads as a board that does not mention the name rather than as a fleet
+        that has none."""
+        self.toml("""
+            [paths]
+            state = "{state}"
+            [colors]
+            alpha = "green"
+            """)
+        self.assertIn("(unnamed)", self.head())
+
+    def test_a_name_that_could_not_be_read_is_not_a_fleet_without_one(self):
+        """The two filter identically -- `belongs` gets None either way and
+        excludes nothing -- so a board that drew them the same would invite
+        "this is the fleet with no name" about a machine that may be running
+        somebody else's."""
+        self.toml("[fleet\nthis is not toml")
+        head = self.head()
+        self.assertIn("unreadable", head, head)
+        self.assertNotIn("(unnamed)", head, head)
+
+    def test_the_name_is_read_on_the_draw_not_at_import(self):
+        """The point of re-reading: a `--watch` board outlives the configuration,
+        and a value computed at import looks right for as long as anyone tests it
+        in a fresh process. Held still by renaming between two draws of ONE
+        already-imported module, which is what `--watch` does."""
+        first = self.head()
+        self.toml("""
+            [fleet]
+            name = "renamed"
+            [paths]
+            state = "{state}"
+            [colors]
+            alpha = "green"
+            """)
+        second = self.head()
+        self.assertIn("testfleet", first)
+        self.assertIn("renamed", second, "the name was frozen at the first draw")
+        self.assertNotIn("testfleet", second)
+
+    def test_the_header_and_the_filtering_read_one_name(self):
+        """They sit on the same screen and must agree. Two readers of one fact,
+        each with its own fallback, is how they would quietly stop agreeing."""
+        import inspect
+        src = inspect.getsource(self.b.panes)
+        self.assertIn("current_fleet()", src)
+        self.assertNotIn("fc.fleet_name", src,
+                         "panes() reads the name its own way again")
 
 
 class TheStampCarriesTheDate(unittest.TestCase):

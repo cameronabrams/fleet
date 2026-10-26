@@ -96,6 +96,51 @@ def run_json(cmd, timeout=120):
 foreign = []
 
 
+def current_fleet():
+    """(name, readable): which fleet this board is about, re-read for this draw.
+
+    Re-read per draw, like the parked list and for the same reason: `--watch`
+    outlives the configuration, so a fleet given a name while a board is up should
+    start filtering -- and saying so -- without a restart.
+
+    TWO ANSWERS, because `fc.fleet_name` returns None for two different facts and
+    only one of them is a failure. A fleet that has never been named is a working
+    state `fleet.panes.belongs` is built around: with no name nothing can be
+    excluded, so every labeled pane counts. A configuration that would not load is
+    a fleet whose name is UNKNOWN, and it filters identically -- which is exactly
+    why it has to look different on the screen. Membership cannot tell the two
+    apart and does not need to; a reader does.
+    """
+    try:
+        return fc.fleet_name(fc.load()), True
+    except Exception:
+        return None, False
+
+def fleet_title():
+    """The header's leading words, naming the fleet this board is about.
+
+    It said only `FLEET` until 2026-10-26, on a host that can run more than one --
+    which is the whole reason `@fleet` exists: a second fleet's sessions counted as
+    this one's until membership went strict, and a board that does not say which
+    fleet it is leaves the reader to assume. Requested by the one person who runs
+    two.
+    """
+    name, readable = current_fleet()
+    if name:
+        return f"{C['b']}FLEET {name}{C['r']}"
+    if readable:
+        # Stated, not left blank. A bare `FLEET` is exactly what this looked like
+        # before, so it reads as a board that merely does not mention the name
+        # rather than as a fleet that has none -- and the fix for the two differs.
+        return f"{C['b']}FLEET{C['r']} {C['dim']}(unnamed){C['r']}"
+    # Not the same as unnamed, however identically the two filter. Every other
+    # unreadable source on this board prints as a visible unknown rather than as a
+    # quiet default, and a name is not the one to make an exception for: the
+    # reading it would invite is "this is the fleet with no name", about a machine
+    # that may be running somebody else's.
+    return f"{C['b']}FLEET{C['r']} {C['red']}(name unreadable){C['r']}"
+
+
 def panes():
     out = run(["tmux","list-panes","-a","-F",
                "\t".join(["#{window_index}","#{window_name}","#{pane_id}", LABELS,
@@ -104,13 +149,9 @@ def panes():
     del foreign[:]
     if out is None:
         return None
-    # Re-read each draw, like the parked list and for the same reason: `--watch`
-    # outlives the configuration, and a fleet that is given a name while a board
-    # is up should start filtering on it without a restart.
-    try:
-        ours = fc.fleet_name(fc.load())
-    except Exception:
-        ours = None
+    # One derivation, shared with the header -- which must agree with the filtering
+    # it sits above, and would not for long if each read the name its own way.
+    ours, _readable = current_fleet()
     for line in out.splitlines():
         f = line.split("\t")
         # Membership through the shared helper, not a truthiness check on the
@@ -500,7 +541,7 @@ def draw(full=False, auto=False, show_parked=False):
     # distinguish "this redrew a minute ago" from "this froze yesterday at the same
     # hour" -- which is a failure this board has actually had (see f5c7201). The
     # stamp is taken HERE, per draw, for the same reason.
-    head = f"\n  {C['b']}FLEET{C['r']}  {time.strftime('%Y-%m-%d %H:%M %Z')}"
+    head = f"\n  {fleet_title()}  {time.strftime('%Y-%m-%d %H:%M %Z')}"
     # The installed version is what every session gets on its next restart, so it
     # is the thing the per-session column is read against. Unknown prints as `?`
     # like any other unreadable source; it is not omitted, because a missing line
