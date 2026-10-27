@@ -30,6 +30,8 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-27
+
 ### Added
 
 - **`fleetboard`'s top line names the fleet**: `FLEET abrams  2026-10-13 10:34 EDT
