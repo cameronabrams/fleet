@@ -29,7 +29,24 @@
 # Exit: 0 everything cleared; 1 no registration matched; 3 something was skipped
 # because its watcher is live -- a partial clear, which is not a failure and is
 # not success either.
+#
+# 2 is "this call could not run at all": a usage error, or a state directory that
+# could not be resolved. It is deliberately NOT 1. The arity used to be taken with
+# ${2:?session}, which writes to stderr and exits 1 -- so a watcher whose exit path
+# read `fleetregister --clear "$SESSION" 2>/dev/null` discarded the only evidence
+# and got the code that means "there was nothing to clear". A usage error and a
+# benign no-op must not be the same answer, because the benign one is the
+# comfortable reading and the registration it failed to remove surfaces much later
+# as an alarm with nothing connecting it back. Reported 2026-10-27 by a session
+# that had written exactly that line.
 set -u
+
+usage() {
+  echo "fleetregister: $1" >&2
+  echo "  usage: fleetregister [--local] <session> <jobid> <pid> [note]" >&2
+  echo "         fleetregister --clear <session> <jobid>" >&2
+  exit 2
+}
 
 # One version for everything in this repository, read from the one place it is
 # written. Answered before argument handling: the tools that follow take a
@@ -46,7 +63,10 @@ D=$(PYTHONPATH="$HERE/.." python3 -c 'from fleet import config as c; print(c.sta
 [ "$D" = "/watchers" ] && { echo "fleetregister: could not resolve state dir from fleet.toml" >&2; exit 2; }
 mkdir -p "$D"
 if [ "${1:-}" = "--clear" ]; then
-  S=${2:?session}; J=${3:?jobid}; n=0; skipped=0
+  # Counted, not defaulted. `${2:?}` exits 1 and only complains on stderr; a
+  # caller that redirects stderr and reads $? then sees a clean no-op.
+  [ "$#" -eq 3 ] || usage "--clear takes exactly a session and a job id, got $(($# - 1))"
+  S=$2; J=$3; n=0; skipped=0
   for f in "$D/$S-$J-"*.json; do
     [ -e "$f" ] || continue
     read -r P ST < <(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r["pid"], r.get("starttime",""))' "$f")
@@ -100,7 +120,10 @@ fi
 # a watcher declares itself instead of being inferred from text.
 WORK=
 if [ "${1:-}" = "--local" ]; then WORK=local; shift; fi
-S=${1:?session}; J=${2:?jobid}; P=${3:?pid}; N=${4:-}
+# After the flag is consumed, so --local does not shift what counts as too few.
+[ "$#" -ge 3 ] || usage "a session, a job id and a pid are all required, got $#"
+[ "$#" -le 4 ] || usage "too many arguments (a note with spaces needs quoting), got $#"
+S=$1; J=$2; P=$3; N=${4:-}
 # A pid alone is not an identity: the kernel reuses them. Measured here
 # 2026-09-12 -- pid_max 4194304, 2.6-5.9 pids/s -> full wrap in 8-19 days -- so a
 # registration that is never cleared is EVENTUALLY GUARANTEED to name an

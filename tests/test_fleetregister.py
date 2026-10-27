@@ -265,3 +265,79 @@ class DeclaringLocalWork(unittest.TestCase):
         self.proc.kill(); self.proc.wait()
         self.assertEqual(self.run_tool("--clear", "alpha", "crawl").returncode, 0)
         self.assertEqual(glob.glob(os.path.join(self.watch, "alpha-crawl-*.json")), [])
+
+
+class CalledWrongIsNotCalledEmpty(unittest.TestCase):
+    """A usage error must not share an exit code with a benign no-op.
+
+    `--clear` took its arguments with `${2:?session}` / `${3:?jobid}`, which
+    writes to stderr and exits 1. A watcher's exit path wrote
+
+        fleetregister --clear "$SESSION" 2>/dev/null
+
+    -- the real arity is `--clear <session> <jobid>` -- so the redirect swallowed
+    the only evidence and the status was 1, which is the documented "no
+    registration matched". The caller could not tell "I called this wrong and
+    nothing happened" from "there was nothing to clear", and the second reading
+    is the comfortable one. It leaves behind exactly the dead registration the
+    clear exists to remove, and that surfaces later as an alarm with nothing
+    connecting it back. Reported 2026-10-27 after it happened.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.watch = os.path.join(self.cfg.state, "watchers")
+        self.proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+
+    def tearDown(self):
+        if self.proc.poll() is None:
+            self.proc.kill()
+        self.proc.wait()
+        self.cfg.close()
+
+    def run_tool(self, *args):
+        return subprocess.run([TOOL, *map(str, args)], capture_output=True, text=True,
+                              env=dict(os.environ))
+
+    def test_a_short_clear_is_refused_not_reported_as_nothing_to_clear(self):
+        r = self.run_tool("--clear", "alpha")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("usage", r.stderr.lower())
+
+    def test_nothing_to_clear_keeps_its_own_code(self):
+        """The other half: the two readings must stay apart in BOTH directions,
+        or the fix has only moved which one is ambiguous."""
+        r = self.run_tool("--clear", "alpha", "123456")
+        self.assertEqual(r.returncode, 1, r.stderr)
+
+    def test_a_short_register_is_refused_too(self):
+        """Same defect on the register path: `${3:?pid}` exited 1, which is also
+        `pid not running -- nothing to register`."""
+        for args in ((), ("alpha",), ("alpha", "123456")):
+            with self.subTest(args=args):
+                r = self.run_tool(*args)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertIn("usage", r.stderr.lower())
+
+    def test_a_dead_pid_still_refuses_with_its_own_code(self):
+        self.proc.kill(); self.proc.wait()
+        r = self.run_tool("alpha", "123456", self.proc.pid)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("not running", r.stderr)
+
+    def test_the_local_flag_does_not_shift_the_arity_check(self):
+        r = self.run_tool("--local", "alpha", "crawl")
+        self.assertEqual(r.returncode, 2, r.stderr)
+
+    def test_a_trailing_argument_too_many_is_refused(self):
+        """`--clear` ignored anything after the job id, so a note copied from the
+        register call -- the obvious mistake -- was accepted in silence."""
+        r = self.run_tool("--clear", "alpha", "123456", "a note")
+        self.assertEqual(r.returncode, 2, r.stderr)
+
+    def test_the_refusal_names_the_arity_it_wanted(self):
+        """A usage error that does not say the usage sends the reader to the
+        source. Both forms, because the one you called wrong is the one you need
+        printed."""
+        self.assertIn("--clear <session> <jobid>",
+                      self.run_tool("--clear", "alpha").stderr)
+        self.assertIn("<session> <jobid> <pid>", self.run_tool("alpha").stderr)

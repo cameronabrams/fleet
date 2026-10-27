@@ -81,6 +81,34 @@ entries and makes you confirm the bump against this list.
   is reported separately from `finished_watchers`, because there is no `sacct` for
   a local process and "it ended" is the whole claim.
 
+- **`fleetregister` answered a usage error with the code for "nothing to do".**
+  The arity was taken with `${2:?session}`, which writes its complaint to
+  **stderr** and exits 1 — and 1 is the documented "no registration matched". A
+  watcher's exit path written as `fleetregister --clear "$SESSION" 2>/dev/null`
+  (the arity is `--clear <session> <jobid>`) discarded the only evidence and got
+  back the comfortable reading, leaving behind exactly the dead registration the
+  clear exists to remove — which surfaces much later as a report about a watcher
+  nobody can account for, with nothing connecting it back. **A usage error now
+  exits 2**, which already meant "this call could not run at all", and the
+  message prints both forms. Too *many* arguments is refused for the same reason:
+  `--clear` used to ignore a trailing note copied from the register call. The
+  register path had the same defect — `${3:?pid}` exited 1, and so does `pid not
+  running -- nothing to register`. Exit codes are now written down on the tool's
+  docs page. Reported by the session that had written that line.
+
+- **An unaccountable dead registration is no longer in the `!!` block.** The
+  first version of the change above put it there, and it was found firing on a
+  leftover test fixture within the hour. That block means live work may be going
+  unwatched *right now*, and an unclassified row cannot be that: the test that
+  classified it said its job is not an id of this cluster, so there is no cluster
+  work behind it to be unwatched. What is left is a record to tidy, most often
+  local work whose owner forgot `--local` — and alarming on a forgotten flag
+  rebuilds, one transition later, the false positive the change set out to
+  remove. It is still named, still outside the all-clear, and now prints **both**
+  readings, because they want opposite things done: local work registered without
+  the flag is re-armed or cleared, while a job id written down wrong means cluster
+  work that has had no watcher at all.
+
 - **Another real session name in a public test fixture**, in an adoption-log line
   in `tests/test_versions.py`, replaced with a placeholder. Found by grepping the
   diff of the change above rather than by any check — there cannot be one, since

@@ -41,6 +41,39 @@ registered process is still alive (same pid and start time, not a zombie), and f
 if nothing is registered for that session and job. ``--local`` changes none of
 that.
 
+Exit codes
+----------
+
+.. list-table::
+   :widths: 8 92
+
+   * - ``0``
+     - registered, or everything cleared
+   * - ``1``
+     - **nothing happened, and that is a fact about the registry**: no
+       registration matched the clear, or the pid being registered is not running
+   * - ``2``
+     - **the call could not run at all**: a usage error, or a state directory that
+       could not be resolved from ``fleet.toml``
+   * - ``3``
+     - a partial clear — something was skipped because its watcher is still live
+
+``1`` and ``2`` are kept apart on purpose. The arity used to be taken with
+``${2:?session}``, which writes its complaint to **stderr** and exits ``1`` — and
+``1`` is "no registration matched". A watcher whose exit path read
+
+.. code-block:: bash
+
+   fleetregister --clear "$SESSION" 2>/dev/null     # the arity is <session> <jobid>
+
+discarded the only evidence and got back the code meaning "there was nothing to
+clear". Of the two readings available to the caller, the comfortable one was
+indistinguishable from the true one, and the registration it failed to remove
+surfaced much later as a report about a watcher nobody could account for, with
+nothing connecting it back. Reported 2026-10-27 by the session that had written
+that line. Too *many* arguments is refused for the same reason: ``--clear`` used
+to ignore a trailing note copied from the register call.
+
 Local work
 ----------
 

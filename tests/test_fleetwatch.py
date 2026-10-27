@@ -940,17 +940,17 @@ class AWatchOnLocalWorkIsNotClusterWork(Base):
         self.assertEqual(d["finished_watchers"], [],
                          "finished means the scheduler said so; nothing did here")
 
-    def test_a_dead_undeclared_registration_still_alarms_and_names_the_fix(self):
-        """The alarming direction is the right one here. Its pid is gone and
-        nothing can be asked about its work, which is exactly what the `!!` block
-        is for -- but the old sentence blamed a `wrong id in the registration`
-        for a registration whose id was never meant to be one."""
+    def test_a_dead_undeclared_registration_blames_no_typo(self):
+        """The old sentence read `wrong id in the registration?` for a
+        registration whose id was never meant to be one -- it came back from
+        asking sacct about a name that could not be a job. Both readings are
+        named now, and neither is stated as the fact."""
         dead = [{"session": "alpha", "job": "crawl", "pid": 1,
                  "_kind": "unclassified", "_file": "/dev/null"}]
         out = self.report(registered=({}, dead, {}, {}))
-        self.assertIn("ITS WORK CANNOT BE CHECKED", out)
         self.assertIn("--local", out)
         self.assertNotIn("wrong id in the registration", out)
+        self.assertIn("/dev/null", out, "the file to go and look at")
 
     def test_sacct_is_never_asked_about_something_that_is_not_a_job_id(self):
         """`final_states` interpolates each id into a remote shell command, so
@@ -975,3 +975,28 @@ class AWatchOnLocalWorkIsNotClusterWork(Base):
         self.assertEqual(d["stale_watchers"], [])
         self.assertEqual([(r["job"], r["kind"]) for r in d["watchers_offcluster"]],
                          [("crawl", "local")])
+
+    def test_a_dead_undeclared_registration_is_not_in_the_alarm_block(self):
+        """Settled 2026-10-27, after a peer found the first version of this
+        reporting it as `!!`.
+
+        The `!!` block means live work may be going unwatched right now. An
+        unclassified registration cannot be that: the test that classified it
+        said its job is not an id of this cluster, so there is no cluster work
+        behind it to be going unwatched. What is left is a record to tidy -- by
+        far most often local work whose owner forgot `--local` -- and firing the
+        fleet's loudest alarm on a forgotten flag rebuilds, one transition later,
+        the exact false positive this change removed.
+
+        It is still not an all-clear, and both remedies are named, because the
+        other reading -- a cluster job id written down wrong -- is real and would
+        mean work running with nobody watching it.
+        """
+        dead = [{"session": "alpha", "job": "crawl", "pid": 1,
+                 "_kind": "unclassified", "_file": "/dev/null"}]
+        out = self.report(registered=({}, dead, {}, {}))
+        self.assertNotIn("!!", out)
+        self.assertIn("nothing here can account for", out)
+        self.assertIn("fleetregister --local", out, "the local reading")
+        self.assertIn("fleetregister --clear", out, "and the way to end it")
+        self.assertNotIn("All live work is watched", out)

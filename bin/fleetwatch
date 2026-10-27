@@ -936,13 +936,27 @@ def main():
             print("      registration: %s" % r["_file"])
 
     if unclassified_dead:
-        print("\n!! REGISTERED WATCHER IS DEAD, AND ITS WORK CANNOT BE CHECKED -- its pid")
-        print("   is gone and its job is not an id %s can be asked about." % CLUSTER_NAME)
+        # Deliberately NOT in the `!!` block. That block means live work may be
+        # going unwatched right now, and an unclassified row cannot be that: the
+        # test that classified it said its job is not an id of this cluster, so
+        # there is no cluster work behind it to be unwatched. What is left is a
+        # record to tidy -- most often local work whose owner forgot `--local` --
+        # and alarming on a forgotten flag would rebuild, one transition later,
+        # the false positive this whole branch removed. Settled 2026-10-27.
+        print("\n   a dead registration nothing here can account for: its pid is gone")
+        print("   and its job is not an id %s can be asked about, so neither this" % CLUSTER_NAME)
+        print("   tool nor the scheduler can say what became of the work.")
         for r in unclassified_dead:
-            print("   %s watched %s as pid %s, armed %s" %
+            print("   %s / %s  pid %s, armed %s" %
                   (r.get("session"), r.get("job"), r.get("pid"), r.get("armed", "?")))
-            print("      %s" % r.get("_why", ""))
             print("      registration: %s" % r["_file"])
+        # Both readings, because they want opposite things done. Local work
+        # registered without the flag is tidied away; a job id written down wrong
+        # means cluster work that has been running with nobody watching it.
+        print("   If it was local work, the flag was missed -- re-arm with")
+        print("   `fleetregister --local`, or `fleetregister --clear <session> <job>`")
+        print("   if it is over. If that was meant to be a job id, it is wrong, and")
+        print("   the work it names has had no watcher.")
 
     if ended:
         print("\n   local work whose process has exited (the normal end of a local job,")

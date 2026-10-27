@@ -106,6 +106,26 @@ So a registration now carries which kind of work it is on:
    registration written before the flag existed lands here, which is the point:
    the alarm has to stop for records already on disk.
 
+Why an unaccountable dead registration is not an alarm
+``````````````````````````````````````````````````````
+
+An ``unclassified`` registration whose pid is gone is reported, named, and left
+out of the all-clear — but not in the ``!!`` block. The first version of this put
+it there, and a peer session found it firing on a leftover test fixture within the
+hour.
+
+That block means *live work may be going unwatched right now*. An unclassified row
+cannot be that: the test that classified it said its job is not an id of this
+cluster, so there is no cluster work behind it to be unwatched. What is left is a
+record to tidy, and by far the most likely reason for one is local work whose
+owner forgot ``--local``. Alarming on a forgotten flag rebuilds, one transition
+later, the exact false positive this branch exists to remove.
+
+Both readings are printed, because they want opposite things done. Local work
+registered without the flag is re-armed or cleared. A *job id written down wrong*
+means cluster work that has had no watcher at all — rarer, worse, and not
+something this tool can tell you is the case.
+
 This also keeps a name that was never a job id out of ``sacct``. ``final_states``
 interpolates each id into a remote shell command, so the old path asked the
 cluster about ``crawl`` and read the inevitable "never heard of it" back as
@@ -124,9 +144,9 @@ Report sections
 ``REGISTERED WATCHER IS DEAD``
    the registered process is gone while its job is still live, or ``sacct`` cannot
    show that the job ended
-``REGISTERED WATCHER IS DEAD, AND ITS WORK CANNOT BE CHECKED``
+``a dead registration nothing here can account for``
    the registered process is gone and its job is not an id this cluster can be
-   asked about
+   asked about. **Not** in the ``!!`` block — see below
 ``local work, not cluster work``
    a live ``--local`` registration; nothing to do
 ``registered against something that is not a job id``
@@ -304,8 +324,10 @@ Top-level keys:
        no scheduler record for a local process, so "it ended" is the whole claim.
    * - ``unclassified_watchers``
      - dead registrations whose job is not an id of this cluster and was not
-       declared local, so nothing can say whether the work ended. Alarming, with
-       ``_why`` naming ``--local`` as the fix.
+       declared local, so nothing can say whether the work ended. ``_why`` says
+       which test it failed. Reported, and never part of the all-clear, but not
+       in the ``!!`` block — see *Why an unaccountable dead registration is not
+       an alarm*.
    * - ``finished_watchers``
      - registrations whose process exited *because* the job ended — the normal end
        of a watcher, reported separately so that a campaign ending does not train
