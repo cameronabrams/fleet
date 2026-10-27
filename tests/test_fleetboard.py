@@ -9,7 +9,7 @@ Both regressions pinned here are of one kind -- a source that fails must reach
 the screen as unknown. That is the board's own stated rule, and it was broken in
 two places on arrival.
 """
-import contextlib, io, json, os, textwrap, time, unittest
+import contextlib, datetime, io, json, os, textwrap, time, unittest
 from unittest import mock
 from tests.support import APP, BASE_TOML, FakeConfig, load_tool
 
@@ -1372,3 +1372,203 @@ class UndeliveredResultsOnTheBoard(unittest.TestCase):
         line = self.b.pending_line()
         self.assertIn("1 undelivered result", line)
         self.assertIn("1 unreadable", line)
+
+
+class TheBackupIsASourceLikeAnyOther(unittest.TestCase):
+    """A nightly backup nobody sees fail.
+
+    The producer mails its early aborts to a local mailbox nobody reads: between
+    May and October 2026 that mailbox collected 18 skips and aborts, and on 15 of
+    those nights no archive was made. The board is where a human is already
+    looking. Requested by a peer session 2026-10-27.
+
+    The alarm is on the age of the **last archive that actually landed**, and on
+    nothing else. Two things follow, and both are tested here.
+
+    An exit code is never read. A good night exits 1 routinely -- "file changed
+    while we backed it up" is a warning -- so a board that colored on rc would be
+    red most mornings and ignored on the one that mattered.
+
+    And the file describing the latest *attempt* never decides the color. It is
+    rewritten whatever became of the run, so letting it speak would put a cheerful
+    outcome beside an archive two days old. It supplies the detail line once the
+    alarm is already up, and only then.
+    """
+    TOML = BASE_TOML + '''
+[backup]
+label = "borg"
+last_archive = "{state}/borg/last-archive.json"
+last_run = "{state}/borg/last-run.json"
+stale_after_h = 26
+'''
+
+    def setUp(self):
+        self.cfg = FakeConfig(toml=self.TOML)
+        self.dir = os.path.join(self.cfg.state, "borg")
+        os.makedirs(self.dir, exist_ok=True)
+        self.arch = os.path.join(self.dir, "last-archive.json")
+        self.run = os.path.join(self.dir, "last-run.json")
+        self.b = load_tool("fleetboard")
+        # Named colors. The real table is empty off a tty, so `assertNotIn` on an
+        # escape code would pass against uncolored output -- the reassuring
+        # direction, and on the one assertion here that most needs to bite.
+        self.b.C = dict.fromkeys(self.b.C, "")
+        self.b.C.update({"red": "<RED>", "dim": "<DIM>", "r": "<->"})
+        self.addCleanup(self.cfg.close)
+
+    def write(self, path, doc):
+        with open(path, "w") as f:
+            json.dump(doc, f)
+
+    def archive(self, hours_ago=2.0, **kw):
+        when = datetime.datetime.now().astimezone() - datetime.timedelta(hours=hours_ago)
+        d = {"time": when.isoformat(), "archive": "host-2026-10-27T02:30:01",
+             "nfiles": 3003147, "deduplicated_bytes": 14396159461,
+             "original_bytes": 15201599942524}
+        d.update(kw)
+        self.write(self.arch, d)
+        return d
+
+    # -- the source failing ---------------------------------------------------
+
+    def test_a_missing_file_is_not_a_quiet_morning(self):
+        state, data = self.b.read_backup(self.arch, 26)
+        self.assertEqual(state, "missing")
+        self.assertIn("does not exist", data["error"])
+
+    def test_an_unparseable_file_is_not_a_missing_one(self):
+        """Kept apart because the sentence a reader needs differs: never written
+        at all, versus written in a shape this board cannot read."""
+        with open(self.arch, "w") as f:
+            f.write("{not json")
+        state, _ = self.b.read_backup(self.arch, 26)
+        self.assertEqual(state, "unreadable")
+
+    def test_a_file_with_no_readable_time_is_unreadable(self):
+        self.archive(time="the day before yesterday")
+        state, data = self.b.read_backup(self.arch, 26)
+        self.assertEqual(state, "unreadable")
+        self.assertIn("no readable `time`", data["error"])
+
+    def test_a_file_that_is_not_an_object_is_unreadable(self):
+        self.write(self.arch, [1, 2, 3])
+        self.assertEqual(self.b.read_backup(self.arch, 26)[0], "unreadable")
+
+    # -- the age, which is the whole alarm -------------------------------------
+
+    def test_an_archive_inside_the_window_is_ok(self):
+        self.archive(hours_ago=2)
+        self.assertEqual(self.b.read_backup(self.arch, 26)[0], "ok")
+
+    def test_an_archive_past_the_window_is_stale(self):
+        self.archive(hours_ago=30)
+        self.assertEqual(self.b.read_backup(self.arch, 26)[0], "stale")
+
+    def test_the_window_is_the_configured_one(self):
+        """26 h and not 24: a slow night -- a new disk, so every inode is new and
+        the files cache misses -- lands the archive late, and a window with no
+        slack cries wolf the next morning."""
+        self.archive(hours_ago=25)
+        self.assertEqual(self.b.read_backup(self.arch, 26)[0], "ok")
+        self.assertEqual(self.b.read_backup(self.arch, 24)[0], "stale")
+
+    def test_the_offset_in_the_timestamp_is_honored(self):
+        """`time` carries an offset and the board runs in local time. Parsing it
+        as naive would shift the age by the offset -- four hours here, which is a
+        sixth of the window."""
+        when = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=2)
+        self.write(self.arch, {"time": when.astimezone(
+            datetime.timezone(datetime.timedelta(hours=9))).isoformat()})
+        state, data = self.b.read_backup(self.arch, 26)
+        self.assertEqual(state, "ok")
+        self.assertAlmostEqual(data["_age_s"], 7200, delta=90)
+
+    # -- what must NOT decide the color ---------------------------------------
+
+    def test_a_nonzero_rc_on_a_good_night_is_not_an_alarm(self):
+        """The producer's own contract: `archive_created` with rc 1 is a success,
+        because a file changing mid-backup is a warning borg returns 1 for."""
+        self.archive(hours_ago=2)
+        self.write(self.run, {"outcome": "archive_created", "backup_rc": "1",
+                              "prune_rc": "0", "compact_rc": "0"})
+        state, data, cfg = self.b.backup()
+        self.assertEqual(state, "ok")
+        line = self.b.backup_line(state, data, cfg)
+        self.assertNotIn("<RED>", line, "red on a successful night")
+
+    def test_a_cheerful_last_run_does_not_rescue_a_stale_archive(self):
+        """`last-run.json` describes the latest ATTEMPT. A run that skipped and
+        exited cleanly writes a benign outcome while no archive was made."""
+        self.archive(hours_ago=40)
+        self.write(self.run, {"outcome": "skipped", "reason": "another borg holds the lock"})
+        state, data, cfg = self.b.backup()
+        self.assertEqual(state, "stale")
+        line = self.b.backup_line(state, data, cfg)
+        self.assertIn("NO ARCHIVE FOR", line)
+        self.assertIn("another borg holds the lock", line, "the detail, once red")
+
+    def test_the_rc_fields_are_never_read(self):
+        """Checked at the seam rather than by reading the code: a stale archive
+        beside an all-zero rc must still be red."""
+        self.archive(hours_ago=40)
+        self.write(self.run, {"outcome": "archive_created", "backup_rc": "0"})
+        self.assertEqual(self.b.backup()[0], "stale")
+
+    # -- the line -------------------------------------------------------------
+
+    def test_a_good_night_still_prints(self):
+        """A stanza that appears only on a bad morning cannot be told apart from
+        one that is not running -- the defect the kernel line already had."""
+        self.archive(hours_ago=2)
+        line = self.b.backup_line(*self.b.backup())
+        self.assertIn("borg:", line)
+        self.assertIn("3,003,147 files", line)
+        self.assertIn("14.4 GB", line)
+
+    def test_an_unknown_source_says_so_rather_than_nothing(self):
+        line = self.b.backup_line(*self.b.backup())
+        self.assertIn("UNKNOWN", line)
+        self.assertIn("<RED>", line, "red")
+
+    def test_an_unreadable_last_run_does_not_take_the_alarm_with_it(self):
+        """The detail is decoration on a line that is already red. If reading it
+        could raise, a missed backup would print nothing at all."""
+        self.archive(hours_ago=40)
+        with open(self.run, "w") as f:
+            f.write("{not json")
+        line = self.b.backup_line(*self.b.backup())
+        self.assertIn("NO ARCHIVE FOR", line)
+
+    def test_no_last_run_configured_is_not_an_error(self):
+        self.cfg.close()
+        self.cfg = FakeConfig(toml=self.TOML.replace(
+            'last_run = "{state}/borg/last-run.json"\n', ""))
+        self.dir = os.path.join(self.cfg.state, "borg")
+        os.makedirs(self.dir, exist_ok=True)
+        self.arch = os.path.join(self.dir, "last-archive.json")
+        b = load_tool("fleetboard")
+        b.C = dict(self.b.C)
+        self.archive(hours_ago=40)
+        line = b.backup_line(*b.backup())
+        self.assertIn("NO ARCHIVE FOR", line)
+
+
+class ABackupNobodyConfiguredIsSilence(unittest.TestCase):
+    """Absent configuration is the one absence here that is not a failure.
+
+    Same contract as `[updates]`: a fleet that does not track backups is not a
+    fleet whose backups are unknown, and inventing a red line on every machine
+    that has not configured one would make the stanza worthless where it matters.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.b = load_tool("fleetboard")
+        self.addCleanup(self.cfg.close)
+
+    def test_nothing_configured_draws_no_line(self):
+        self.assertEqual(self.b.backup(), (None, None, None))
+        self.assertIsNone(self.b.backup_line(*self.b.backup()))
+
+    def test_the_config_reader_says_none(self):
+        from fleet import config as fc
+        self.assertIsNone(fc.backup(fc.load()))

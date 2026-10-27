@@ -30,6 +30,42 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Added
+
+- **`fleetboard` says when the last backup landed**, configured in a new
+  `[backup]` section and silent when nothing is. Nobody sees a nightly backup
+  fail: on the machine this was written for the producer mailed its early aborts
+  to a local mailbox nobody reads, and between May and October 2026 that mailbox
+  collected 18 skips and aborts covering 15 nights with no archive at all. The
+  board is where a human is already looking.
+
+      borg: host-2026-10-27T02:30:01, 3,003,147 files, 14.4 GB - 2h ago
+      borg: NO ARCHIVE FOR 40h -- the last one is host-2026-10-26T02:30:01;
+            last run: skipped -- another borg holds the lock
+
+  The alarm is the **age of the newest archive that actually landed**, and
+  nothing else — not whether the job ran, since a backup that skips and exits
+  cleanly is the case this exists for. **No exit code is read.** A good night
+  exits 1 routinely ("file changed while we backed it up" is a warning), so a
+  board that colored on `rc` would be red most mornings and ignored on the one
+  that mattered. For the same reason the file describing the latest *attempt*
+  never decides the color — it is rewritten whatever became of the run, so
+  letting it speak would put a cheerful outcome beside an archive two days old;
+  it supplies the detail once the alarm is up, and the line survives that file
+  being missing or unreadable.
+
+  A good night prints too, dim: a stanza that appears only on a bad morning
+  cannot be told apart from one that is not running, which is the defect the
+  kernel line already had. Missing, unreadable and stale are kept apart although
+  all three are red, because the sentence a reader needs differs in each. The
+  default window is 26 hours rather than 24, because a slow night — a new disk,
+  so every inode is new and the file cache misses — lands the archive late and a
+  window with no slack cries wolf the next morning.
+
+  The paths are configuration, not application, for the reason `[updates]` already
+  is: they name one host's own arrangement and this repository may not. Absent
+  `[backup]` draws no line at all. Requested by a peer session.
+
 ### Fixed
 
 - **`fleetwatch` reported a healthy local job as a monitor whose work had died.**

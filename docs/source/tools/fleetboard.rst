@@ -276,6 +276,41 @@ Unknown is not fine. If ``/etc/os-release`` cannot be read, or carries no
 ``VERSION_ID``, or the document names no target, the line is printed exactly as
 it was before — the count with its age, which is never wrong, only incomplete.
 
+The last backup
+---------------
+
+Configured in ``[backup]`` (see :doc:`../configuration`), and silent when nothing
+is. The line is printed whether the news is good or not:
+
+.. code-block:: text
+
+   borg: host-2026-10-27T02:30:01, 3,003,147 files, 14.4 GB - 2h ago
+   borg: NO ARCHIVE FOR 40h -- the last one is host-2026-10-26T02:30:01; last
+         run: skipped -- another borg holds the lock
+   borg: UNKNOWN -- ~/.local/state/borg/last-archive.json does not exist
+
+**A stanza that appears only on a bad morning cannot be told apart from one that
+is not running** — the defect the kernel line already had, found by a reader going
+to look for a warning the day after it landed. So a good night prints too, dim.
+
+The alarm is the **age of the newest archive that actually landed**, and nothing
+else. Not whether the job ran: a nightly backup that skips and exits cleanly is
+exactly the case this exists for. Between May and October 2026 on the machine
+this was written for, the producer mailed 18 skips and aborts to a local mailbox
+nobody reads, and on 15 of those nights no archive was made.
+
+**No exit code is read.** A good night exits 1 routinely — "file changed while we
+backed it up" is a warning — so a board that colored on ``rc`` would be red most
+mornings and would be ignored on the one that mattered. For the same reason the
+file describing the latest *attempt* never decides the color: it is rewritten
+whatever became of the run, so letting it speak would put a cheerful outcome
+beside an archive two days old. It supplies the detail once the alarm is up.
+
+Missing, unreadable and stale are kept apart, although all three are red, because
+the sentence a reader needs differs: a producer that has never written, one that
+wrote something this board cannot read, and one that is working and whose last
+success is too old.
+
 The kernel is read live, not from that document
 -----------------------------------------------
 

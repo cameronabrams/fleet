@@ -26,7 +26,7 @@ state layout and two of its tools, and that coupling had no test across it: when
 `fleetsnap` changed its housekeeping on 2026-10-03 the board went blind, and only
 one side of the dependency had CI.
 """
-import json, os, shutil, subprocess, sys, time
+import datetime, json, os, shutil, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import kernels
@@ -349,6 +349,91 @@ def read_updates(path, stale_hours, now=None):
     return ("stale" if age_h > stale_hours else "ok"), d
 
 
+def read_backup(path, stale_after_h, now=None):
+    """(state, data) for the last-archive file. State is one of:
+
+      "ok"         -- an archive landed within the window
+      "stale"      -- the newest archive is older than `stale_after_h`
+      "missing"    -- the file is not there
+      "unreadable" -- it is there and could not be read, parsed, or dated
+
+    Every state but "ok" is red. They are kept apart anyway, because the sentence
+    a reader needs is different in each: a missing file is a producer that has
+    never written, an unreadable one is a producer that wrote something this board
+    does not understand, and a stale one is a producer that is working and whose
+    last success is too old. Collapsing them would put "no backup for 26 hours" on
+    screen for a file that was simply never created.
+
+    **Nothing here reads an exit code.** A good night exits 1 routinely -- "file
+    changed while we backed it up" is a warning, not a failure -- so a board that
+    colored on rc would be red most mornings and would then be ignored on the
+    morning it mattered. The only question asked is whether an archive landed and
+    when, which is why the producer must write this file after verifying the
+    archive exists rather than after a successful return.
+    """
+    now = time.time() if now is None else now
+    try:
+        with open(path) as f:
+            d = json.load(f)
+    except FileNotFoundError:
+        return "missing", {"error": "%s does not exist" % path}
+    except OSError as e:
+        return "unreadable", {"error": "cannot read %s (%s)" % (path, e.strerror or e)}
+    except ValueError as e:
+        return "unreadable", {"error": "%s is not readable JSON (%s)" % (path, e)}
+    if not isinstance(d, dict):
+        return "unreadable", {"error": "%s does not hold an object" % path}
+    try:
+        at = datetime.datetime.fromisoformat(str(d.get("time"))).timestamp()
+    except (TypeError, ValueError):
+        return "unreadable", dict(d, error="no readable `time` in %s" % path)
+    d = dict(d, _age_s=now - at)
+    return ("stale" if (now - at) / 3600.0 > stale_after_h else "ok"), d
+
+
+def backup():
+    """(state, data, cfg) for this machine's backups, or (None, None, None) when
+    no source is configured.
+
+    Re-read on every call, like `updates` and `parked`: a `--watch` board outlives
+    the nightly run that rewrites the file underneath it, and the whole point is
+    to notice the morning it did not.
+    """
+    try:
+        cfg = fc.backup(fc.load())
+    except Exception as e:
+        return "unreadable", {"error": "could not read [backup] (%s)" % e}, None
+    if not cfg:
+        return None, None, None
+    state, data = read_backup(cfg["last_archive"], cfg["stale_after_h"])
+    return state, data, cfg
+
+
+def last_run_detail(path):
+    """`outcome` and `reason` from the last-run file, as one short phrase.
+
+    Detail only, and reached only when the alarm is already up. It never decides
+    the color: this file describes the latest ATTEMPT whatever became of it, so
+    letting it speak would put a cheerful `outcome` beside an archive that is two
+    days old.
+    """
+    if not path:
+        return None
+    try:
+        with open(path) as f:
+            d = json.load(f)
+        if not isinstance(d, dict):
+            return "%s does not hold an object" % path
+    except OSError as e:
+        return "and %s could not be read (%s)" % (path, e.strerror or e)
+    except ValueError:
+        return "and %s is not readable JSON" % path
+    out, why = d.get("outcome"), d.get("reason")
+    if not out and not why:
+        return "last run says nothing about its outcome"
+    return "last run: %s%s" % (out or "?", " -- %s" % why if why else "")
+
+
 def updates():
     """(state, data) for this machine's pending updates, or (None, None) when no
     source is configured -- which is silence, not a failure.
@@ -475,6 +560,47 @@ def updates_line(u_state, u_data):
     return None
 
 
+def gb(n):
+    """Bytes as GB, or None. Decimal GB, matching what a disk and a backup report
+    say about themselves."""
+    try:
+        return "%.1f GB" % (float(n) / 1e9)
+    except (TypeError, ValueError):
+        return None
+
+
+def backup_line(b_state, b_data, b_cfg):
+    """One line about the last backup, or None when no source is configured.
+
+    Printed when it is FINE as well as when it is not. A stanza that appears only
+    on a bad morning is indistinguishable from one that is not running, which is
+    the same defect the kernel line had: a reader went looking for the warning the
+    day after it landed and could not tell the quiet case from the broken one.
+    """
+    if b_state is None:
+        return None
+    label = (b_cfg or {}).get("label", "backup")
+    if b_state in ("missing", "unreadable"):
+        return (f"  {C['red']}{label}: UNKNOWN -- "
+                f"{(b_data or {}).get('error', 'no reason given')}{C['r']}")
+    detail = ""
+    if b_state == "stale":
+        d = last_run_detail((b_cfg or {}).get("last_run"))
+        if d:
+            detail = f"{C['dim']}; {d}{C['r']}"
+        return (f"  {C['red']}{label}: NO ARCHIVE FOR {age(time.time() - b_data['_age_s'])}"
+                f" -- the last one is {b_data.get('archive') or '?'}{C['r']}{detail}")
+    what = [b_data.get("archive") or "?"]
+    n = b_data.get("nfiles")
+    if n:
+        what.append("%s files" % f"{int(n):,}")
+    size = gb(b_data.get("deduplicated_bytes"))
+    if size:
+        what.append(size)
+    return (f"  {C['dim']}{label}: {', '.join(what)} - "
+            f"{age(time.time() - b_data['_age_s'])} ago{C['r']}")
+
+
 def pending_line():
     """What never reached a session, as one line at the top of the board.
 
@@ -530,6 +656,7 @@ def draw(full=False, auto=False, show_parked=False):
         cache, full = refresh_cache(), True
     u_state, u_data = updates()
     u_data = u_data or {}
+    b_state, b_data, b_cfg = backup()
     inst = versions.installed()
     # What the fleet SHOULD be on: the newest release that has soaked, which is
     # behind `installed` by design, every day. Staleness is measured against this
@@ -657,6 +784,13 @@ def draw(full=False, auto=False, show_parked=False):
     if line:
         status.append(line)
     line = updates_line(u_state, u_data)
+    if line:
+        status.append(line)
+    # Below the updates count. A missed backup is yesterday's news and cannot be
+    # acted on from here; an undelivered result is a session waiting right now.
+    # It is above the roster for the reason the rest of this block is: what can
+    # scroll off a short pane should be the thing that does not change.
+    line = backup_line(b_state, b_data, b_cfg)
     if line:
         status.append(line)
     status += cache_lines(cache, full, auto)

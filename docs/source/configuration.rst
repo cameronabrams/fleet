@@ -79,6 +79,41 @@ host, and the application may not. Absent, the board says nothing about updates 
 which is silence by choice, and distinguishable from a configured source that
 could not be read.
 
+``[backup]``
+^^^^^^^^^^^^
+
+Files some other program writes about this machine's backups::
+
+   [backup]
+   label         = "borg"
+   last_archive  = "~/.local/state/borg/last-archive.json"
+   last_run      = "~/.local/state/borg/last-run.json"   # optional, detail only
+   stale_after_h = 26    # a nightly producer may run late, but not miss a night
+
+Same contract as ``[updates]``: :doc:`tools/fleetboard` reads these and declares
+nothing, and absent configuration means the board says nothing about backups.
+
+``last_archive`` is the only file that decides anything, and the board asks it one
+question: **how old is the newest archive that actually landed.** The producer must
+therefore write it only after confirming the archive exists — not after a
+successful return. A producer that rewrites it on every attempt turns the check
+into "did the job run", which is the question that was already being answered and
+not the one worth asking. The board reads ``time`` (ISO 8601, with an offset),
+``archive``, ``nfiles`` and ``deduplicated_bytes``.
+
+``last_run`` describes the latest *attempt*, whatever became of it. It is read
+only once the alarm is already up, and supplies ``outcome`` and ``reason`` for the
+detail. It never decides the color, because a run that skipped and exited cleanly
+writes a benign outcome while no archive was made.
+
+**No exit code is read, from either file.** A good night exits 1 routinely — "file
+changed while we backed it up" is a warning — so a board that colored on ``rc``
+would be red most mornings and ignored on the one that mattered.
+
+``stale_after_h`` wants slack a day does not have: a slow night (a new disk, so
+every inode is new and the file cache misses) lands the archive hours late, and a
+24-hour window cries wolf the next morning.
+
 ``[human]``
 ~~~~~~~~~~~
 

@@ -343,6 +343,38 @@ def updates(cfg):
             "stale_hours": float(u.get("stale_hours", 36))}
 
 
+def backup(cfg):
+    """`[backup]` -- files some other program writes about this machine's backups,
+    or None when nothing is configured.
+
+    Same shape and the same reason as `updates`: the paths name a host's own
+    arrangement, so they live in configuration and not in this repository. Absent
+    means the board says nothing about backups, which is silence by choice and is
+    not the same as a configured source that could not be read.
+
+    `last_archive` is the one that decides the alarm, and it must be written ONLY
+    when an archive really landed -- that is what makes its age mean something. A
+    producer that rewrites it on every attempt turns this into a check on whether
+    the job ran, which is the question that was already being answered and not the
+    one worth asking.
+
+    `last_run` is optional and never decides anything: it supplies the detail line
+    when the alarm is already up.
+
+    `stale_after_h` bounds the age. The default allows a nightly producer one
+    missed night plus a couple of hours of drift, and no more.
+    """
+    b = cfg.get("backup", {})
+    path = b.get("last_archive")
+    if not path:
+        return None
+    run = b.get("last_run")
+    return {"label": str(b.get("label") or "backup"),
+            "last_archive": os.path.expanduser(path),
+            "last_run": os.path.expanduser(run) if run else None,
+            "stale_after_h": float(b.get("stale_after_h", 26))}
+
+
 def notify(cfg):
     """[notify]: where a tool sends a phone push when it could not reach a session.
 
