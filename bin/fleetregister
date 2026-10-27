@@ -1,5 +1,9 @@
 #!/bin/bash
-# fleetregister <session> <jobid> <pid> [note]
+# fleetregister [--local] <session> <jobid> <pid> [note]
+#
+# --local says the registered pid IS the work -- a local process rather than a
+# watcher of a SLURM job. fleetwatch then answers "is this still live" from
+# /proc alone and never asks the scheduler about a name it cannot know.
 #
 # A watcher REGISTERS itself instead of being inferred. fleetwatch then reports a
 # job watched iff a registered pid is alive (kill -0) -- no cmdline parsing.
@@ -87,6 +91,15 @@ if [ "${1:-}" = "--clear" ]; then
   [ $n -gt 0 ] || { echo "fleetregister: no registration for $S / $J" >&2; exit 1; }
   exit 0
 fi
+# --local: the pid being registered IS the work, a local process, not a poller of
+# work running on the cluster. fleetwatch then tests it against /proc and never
+# asks squeue, because squeue has nothing to say about a local process -- it used
+# to ask anyway, find the name absent (as it must be), and report healthy work as
+# a monitor whose job had died. Field rather than a naming convention: a job named
+# `crawl` is not evidence of anything, and this registry's whole premise is that
+# a watcher declares itself instead of being inferred from text.
+WORK=
+if [ "${1:-}" = "--local" ]; then WORK=local; shift; fi
 S=${1:?session}; J=${2:?jobid}; P=${3:?pid}; N=${4:-}
 # A pid alone is not an identity: the kernel reuses them. Measured here
 # 2026-09-12 -- pid_max 4194304, 2.6-5.9 pids/s -> full wrap in 8-19 days -- so a
@@ -99,6 +112,13 @@ S=${1:?session}; J=${2:?jobid}; P=${3:?pid}; N=${4:-}
 # Field 22 is read after the LAST ')' -- comm can contain spaces and parens.
 ST=$(awk '{n=split($0,a,")"); rest=a[n]; split(rest,f," "); print f[20]}' /proc/"$P"/stat 2>/dev/null)
 [ -z "$ST" ] && { echo "fleetregister: pid $P not running -- nothing to register" >&2; exit 1; }
-printf '{"session":"%s","job":"%s","pid":%s,"starttime":"%s","armed":"%s","note":"%s"}\n' \
-  "$S" "$J" "$P" "$ST" "$(date -Is)" "$N" > "$D/$S-$J-$P.json"
-echo "registered: $S watching $J as pid $P"
+# The field is written only for --local. A default `"work":"cluster"` would turn
+# the one mistake this exists to catch -- registering local work and forgetting
+# the flag -- into a DECLARATION that it is cluster work, which is worse than the
+# silence it replaces: an unlabeled record is still checked against job_id_re and
+# reported as something nothing can speak for.
+WORKFIELD=
+[ -n "$WORK" ] && WORKFIELD="\"work\":\"$WORK\","
+printf '{"session":"%s","job":"%s","pid":%s,"starttime":"%s",%s"armed":"%s","note":"%s"}\n' \
+  "$S" "$J" "$P" "$ST" "$WORKFIELD" "$(date -Is)" "$N" > "$D/$S-$J-$P.json"
+echo "registered: $S watching ${WORK:+local }$J as pid $P"

@@ -158,6 +158,21 @@ Three mechanisms produce it.
   regardless. A mock makes the *response* a constant; whatever is in the
   **request** is then untested. Assert on the argv too.
 
+- **A question asked of a namespace the value is not in.** `fleetwatch` tested
+  every watcher registration with "is this job still in `squeue`", and `squeue`
+  is keyed by job id. A watch on a *local* process -- registered under a name
+  like `crawl` -- can never be in that table, so the check had one possible
+  answer and reported a healthy process as a monitor whose work had died
+  (2026-10-27). Absence is evidence only where presence was possible. This one
+  failed toward **alarm** rather than reassurance, which is not the usual
+  direction here and is not harmless either: it printed in the same `!!` block as
+  genuinely stuck monitors, on the common case, and a block that cries wolf on
+  ordinary local work is a block people learn to skim. It was relayed to the
+  human as a finding before the owning session corrected it. The fix is not a
+  cleverer test of the name but a declared kind, plus the fleet's own
+  `job_id_re` -- already in configuration -- to say what a job id even looks
+  like here.
+
 - **A test that passed because the machine it ran on had the thing it was meant
   to do without.** A new `fleetspawn` class called `load_tool` without a
   `FakeConfig`, so it read the author's real `~/.config/fleet/fleet.toml` --

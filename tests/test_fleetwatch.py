@@ -108,7 +108,7 @@ class Registered(Base):
         self.reg(session="alpha", job="111111", pid=me, starttime=starttime(me))
         self.reg(session="beta", job="222222", pid=me, starttime="1")         # reused pid
         self.reg(session="gamma", job="333333", pid=me)                       # no starttime
-        live, dead, _ = self.w.registered()
+        live, dead, _, _ = self.w.registered()
         self.assertEqual(live, {"alpha": {"111111"}})
         self.assertEqual(sorted(r["session"] for r in dead), ["beta", "gamma"])
 
@@ -150,15 +150,15 @@ class AWatcherPartWayThroughItsSet(Base):
         """The stale check could not have known: `registered()` returned
         session -> {jobs} and dropped the pid, so "same watcher" was not a
         question it was able to ask."""
-        live, dead, by_job = self.w.registered()
+        live, dead, by_job, _ = self.w.registered()
         self.assertEqual(live, {"sweep": {"111111", "222222", "333333"}})
         self.assertEqual(by_job[("sweep", "111111")], self.me)
         self.assertEqual(by_job[("sweep", "333333")], self.me)
 
     def test_a_finished_job_whose_watcher_still_has_live_work_is_not_stale(self):
-        live, dead, by_job = self.w.registered()
+        live, dead, by_job, _ = self.w.registered()
         jobs = {"111111": {}, "222222": {}}          # 333333 has completed
-        stale, partway = self.w.split_stale(live, by_job, jobs)
+        stale, partway, offcluster = self.w.split_stale(live, by_job, jobs)
         self.assertEqual(stale, [], "a watcher mid-set is not a fault")
         self.assertEqual(len(partway), 1)
         self.assertEqual(partway[0]["job"], "333333")
@@ -167,8 +167,8 @@ class AWatcherPartWayThroughItsSet(Base):
     def test_the_last_job_of_the_set_is_stale_again(self):
         """When nothing the watcher covers is live any more, the original alarm is
         the right one: that is a monitor whose completion test may not close."""
-        live, dead, by_job = self.w.registered()
-        stale, partway = self.w.split_stale(live, by_job, {})
+        live, dead, by_job, _ = self.w.registered()
+        stale, partway, offcluster = self.w.split_stale(live, by_job, {})
         self.assertEqual(partway, [])
         self.assertEqual(sorted(x["job"] for x in stale),
                          ["111111", "222222", "333333"])
@@ -189,10 +189,10 @@ class AWatcherPartWayThroughItsSet(Base):
         self.addCleanup(lambda: (other.kill(), other.wait()))
         self.reg(session="sweep", job="444444", pid=other.pid,
                  starttime=starttime(other.pid))
-        live, dead, by_job = self.w.registered()
+        live, dead, by_job, _ = self.w.registered()
         self.assertEqual(by_job[("sweep", "444444")], other.pid,
                          "the second watcher must be live, or this proves nothing")
-        stale, partway = self.w.split_stale(live, by_job, {"444444": {}})
+        stale, partway, offcluster = self.w.split_stale(live, by_job, {"444444": {}})
         self.assertEqual(partway, [], "a different pid is a different watcher")
         self.assertEqual(len(stale), 3)
 
@@ -675,7 +675,7 @@ class TheOutageLineReachesTheReport(Base):
         with mock.patch.object(self.w, "sh", return_value=out), \
              mock.patch.object(self.w, "known_sessions", return_value=set()), \
              mock.patch.object(self.w, "watchers", return_value={}), \
-             mock.patch.object(self.w, "registered", return_value=({}, [], {})), \
+             mock.patch.object(self.w, "registered", return_value=({}, [], {}, {})), \
              mock.patch.object(self.w, "final_states", return_value={}), \
              mock.patch.object(self.w, "nudge_holes", return_value=NO_HOLES), \
              mock.patch.object(self.w, "clients", return_value=([], None)), \
@@ -746,7 +746,7 @@ class NoClusterConfigured(unittest.TestCase):
     def no_ssh(self, *a, **k):
         raise AssertionError("no cluster configured, yet something ran: %r" % (a,))
 
-    def report(self, *args, registered=({}, [], {})):
+    def report(self, *args, registered=({}, [], {}, {})):
         buf = io.StringIO()
         with mock.patch.object(self.w, "sh", self.no_ssh), \
              mock.patch.object(self.w, "known_sessions", return_value=set()), \
@@ -791,7 +791,7 @@ class NoClusterConfigured(unittest.TestCase):
 
     def test_a_dead_registration_is_kept_not_called_finished(self):
         dead = [{"session": "alpha", "job": "123456", "pid": 1}]
-        d = json.loads(self.report("--json", registered=({}, dead, {})))
+        d = json.loads(self.report("--json", registered=({}, dead, {}, {})))
         self.assertEqual(d["finished_watchers"], [])
         self.assertEqual(len(d["dead_watchers"]), 1)
         self.assertIn("no cluster configured", d["dead_watchers"][0]["_why"])
@@ -807,10 +807,171 @@ class AConfiguredClusterSaysSo(Base):
         with mock.patch.object(self.w, "sh", return_value="--WD--\n--END--\n"), \
              mock.patch.object(self.w, "known_sessions", return_value=set()), \
              mock.patch.object(self.w, "watchers", return_value={}), \
-             mock.patch.object(self.w, "registered", return_value=({}, [], {})), \
+             mock.patch.object(self.w, "registered", return_value=({}, [], {}, {})), \
              mock.patch.object(self.w, "nudge_holes", return_value=NO_HOLES), \
              mock.patch.object(self.w, "clients", return_value=([], None)), \
              mock.patch.object(self.w.sys, "argv", ["fleetwatch", "--json"]), \
              contextlib.redirect_stdout(buf):
             self.w.main()
         self.assertTrue(json.loads(buf.getvalue())["cluster_configured"])
+
+
+class AWatchOnLocalWorkIsNotClusterWork(Base):
+    """A registration whose job is not a job of the configured cluster.
+
+    `split_stale` asked one question of every registration -- "is this job still
+    in squeue" -- so a watch on a LOCAL process was always "not in squeue" and
+    printed
+
+        !! WATCHER ON WORK THAT IS NO LONGER LIVE -- the monitor will not exit
+           if its completion test cannot close. Check it.
+           alpha watches crawl, which is not in squeue
+
+    while the process was alive and healthy. Reported 2026-10-27 by a coordinator
+    that had relayed the warning as a finding before the owning session corrected
+    it. The check could not have come out any other way: `jobs` is keyed by
+    `squeue -o %F`, so a name that is not a job id of that cluster can never be
+    found there, and its absence is evidence of nothing -- family C of
+    docs/checks-that-reassure.md, pointing at alarm rather than at reassurance.
+
+    The discriminator is configured, not guessed: `[cluster.<name>].job_id_re`
+    already declares what a job id looks like on this cluster.
+    """
+    def reg(self, **r):
+        d = os.path.join(self.cfg.state, "watchers"); os.makedirs(d, exist_ok=True)
+        json.dump(r, open(os.path.join(
+            d, f"{r['session']}-{r['job']}-{r['pid']}.json"), "w"))
+
+    def setUp(self):
+        super().setUp()
+        self.me = os.getpid()
+
+    def test_a_registration_marked_local_is_not_stale_for_being_absent_from_squeue(self):
+        self.reg(session="alpha", job="crawl", pid=self.me,
+                 starttime=starttime(self.me), work="local")
+        live, dead, by_job, kinds = self.w.registered()
+        self.assertEqual(kinds[("alpha", "crawl")], "local")
+        stale, partway, offcluster = self.w.split_stale(live, by_job, {}, kinds)
+        self.assertEqual(stale, [], "squeue was never asked about local work")
+
+    def test_an_unmarked_job_that_cannot_be_a_job_id_is_not_called_dead_work(self):
+        """The registration in the field carried no `work` field, because the
+        field did not exist. The alarm must stop for it too, or the fix reaches
+        nothing already written."""
+        self.reg(session="alpha", job="crawl", pid=self.me,
+                 starttime=starttime(self.me))
+        live, dead, by_job, kinds = self.w.registered()
+        self.assertEqual(kinds[("alpha", "crawl")], "unclassified")
+        stale, partway, offcluster = self.w.split_stale(live, by_job, {}, kinds)
+        self.assertEqual(stale, [])
+
+    def test_a_job_id_of_this_cluster_is_still_stale_when_it_leaves_the_queue(self):
+        """The guard against fixing this too broadly. `job_id_re` here is
+        `[0-9]{6,9}`, so this one IS a job of the cluster and its absence from
+        squeue means what it always meant."""
+        self.reg(session="alpha", job="111111", pid=self.me,
+                 starttime=starttime(self.me))
+        live, dead, by_job, kinds = self.w.registered()
+        self.assertEqual(kinds[("alpha", "111111")], "cluster")
+        stale, partway, offcluster = self.w.split_stale(live, by_job, {}, kinds)
+        self.assertEqual([s["job"] for s in stale], ["111111"])
+
+    def test_a_partial_match_is_not_a_job_id(self):
+        """`job_id_re` is used elsewhere with `\\b...\\b` to pull an id OUT of a
+        command line. Deciding whether a whole registration IS one needs the
+        whole string to match, or `crawl-111111` would be read as cluster work
+        and sent to sacct under a name it has never heard."""
+        self.reg(session="alpha", job="crawl-111111", pid=self.me,
+                 starttime=starttime(self.me))
+        _, _, _, kinds = self.w.registered()
+        self.assertEqual(kinds[("alpha", "crawl-111111")], "unclassified")
+
+    def report(self, *args, registered=None):
+        buf = io.StringIO()
+        with mock.patch.object(self.w, "sh", return_value="--WD--\n--RES--\n--END--\n"), \
+             mock.patch.object(self.w, "known_sessions", return_value=set()), \
+             mock.patch.object(self.w, "watchers", return_value={}), \
+             mock.patch.object(self.w, "nudge_holes", return_value=NO_HOLES), \
+             mock.patch.object(self.w, "clients", return_value=([], None)), \
+             mock.patch.object(self.w.sys, "argv", ["fleetwatch", *args]), \
+             contextlib.redirect_stdout(buf):
+            if registered is not None:
+                with mock.patch.object(self.w, "registered", return_value=registered):
+                    self.w.main()
+            else:
+                self.w.main()
+        return buf.getvalue()
+
+    def test_the_alarm_does_not_print_for_live_local_work(self):
+        self.reg(session="alpha", job="crawl", pid=self.me,
+                 starttime=starttime(self.me), work="local")
+        out = self.report()
+        self.assertNotIn("NO LONGER LIVE", out)
+        self.assertIn("local work, not cluster work", out)
+        self.assertIn("alpha / crawl", out)
+
+    def test_an_undeclared_one_says_nothing_here_knows(self):
+        """Quiet, but not silent, and not an all-clear: the fleet cannot tell
+        whether that work is running, and cannot-tell is not clear."""
+        self.reg(session="alpha", job="crawl", pid=self.me,
+                 starttime=starttime(self.me))
+        out = self.report()
+        self.assertNotIn("NO LONGER LIVE", out)
+        self.assertIn("NOTHING HERE KNOWS", out)
+        self.assertIn("fleetregister --local alpha crawl %s" % self.me, out)
+        self.assertNotIn("All live work is watched", out)
+
+    def test_a_dead_local_registration_is_not_a_dead_watcher_alarm(self):
+        dead = [{"session": "alpha", "job": "crawl", "pid": 1, "_kind": "local",
+                 "_file": "/dev/null"}]
+        out = self.report(registered=({}, dead, {}, {}))
+        self.assertNotIn("REGISTERED WATCHER IS DEAD", out)
+        self.assertIn("local work whose process has exited", out)
+        self.assertIn("fleetregister --clear alpha crawl", out)
+
+    def test_an_exited_local_process_is_not_called_successful(self):
+        """There is no sacct for a local job, so "it ended" is the whole claim.
+        The cluster bucket next to it says sacct PROVED the job ended; this one
+        must not borrow that word."""
+        dead = [{"session": "alpha", "job": "crawl", "pid": 1, "_kind": "local",
+                 "_file": "/dev/null"}]
+        d = json.loads(self.report("--json", registered=({}, dead, {}, {})))
+        self.assertEqual(len(d["ended_local"]), 1)
+        self.assertEqual(d["finished_watchers"], [],
+                         "finished means the scheduler said so; nothing did here")
+
+    def test_a_dead_undeclared_registration_still_alarms_and_names_the_fix(self):
+        """The alarming direction is the right one here. Its pid is gone and
+        nothing can be asked about its work, which is exactly what the `!!` block
+        is for -- but the old sentence blamed a `wrong id in the registration`
+        for a registration whose id was never meant to be one."""
+        dead = [{"session": "alpha", "job": "crawl", "pid": 1,
+                 "_kind": "unclassified", "_file": "/dev/null"}]
+        out = self.report(registered=({}, dead, {}, {}))
+        self.assertIn("ITS WORK CANNOT BE CHECKED", out)
+        self.assertIn("--local", out)
+        self.assertNotIn("wrong id in the registration", out)
+
+    def test_sacct_is_never_asked_about_something_that_is_not_a_job_id(self):
+        """`final_states` interpolates each id into a remote shell command, so
+        the old path sent `sacct -j crawl` to the cluster and read the inevitable
+        answer back as evidence."""
+        dead = [{"session": "alpha", "job": "crawl", "pid": 1,
+                 "_kind": "unclassified", "_file": "/dev/null"}]
+        asked = []
+        with mock.patch.object(self.w, "final_states",
+                               side_effect=lambda ids: asked.append(ids) or {}):
+            self.report(registered=({}, dead, {}, {}))
+        # `final_states` is still reached, with nothing in it -- it short-circuits
+        # on an empty set without an ssh. What matters is that `crawl` is not in
+        # what it was handed.
+        self.assertEqual(sorted(j for call in asked for j in call), [],
+                         "no id was sent to the scheduler")
+
+    def test_json_names_what_squeue_was_not_asked_about(self):
+        self.reg(session="alpha", job="crawl", pid=self.me,
+                 starttime=starttime(self.me), work="local")
+        d = json.loads(self.report("--json"))
+        self.assertEqual(d["stale_watchers"], [])
+        self.assertEqual([(r["job"], r["kind"]) for r in d["watchers_offcluster"]],
+                         [("crawl", "local")])

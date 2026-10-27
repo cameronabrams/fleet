@@ -55,6 +55,16 @@ OURS    = fc.fleet_name(CFG)   # which fleet this one is; "" before fleetinit ha
 # Several clusters with none named still raises; that one IS a mistake.
 CLUSTER = fc.cluster(CFG) if CFG.get("cluster") else None
 JOB_RE  = re.compile(r"\b(" + CLUSTER["job_id_re"] + r")\b") if CLUSTER else None
+# The same pattern anchored, for the opposite question. `JOB_RE` pulls an id OUT
+# of a command line, so it is deliberately unanchored; deciding whether a
+# registration's job IS a job of this cluster needs the whole string, or
+# `crawl-26568445` reads as cluster work and goes to sacct under a name it has
+# never heard. Configured, not guessed: `job_id_re` is the fleet's own statement
+# of what a job id looks like here (`2[0-9]{7}` on one cluster, `[0-9]{6,9}` on
+# another) and nothing else in this tool is entitled to invent one.
+# Grouped before anchoring, because an alternation would otherwise bind the
+# anchor to its last branch alone: `a|b\Z` would match a bare "a".
+JOB_ID  = re.compile(r"(?:" + CLUSTER["job_id_re"] + r")\Z") if CLUSTER else None
 HELD    = tuple((CLUSTER or {}).get("held_reasons", ["JobHeldUser", "JobHeldAdmin"]))
 
 # WorkDir -> owning session. Explicit rather than heuristic: an unmatched path is
@@ -181,6 +191,38 @@ NUDGELOG  = os.path.join(fc.state_dir(CFG), "nudges.log")
 MAILINDEX = os.path.join(fc.state_dir(CFG), "mail-delivered.json")
 NUDGE_DAYS = 7              # window for the delivery section; named in its output
 
+def work_kind(r):
+    """What KIND of work a registration is on: "local", "cluster" or "unclassified".
+
+    Every registration used to be read as cluster work, so the single question
+    asked of it -- "is this job still in squeue" -- had only one possible answer
+    for anything else. A watch on a local process is never in squeue, and its
+    absence was reported as the monitor's work having died while the process was
+    alive and well (2026-10-27).
+
+    "local" is DECLARED, by `fleetregister --local`: the registered pid is the
+    work itself rather than a poller of work running elsewhere, so its liveness
+    is the whole answer and no scheduler can add to it.
+
+    "cluster" is decided against `job_id_re`, which the fleet already configures
+    to say what a job id looks like here. That is a statement in the
+    configuration, not an inference about intent -- the distinction this tool
+    cares about, since inferring watcher-ness from text is the family it exists
+    to catch.
+
+    "unclassified" is the honest remainder: a job that cannot be an id of the
+    configured cluster and was not declared local. Nothing here can say whether
+    that work is still running, and cannot-tell is not clear. Every registration
+    written before `--local` existed lands here, which is the point: the alarm
+    has to stop for records already on disk, not only for ones written next.
+    """
+    if str(r.get("work", "")) == "local":
+        return "local"
+    if JOB_ID is not None and JOB_ID.match(str(r.get("job", ""))):
+        return "cluster"
+    return "unclassified"
+
+
 def registered():
     """AUTHORITATIVE: watchers that registered themselves, filtered by liveness.
 
@@ -188,34 +230,48 @@ def registered():
     the moment the watcher dies. Contrast a ledger, which claims "I am watching X"
     in prose that nothing can check.
 
-    Returns (live, dead, by_job): live maps session -> {job ids}; dead lists
-    registrations whose pid is gone -- a watcher that DIED, which no other check
-    here detects; by_job maps (session, job) -> pid.
+    Returns (live, dead, by_job, kinds): live maps session -> {job ids}; dead
+    lists registrations whose pid is gone -- a watcher that DIED, which no other
+    check here detects; by_job maps (session, job) -> pid; kinds maps the same
+    key to `work_kind`.
 
     `by_job` exists because one watcher may poll several jobs, which the registry
     already models as several rows sharing a pid. Without it the only question
     that could be asked of a registration was "is this job still in squeue", and
     the first job of a set to finish read as a fault while its watcher was alive
     and correctly polling the rest.
+
+    `kinds` is read HERE, from the same pass over the same files, rather than by
+    a second reader of the directory: two readers of one fact each with its own
+    fallback are how they quietly stop agreeing.
     """
-    live, dead, by_job = {}, [], {}
+    live, dead, by_job, kinds = {}, [], {}, {}
     for f in glob.glob(WATCHDIR + "/*.json"):
         try:
             r = json.load(open(f))
         except Exception:
             continue
+        r["_kind"] = work_kind(r)
         # No starttime -> pre-2026-09-12 registration, identity unverifiable.
         # Read it as DEAD rather than trusting it: fail toward alarm.
         if r.get("starttime") and alive(r.get("pid"), r["starttime"]):
             live.setdefault(r["session"], set()).add(str(r["job"]))
             by_job[(r["session"], str(r["job"]))] = r.get("pid")
+            kinds[(r["session"], str(r["job"]))] = r["_kind"]
         else:
             r["_file"] = f; dead.append(r)
-    return live, dead, by_job
+    return live, dead, by_job, kinds
 
 
-def split_stale(live, by_job, jobs):
-    """(stale, partway) for registrations whose job is no longer in squeue.
+def split_stale(live, by_job, jobs, kinds=None):
+    """(stale, partway, other) for registrations whose job is no longer in squeue.
+
+    `kinds` says which registrations squeue is entitled to answer for. It
+    defaults to None, meaning every row is cluster work -- the answer this
+    function gave before it could ask, so an untaught caller is no worse off than
+    it was. `other` collects the rows squeue cannot speak to: "local", where the
+    registered pid IS the work and `registered` has already found it alive, and
+    "unclassified", where nothing here knows what the work was.
 
     A registration is PARTWAY, not stale, when the same PID still watches a job
     that is live: the watcher is working through a set and will exit when the set
@@ -229,12 +285,16 @@ def split_stale(live, by_job, jobs):
     it is not an identity, and matching Nones to each other would let any two such
     rows cover for one another. Those stay stale, which is the alarming direction.
     """
-    stale, partway = [], []
+    stale, partway, other = [], [], []
     for sess, ids in live.items():
         for j in ids:
             if j in jobs:
                 continue
             pid = by_job.get((sess, j))
+            kind = (kinds or {}).get((sess, j), "cluster")
+            if kind != "cluster":
+                other.append({"session": sess, "job": j, "pid": pid, "kind": kind})
+                continue
             siblings = sorted(
                 j2 for (s2, j2), p2 in by_job.items()
                 if s2 == sess and j2 in jobs and pid is not None and p2 == pid)
@@ -243,9 +303,9 @@ def split_stale(live, by_job, jobs):
                                 "still_watching": siblings})
             else:
                 stale.append({"session": sess, "job": j, "pid": pid})
-    stale.sort(key=lambda r: (r["session"], r["job"]))
-    partway.sort(key=lambda r: (r["session"], r["job"]))
-    return stale, partway
+    for bucket in (stale, partway, other):
+        bucket.sort(key=lambda r: (r["session"], r["job"]))
+    return stale, partway, other
 
 def watchers():
     """session name -> set of job ids its live child processes reference."""
@@ -684,7 +744,28 @@ def main():
         # Only when the query worked -- an empty string from a failed ssh is not
         # an observation that the reservation table was empty.
         reach.record_reservations(RESFILE, CLUSTER_NAME, reservations)
-    reg, dead_reg, by_job = registered()
+    reg, dead_reg, by_job, kinds = registered()
+    # A registration the scheduler cannot speak to is separated BEFORE the sacct
+    # classification below, not after. `final_states` interpolates each job id
+    # into a remote shell command, so sending it a name that was never a job id
+    # asked the cluster about `crawl` and read the inevitable "sacct has never
+    # heard of it" back as "wrong id in the registration?" -- a second false
+    # alarm on the same record, fired the moment the local work finished.
+    # With no cluster at all the existing sentence below already says the true
+    # thing for every non-local row, so only `local` is pulled out here: two
+    # wordings for one situation is how a reader learns to stop reading them.
+    ended, unclassified_dead, keep_dead = [], [], []
+    for r in dead_reg:
+        if r.get("_kind") == "local":
+            ended.append(r)
+        elif r.get("_kind") == "unclassified" and CLUSTER is not None:
+            r["_why"] = ("%s is not a job id of %s (job_id_re) and was not "
+                         "registered with --local, so nothing here can say "
+                         "whether its work ended" % (r.get("job"), CLUSTER_NAME))
+            unclassified_dead.append(r)
+        else:
+            keep_dead.append(r)
+    dead_reg = keep_dead
     # A registered watcher whose pid is gone is either DEAD (its job is still live:
     # alarm) or FINISHED (it exited because its job ended: the normal end of every
     # watcher). Crying DEAD after every campaign trains everyone to ignore it, so
@@ -742,7 +823,8 @@ def main():
                      "watched_by": by})
     # monitors pointing at jobs that are no longer live -- minus the ones whose
     # watcher is simply part way through a set it is still polling
-    stale, partway = (split_stale(w, by_job, jobs) if cluster_ok else ([], []))
+    stale, partway, offcluster = (split_stale(w, by_job, jobs, kinds)
+                                  if cluster_ok else ([], [], []))
 
     if want_json:
         # `cluster_ok` is True with no cluster configured: the job list is
@@ -755,7 +837,10 @@ def main():
                           "cluster_down_for_s": down,
                           "jobs": rows, "stale_watchers": stale,
                           "watchers_partway": partway,
+                          "watchers_offcluster": offcluster,
                           "dead_watchers": dead_reg, "finished_watchers": finished,
+                          "ended_local": ended,
+                          "unclassified_watchers": unclassified_dead,
                           "delivery": holes,
                           "clients": {"attached": attached, "error": attach_err}},
                          indent=1, default=str)); return
@@ -801,6 +886,28 @@ def main():
         for s in stale:
             print("   %s watches %s, which is not in squeue" % (s["session"], s["job"]))
 
+    local_live = [r for r in offcluster if r["kind"] == "local"]
+    unclassified_live = [r for r in offcluster if r["kind"] != "local"]
+    if local_live:
+        print("\n   local work, not cluster work (nothing to do): the registered pid")
+        print("   IS the work and it is running, which is the whole test. squeue was")
+        print("   never asked, because it has nothing to say about a local process.")
+        for r in local_live:
+            print("   %s / %s  pid %s" % (r["session"], r["job"], r["pid"]))
+
+    if unclassified_live:
+        print("\n   registered against something that is not a job id of %s, and not"
+              % CLUSTER_NAME)
+        print("   declared local -- so NOTHING HERE KNOWS whether the work is still")
+        print("   running. The watcher's own pid is alive; that is all this can say.")
+        for r in unclassified_live:
+            # The command on its own line: a session name and a job name on one
+            # line with the whole command ran past 100 columns, and half this
+            # fleet's panes are narrower than that.
+            print("   %s / %s  pid %s" % (r["session"], r["job"], r["pid"]))
+            print("      -> if it is local: fleetregister --local %s %s %s"
+                  % (r["session"], r["job"], r["pid"]))
+
     if partway:
         print("\n   part way through a set (not a fault, and nothing to do): the")
         print("   watcher has finished one job and is still polling others. The")
@@ -828,6 +935,25 @@ def main():
             print("      %s" % r.get("_why", ""))
             print("      registration: %s" % r["_file"])
 
+    if unclassified_dead:
+        print("\n!! REGISTERED WATCHER IS DEAD, AND ITS WORK CANNOT BE CHECKED -- its pid")
+        print("   is gone and its job is not an id %s can be asked about." % CLUSTER_NAME)
+        for r in unclassified_dead:
+            print("   %s watched %s as pid %s, armed %s" %
+                  (r.get("session"), r.get("job"), r.get("pid"), r.get("armed", "?")))
+            print("      %s" % r.get("_why", ""))
+            print("      registration: %s" % r["_file"])
+
+    if ended:
+        print("\n   local work whose process has exited (the normal end of a local job,")
+        print("   not a failure). There is no scheduler to say whether it SUCCEEDED, so")
+        print("   this is not a claim that it did. Clear when the owner has read the")
+        print("   result:")
+        for r in ended:
+            print("   %s / %s  pid %s   -> fleetregister --clear %s %s" %
+                  (r.get("session"), r.get("job"), r.get("pid"),
+                   r.get("session"), r.get("job")))
+
     if finished:
         print("\n   finished (watcher exited, and sacct shows its job ended -- the normal end")
         print("   of a watcher, not a failure). Clear when the owner has read the result:")
@@ -853,7 +979,8 @@ def main():
 
     undelivered = (holes["silent"] or holes["pushed"] or holes["dangling"]
                    or holes["unreadable"] or holes["bad_lines"] or holes["mail_stuck"])
-    if cluster_ok and not (un or stale or ua or unreg or dead_reg or undelivered):
+    if cluster_ok and not (un or stale or ua or unreg or dead_reg
+                           or unclassified_dead or unclassified_live or undelivered):
         print("\nAll live work is watched, every watcher has live work, all owners known,")
         print("and every nudge of the last %d days landed." % holes["days"])
 

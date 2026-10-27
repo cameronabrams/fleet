@@ -30,6 +30,65 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`fleetwatch` reported a healthy local job as a monitor whose work had died.**
+  It asked one question of every watcher registration — is this job still in
+  `squeue` — and `squeue` is keyed by job id, so a watch on a *local* process,
+  registered under a name like `crawl`, could never be in that table. The check
+  had one possible answer:
+
+      !! WATCHER ON WORK THAT IS NO LONGER LIVE -- the monitor will not exit
+         if its completion test cannot close. Check it.
+         alpha watches crawl, which is not in squeue
+
+  while the process was running normally. It fires in the same `!!` block as
+  genuinely stuck monitors, on the common case, and the whole value of that block
+  is that it is rare; this one was relayed to the fleet owner as a finding before
+  the owning session corrected it. Reported by a coordinator session.
+
+  A registration now says which kind of work it is on. **`fleetregister --local`**
+  declares that the registered pid *is* the work, so its liveness is the whole
+  answer — `squeue` is never asked. Otherwise the job is matched against
+  **`job_id_re`**, which the fleet already configures to say what a job id looks
+  like here: a statement in the configuration, not an inference about intent,
+  which matters in a registry whose premise is that a watcher declares itself
+  instead of being inferred from text. Matched in **full**, because `job_id_re` is
+  used elsewhere with `\b…\b` to pull an id *out* of a command line and a partial
+  match would read `crawl-26568445` as cluster work.
+
+  Anything else is **unclassified** and says so: nothing can tell whether that
+  work is still running, and cannot-tell is not clear, so it is reported quietly
+  with the `--local` command that resolves it rather than alarmed about or passed
+  over. Every registration written before the flag existed lands there, which is
+  the point — the alarm had to stop for records already on disk, not only for ones
+  written next. For the same reason a registration made *without* the flag
+  declares nothing rather than defaulting to `"work": "cluster"`: the one mistake
+  the flag exists for is local work registered without it, and a default would
+  turn that into a claim that the work is on the cluster.
+
+  This also closes a second false alarm on the same record, fired the moment the
+  local work finished. `final_states` interpolates each job id into a remote shell
+  command, so the old path asked the cluster about `crawl` and read the inevitable
+  "sacct has never heard of it" back as `wrong id in the registration?`. A job the
+  scheduler cannot be asked about no longer reaches it.
+
+  `fleetwatch --json` gains `watchers_offcluster`, `ended_local` and
+  `unclassified_watchers`. `split_stale` takes the kinds as a fourth argument,
+  defaulting to "every row is cluster work" — the answer it gave before it could
+  ask, so an untaught caller is no worse off. A `--local` registration whose
+  process has exited
+  is reported separately from `finished_watchers`, because there is no `sacct` for
+  a local process and "it ended" is the whole claim.
+
+- **Another real session name in a public test fixture**, in an adoption-log line
+  in `tests/test_versions.py`, replaced with a placeholder. Found by grepping the
+  diff of the change above rather than by any check — there cannot be one, since
+  the repository must not hold the list of names it would check against. The same
+  scrub ran over `tests/test_fleetupgrade.py` in 0.4.0 and worked from the names
+  in front of it at the time; this one predated that pass. Not named here, for
+  the same reason as then.
+
 ## [0.4.0] - 2026-10-27
 
 ### Added

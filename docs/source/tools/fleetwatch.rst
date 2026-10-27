@@ -64,6 +64,54 @@ Command lines are only advisory — a child of a session counts as a *possible*
 watcher only if it names the job id *and* shows a poll loop (``sleep <n>``), and the
 tool's own process tree is excluded.
 
+Not every watch is on cluster work
+----------------------------------
+
+A registration says a pid is accountable for a job. Until 2026-10-27 one
+question was asked of every one of them — *is this job still in* ``squeue`` —
+and a watch on a **local** process is never in ``squeue``, so the answer was
+always the same and always wrong:
+
+.. code-block:: text
+
+   !! WATCHER ON WORK THAT IS NO LONGER LIVE -- the monitor will not exit
+      if its completion test cannot close. Check it.
+      alpha watches crawl, which is not in squeue
+
+while ``crawl`` was running normally. The check could not have come out any other
+way: ``jobs`` is keyed by ``squeue -o %F``, so a name that is not a job id of
+this cluster can never be found there, and its absence is evidence of nothing.
+
+The false positive is on the one warning that must not be ignored. It prints in
+the same ``!!`` block as genuinely stuck monitors, and the whole value of that
+block is that it is rare — one recurring false alarm from an ordinary local job
+trains every reader to skim past it. The one that prompted the fix was relayed as
+a finding before the owning session corrected it.
+
+So a registration now carries which kind of work it is on:
+
+``local``
+   declared, by ``fleetregister --local``. The registered pid **is** the work, so
+   its liveness is the whole answer and no scheduler can add to it.
+``cluster``
+   its job matches ``job_id_re``, which the fleet already configures to say what
+   a job id looks like here — a statement in the configuration rather than an
+   inference about intent. Matched in **full**: ``job_id_re`` is used elsewhere
+   with ``\b…\b`` to pull an id *out* of a command line, and a partial match
+   would read ``crawl-26568445`` as cluster work.
+``unclassified``
+   neither. Nothing here can say whether that work is still running, and
+   cannot-tell is not clear, so it is reported — quietly, with the ``--local``
+   command that resolves it — rather than alarmed about or passed over. Every
+   registration written before the flag existed lands here, which is the point:
+   the alarm has to stop for records already on disk.
+
+This also keeps a name that was never a job id out of ``sacct``. ``final_states``
+interpolates each id into a remote shell command, so the old path asked the
+cluster about ``crawl`` and read the inevitable "never heard of it" back as
+``wrong id in the registration?`` — a second false alarm on the same record,
+fired the moment the local work finished.
+
 Report sections
 ---------------
 
@@ -76,6 +124,17 @@ Report sections
 ``REGISTERED WATCHER IS DEAD``
    the registered process is gone while its job is still live, or ``sacct`` cannot
    show that the job ended
+``REGISTERED WATCHER IS DEAD, AND ITS WORK CANNOT BE CHECKED``
+   the registered process is gone and its job is not an id this cluster can be
+   asked about
+``local work, not cluster work``
+   a live ``--local`` registration; nothing to do
+``registered against something that is not a job id``
+   a live registration nothing here can speak for, with the ``--local`` command
+   that fixes it
+``local work whose process has exited``
+   a ``--local`` registration whose process is gone — the normal end of a local
+   job, and not a claim that it succeeded
 ``finished``
    the registered process is gone and ``sacct`` shows only terminal states — the
    normal end of a watcher; clear it with ``fleetregister --clear``
@@ -230,8 +289,23 @@ Top-level keys:
        exits. Separated from ``stale_watchers`` on 2026-10-06, so a caller that
        treats that key as an alarm is not woken by a campaign finishing one job at
        a time.
+   * - ``watchers_offcluster``
+     - ``session`` / ``job`` / ``pid`` / ``kind`` for live registrations the
+       scheduler was **not asked about**: ``local``, declared by
+       ``fleetregister --local``, and ``unclassified``, whose job is not an id of
+       the configured cluster and was not declared. Neither can ever be in
+       the queue, so neither belongs in ``stale_watchers`` — which is where both
+       used to go.
    * - ``dead_watchers``
      - registrations whose process is gone while the job is not finished
+   * - ``ended_local``
+     - registrations declared ``--local`` whose process has exited. Separate from
+       ``finished_watchers`` because nothing proved the work *succeeded*: there is
+       no scheduler record for a local process, so "it ended" is the whole claim.
+   * - ``unclassified_watchers``
+     - dead registrations whose job is not an id of this cluster and was not
+       declared local, so nothing can say whether the work ended. Alarming, with
+       ``_why`` naming ``--local`` as the fix.
    * - ``finished_watchers``
      - registrations whose process exited *because* the job ended — the normal end
        of a watcher, reported separately so that a campaign ending does not train

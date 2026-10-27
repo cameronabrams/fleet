@@ -212,3 +212,56 @@ class RefusingAWatcherThatIsMidSet(unittest.TestCase):
         r = self.run_tool("--clear", "sweep", "111111")
         self.assertEqual(r.returncode, 3, r.stderr)
         self.assertIn("stop the watcher first", r.stderr)
+
+
+class DeclaringLocalWork(unittest.TestCase):
+    """`--local`: the registered pid IS the work, not a poller of a SLURM job.
+
+    Without it every registration read as cluster work, so `fleetwatch` asked
+    squeue about a name that could not be in it and reported a healthy local
+    process as a monitor whose job had died.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.watch = os.path.join(self.cfg.state, "watchers")
+        self.proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+
+    def tearDown(self):
+        if self.proc.poll() is None:
+            self.proc.kill()
+        self.proc.wait()
+        self.cfg.close()
+
+    def run_tool(self, *args):
+        return subprocess.run([TOOL, *map(str, args)], capture_output=True, text=True,
+                              env=dict(os.environ))
+
+    def rec(self, pattern):
+        files = glob.glob(os.path.join(self.watch, pattern))
+        self.assertEqual(len(files), 1, files)
+        return json.load(open(files[0]))
+
+    def test_the_flag_is_recorded_and_the_file_is_still_json(self):
+        r = self.run_tool("--local", "alpha", "crawl", self.proc.pid, "a note")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rec = self.rec("alpha-crawl-*.json")
+        self.assertEqual(rec["work"], "local")
+        self.assertEqual(rec["note"], "a note", "the note still lands after the flag")
+        self.assertTrue(rec["starttime"].isdigit())
+
+    def test_without_the_flag_nothing_is_declared(self):
+        """Not `work: cluster`. A default declaration would turn the one mistake
+        this flag exists for -- local work registered without it -- into a claim
+        that the work IS on the cluster, which is worse than saying nothing: an
+        undeclared record is still checked against `job_id_re` and reported as
+        something nothing can speak for."""
+        self.assertEqual(self.run_tool("beta", "123456", self.proc.pid).returncode, 0)
+        self.assertNotIn("work", self.rec("beta-123456-*.json"))
+
+    def test_a_local_registration_clears_like_any_other(self):
+        self.run_tool("--local", "alpha", "crawl", self.proc.pid)
+        self.assertEqual(self.run_tool("--clear", "alpha", "crawl").returncode, 3,
+                         "refused while the pid is alive, flag or no flag")
+        self.proc.kill(); self.proc.wait()
+        self.assertEqual(self.run_tool("--clear", "alpha", "crawl").returncode, 0)
+        self.assertEqual(glob.glob(os.path.join(self.watch, "alpha-crawl-*.json")), [])

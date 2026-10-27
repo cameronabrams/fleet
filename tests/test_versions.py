@@ -641,7 +641,7 @@ class WhatPutASessionOnABinary(unittest.TestCase):
         self.write(
             "2026-10-19T08:00:00-0400  installed=2.1.3 rolled=16-sessions "
             "from=mixed to=2.1.3 note=restore DONE -- 16 of 16\n"
-            "2026-10-19T08:10:00-0400  installed=2.1.3 rolled=orgexplorer "
+            "2026-10-19T08:10:00-0400  installed=2.1.3 rolled=beta "
             "from=parked to=2.1.3 note=unpark\n"
             "2026-10-20T10:43:00-0400  installed=2.1.3 rolled=teachbot "
             "from=new to=2.1.3 note=spawn\n")
