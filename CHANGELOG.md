@@ -62,97 +62,6 @@ entries and makes you confirm the bump against this list.
   can stand alone; a plain misuse still names what is missing. Reported by a
   watcher that had been working around it per-caller. New module `fleet.pending`.
 
-### Changed
-
-- **`fleetnudge` can reach a session that is holding a background shell.** It
-  could not, for that shell's whole life — which is the session a watcher nudge is
-  most often aimed at. `claude agents` reports "at the prompt with a shell
-  running" and "mid-turn" identically (`pid`, `kind` and `status` all agree, and a
-  mid-turn `Bash` call and a detached shell are both a `bash` child), so an idle
-  pane plus a `busy` status was refused as mid-turn. `fleetnudge` already held the
-  rule that covers it — at the prompt while holding runtime is typeable — but keyed
-  it on the statuses `shell` and `monitor`, which this version does not emit for
-  that condition. The count now comes off the status bar, where the two differ, via
-  new `fleet.panes.shells_running`; **`fleet.panes.reconcile` takes a third
-  argument**, defaulting to `None` so an untaught caller keeps the refusing answer.
-  The marker still wins: the screen is only `idle` when `esc to interrupt` appears
-  nowhere, so mid-turn-and-holding-a-shell resolves to busy before the count is
-  read. A grant is recorded on the delivery record (`shells`, `why_typeable`) and
-  printed, because it is the one case where a line is typed into a session the
-  status called busy. `fleetcontext` reports the same reconciliation; roll
-  eligibility is untouched, since `fleetupgrade` reads `claude agents` itself and
-  still sees `busy`.
-
-- **`fleetwatch` runs with no cluster configured.** It raised `ConfigError` at
-  import, exit 1, when `fleet.toml` had no `[cluster.<name>]`. Every caller read
-  that as "runtime unknown": `fleetupgrade` (and so `fleetroll`) refused every
-  session on such a machine, and `fleetboard` drew `?` in every work cell. Now no
-  ssh is attempted and the report says there is no cluster work, with the
-  watcher, nudge-delivery and client sections intact. **`--json` gains
-  `cluster_configured`**, and `cluster_ok` is `true` in this case because the
-  empty job list can be trusted. Exit status 0 where it was 1. Several clusters
-  with none named is still an error.
-
-### Fixed
-
-- **A screen/status disagreement named the wrong cause, and named it as the only
-  one.** When the pane reads idle but `claude agents` reports `busy`,
-  `fleet.panes.reconcile` said "the busy marker may have moved" — a guess that
-  sent two sessions after a stale TUI marker for eleven days. Measured across
-  every labeled pane on 2026-10-26 (2.1.302 and 2.1.308): the marker was present
-  in every pane that was genuinely mid-turn, and the panes reporting `busy` with
-  an idle screen were exactly those holding a live background shell. `claude
-  agents` reports "at the prompt with a background shell" and "mid-turn"
-  identically, and nothing else in its JSON separates them. The sentence now
-  names both possibilities. **Behavior is unchanged** — both directions still
-  resolve to busy, because never typing is the safe error — but the consequence
-  is not cosmetic: a session whose work *is* a long background shell reports
-  `busy` for that shell's whole life, so a nudge to it can never be delivered,
-  and two of the three delivery give-ups in this fleet's log are that case.
-  `fleetnudge` already holds the rule that would cover it (a session at its
-  prompt holding runtime is typeable) but keys it on the statuses `shell` and
-  `monitor`, which this version does not emit for it.
-
-- **`fleetboard` read `kernel: ?` on every WSL2 machine, permanently.** Windows
-  supplies the WSL2 kernel, so `/lib/modules` holds no image and `fleet.kernels`
-  found nothing to compare. For a release ending in `-WSL2` it now compares the
-  running kernel against the release in the boot header of the Windows-side image
-  that `wsl --update` replaces. When they differ, the header says
-  `(kernel A -> B, waiting 3d; wsl --shutdown)`, because a reboot of the
-  distribution does not load the new kernel. An unreadable image is
-  `kernel: ? (WSL kernel image unreadable)`. `/lib/modules` is no longer read
-  under WSL2, because a distribution kernel package would sort above the
-  Microsoft release and read as a reboot owed for ever. A custom `.wslconfig`
-  kernel is not supported and reads as pending.
-
-- **`fleetboard` showed `?` in every session's work column when no cluster was
-  configured.** The column is now blank, and the stamp reads `context as of …;
-  no [cluster] configured, so no cluster work`. A configured cluster that cannot
-  be read is still `?`, and so is one whose `fleet.toml` cannot be **parsed**:
-  `cluster_configured()` returns `None` there rather than raising. It is re-read
-  on every draw so `--watch` picks up an edit, which is exactly when the file is
-  most likely to be half-written, and the watch loop catches only
-  `KeyboardInterrupt` — `parked` and `updates` already guarded this; it was the
-  third sibling and the one that did not.
-
-- **`fleetroll` refused every session `fleetspawn` had started.** It read the
-  session's uuid only from `--resume` in argv, and `fleetspawn` launches with
-  `--name X '<prompt>'`. The uuid now comes from `claude agents --json`, matched
-  by pid, and only when that entry carries the same name. A different name is
-  refused. argv `--resume` is the fallback; with neither source it refuses as
-  before. The plan's `resume` line says which source it used. When the two
-  disagree, as after a `/clear`, claude's answer wins and the plan says so.
-
-  The name on that entry must agree with the session being rolled, and that
-  check applies **whichever source supplies the uuid**. It was inside the
-  branch that uses claude's answer, so it fired only when the entry happened
-  to carry a `sessionId`: an entry naming the pid something else without one,
-  or a pid listed twice, fell through to the argv fallback and was used --
-  the wrong conversation under the right label, which is the outcome the
-  check exists to prevent, reached by the path it did not cover.
-
-### Added
-
 - **`fleetboard` says when the updates document has been overtaken by events.**
   It printed `updates: 47 updates -> 20261021` for nearly seven hours after those
   47 were installed: the age beside the line was honest, the count was about a
@@ -297,41 +206,6 @@ entries and makes you confirm the bump against this list.
   in seconds rather than hanging, and whatever `ssh` said is quoted back. An
   empty remote file is refused rather than built on.
 
-### Fixed
-
-- **A hand-written copy of `fleetinit`'s usage block in its docs page** had
-  drifted within a day of the tool growing options. The page already renders the
-  tool's own header via `tooldoc`, read from the script at build time; a second
-  copy of something that cannot drift is only a place for it to.
-
-- **`install` created `~/bin` but not `~/.claude/skills`**, so on a machine where
-  Claude Code has never written a skill — precisely the fresh machine the script
-  exists for — every skill link failed with `No such file or directory`. **And it
-  still exited 0**: six errors on screen and a success to anything reading the
-  status. It creates the directory now and exits 1 if any link could not be made.
-  Found by walking the fresh-machine path end to end on a throwaway `HOME`; there
-  were no tests for `install` at all, and there are now.
-
-- **`install` created directories on a dry run.** `mkdir -p ~/bin` ran whether or
-  not `--go` was given, which contradicts the read-only-by-default rule the rest
-  of the tools follow. Both `mkdir`s are gated now.
-
-- **`fleetspawn --color` contradicted itself on the first spawn of a new fleet.**
-  It printed `would declare alpha = 'blue'` and then, three lines later,
-  `BLOCKED: no color declared`. `fleetinit` ships `[colors]` empty, so every new
-  fleet hits this on its very first spawn, with nothing else on screen to weigh
-  the contradiction against. `--color` now satisfies its own precondition, the
-  refusal names the flag that clears it, and the status line reads
-  `blue (pending --go)` rather than `NOT DECLARED`.
-
-- **The bootstrap skill's prerequisites predated `fleetinit`** — it told a
-  coordinator to copy `fleet.example.toml` by hand, did not mention naming the
-  fleet, and said to label a coordinator's pane with `@agent` alone, which since
-  the strict-membership flip leaves that pane outside the fleet every tool can
-  see. The README said the same about copying the example.
-
-### Added
-
 - **`fleetboard` flags a pending kernel reboot itself, live.** New
   `fleet.kernels` compares the running kernel against the newest installed one on
   every draw, from the filesystem, with no subprocess and nothing installed. The
@@ -357,7 +231,43 @@ entries and makes you confirm the bump against this list.
   kernel that is no longer installed reads as pending. Unreadable renders
   `kernel: ?`, never silence.
 
+- **`docs.yml` builds the documentation with `-W`** on every push to `main`, every
+  pull request and every tag, mirroring `.readthedocs.yaml` (same Python, same
+  requirements, same `conf.py`). `release.yaml` grows a matching `docs` job that
+  `publish` depends on, so a tag cannot ship documentation that will not build.
+  This is the one workflow that installs packages; the tools and their tests stay
+  stdlib-only.
+
 ### Changed
+
+- **`fleetnudge` can reach a session that is holding a background shell.** It
+  could not, for that shell's whole life — which is the session a watcher nudge is
+  most often aimed at. `claude agents` reports "at the prompt with a shell
+  running" and "mid-turn" identically (`pid`, `kind` and `status` all agree, and a
+  mid-turn `Bash` call and a detached shell are both a `bash` child), so an idle
+  pane plus a `busy` status was refused as mid-turn. `fleetnudge` already held the
+  rule that covers it — at the prompt while holding runtime is typeable — but keyed
+  it on the statuses `shell` and `monitor`, which this version does not emit for
+  that condition. The count now comes off the status bar, where the two differ, via
+  new `fleet.panes.shells_running`; **`fleet.panes.reconcile` takes a third
+  argument**, defaulting to `None` so an untaught caller keeps the refusing answer.
+  The marker still wins: the screen is only `idle` when `esc to interrupt` appears
+  nowhere, so mid-turn-and-holding-a-shell resolves to busy before the count is
+  read. A grant is recorded on the delivery record (`shells`, `why_typeable`) and
+  printed, because it is the one case where a line is typed into a session the
+  status called busy. `fleetcontext` reports the same reconciliation; roll
+  eligibility is untouched, since `fleetupgrade` reads `claude agents` itself and
+  still sees `busy`.
+
+- **`fleetwatch` runs with no cluster configured.** It raised `ConfigError` at
+  import, exit 1, when `fleet.toml` had no `[cluster.<name>]`. Every caller read
+  that as "runtime unknown": `fleetupgrade` (and so `fleetroll`) refused every
+  session on such a machine, and `fleetboard` drew `?` in every work cell. Now no
+  ssh is attempted and the report says there is no cluster work, with the
+  watcher, nudge-delivery and client sections intact. **`--json` gains
+  `cluster_configured`**, and `cluster_ok` is `true` in this case because the
+  empty job list can be trusted. Exit status 0 where it was 1. Several clusters
+  with none named is still an error.
 
 - **`fleetboard` puts everything time-sensitive directly under the header**, and
   counts parked sessions instead of listing them (`fleetboard --parked` lists
@@ -409,6 +319,93 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **A screen/status disagreement named the wrong cause, and named it as the only
+  one.** When the pane reads idle but `claude agents` reports `busy`,
+  `fleet.panes.reconcile` said "the busy marker may have moved" — a guess that
+  sent two sessions after a stale TUI marker for eleven days. Measured across
+  every labeled pane on 2026-10-26 (2.1.302 and 2.1.308): the marker was present
+  in every pane that was genuinely mid-turn, and the panes reporting `busy` with
+  an idle screen were exactly those holding a live background shell. `claude
+  agents` reports "at the prompt with a background shell" and "mid-turn"
+  identically, and nothing else in its JSON separates them. The sentence now
+  names both possibilities. **Behavior is unchanged** — both directions still
+  resolve to busy, because never typing is the safe error — but the consequence
+  is not cosmetic: a session whose work *is* a long background shell reports
+  `busy` for that shell's whole life, so a nudge to it can never be delivered,
+  and two of the three delivery give-ups in this fleet's log are that case.
+  `fleetnudge` already holds the rule that would cover it (a session at its
+  prompt holding runtime is typeable) but keys it on the statuses `shell` and
+  `monitor`, which this version does not emit for it.
+
+- **`fleetboard` read `kernel: ?` on every WSL2 machine, permanently.** Windows
+  supplies the WSL2 kernel, so `/lib/modules` holds no image and `fleet.kernels`
+  found nothing to compare. For a release ending in `-WSL2` it now compares the
+  running kernel against the release in the boot header of the Windows-side image
+  that `wsl --update` replaces. When they differ, the header says
+  `(kernel A -> B, waiting 3d; wsl --shutdown)`, because a reboot of the
+  distribution does not load the new kernel. An unreadable image is
+  `kernel: ? (WSL kernel image unreadable)`. `/lib/modules` is no longer read
+  under WSL2, because a distribution kernel package would sort above the
+  Microsoft release and read as a reboot owed for ever. A custom `.wslconfig`
+  kernel is not supported and reads as pending.
+
+- **`fleetboard` showed `?` in every session's work column when no cluster was
+  configured.** The column is now blank, and the stamp reads `context as of …;
+  no [cluster] configured, so no cluster work`. A configured cluster that cannot
+  be read is still `?`, and so is one whose `fleet.toml` cannot be **parsed**:
+  `cluster_configured()` returns `None` there rather than raising. It is re-read
+  on every draw so `--watch` picks up an edit, which is exactly when the file is
+  most likely to be half-written, and the watch loop catches only
+  `KeyboardInterrupt` — `parked` and `updates` already guarded this; it was the
+  third sibling and the one that did not.
+
+- **`fleetroll` refused every session `fleetspawn` had started.** It read the
+  session's uuid only from `--resume` in argv, and `fleetspawn` launches with
+  `--name X '<prompt>'`. The uuid now comes from `claude agents --json`, matched
+  by pid, and only when that entry carries the same name. A different name is
+  refused. argv `--resume` is the fallback; with neither source it refuses as
+  before. The plan's `resume` line says which source it used. When the two
+  disagree, as after a `/clear`, claude's answer wins and the plan says so.
+
+  The name on that entry must agree with the session being rolled, and that
+  check applies **whichever source supplies the uuid**. It was inside the
+  branch that uses claude's answer, so it fired only when the entry happened
+  to carry a `sessionId`: an entry naming the pid something else without one,
+  or a pid listed twice, fell through to the argv fallback and was used --
+  the wrong conversation under the right label, which is the outcome the
+  check exists to prevent, reached by the path it did not cover.
+
+- **A hand-written copy of `fleetinit`'s usage block in its docs page** had
+  drifted within a day of the tool growing options. The page already renders the
+  tool's own header via `tooldoc`, read from the script at build time; a second
+  copy of something that cannot drift is only a place for it to.
+
+- **`install` created `~/bin` but not `~/.claude/skills`**, so on a machine where
+  Claude Code has never written a skill — precisely the fresh machine the script
+  exists for — every skill link failed with `No such file or directory`. **And it
+  still exited 0**: six errors on screen and a success to anything reading the
+  status. It creates the directory now and exits 1 if any link could not be made.
+  Found by walking the fresh-machine path end to end on a throwaway `HOME`; there
+  were no tests for `install` at all, and there are now.
+
+- **`install` created directories on a dry run.** `mkdir -p ~/bin` ran whether or
+  not `--go` was given, which contradicts the read-only-by-default rule the rest
+  of the tools follow. Both `mkdir`s are gated now.
+
+- **`fleetspawn --color` contradicted itself on the first spawn of a new fleet.**
+  It printed `would declare alpha = 'blue'` and then, three lines later,
+  `BLOCKED: no color declared`. `fleetinit` ships `[colors]` empty, so every new
+  fleet hits this on its very first spawn, with nothing else on screen to weigh
+  the contradiction against. `--color` now satisfies its own precondition, the
+  refusal names the flag that clears it, and the status line reads
+  `blue (pending --go)` rather than `NOT DECLARED`.
+
+- **The bootstrap skill's prerequisites predated `fleetinit`** — it told a
+  coordinator to copy `fleet.example.toml` by hand, did not mention naming the
+  fleet, and said to label a coordinator's pane with `@agent` alone, which since
+  the strict-membership flip leaves that pane outside the fleet every tool can
+  see. The README said the same about copying the example.
+
 - **`fleetrestore` now stamps `@fleet`, which is what kept the flip from being an
   outage.** It stamped `@agent` alone. With membership strict, a restore after a
   power cycle would have rebuilt all 15 sessions correctly and left every one of
@@ -439,7 +436,6 @@ entries and makes you confirm the bump against this list.
 - **`fleetinit` was the only tool in `bin/` with no `~/bin` symlink** — `install`
   globs `bin/*`, so it simply had not been re-run since the tool landed.
 
-
 - **The documentation build, and the hole that let it break unnoticed.**
   `fleet.history.scan`'s docstring is a column-aligned key table; RST reads that
   as a definition list and warns three times, and Read the Docs sets
@@ -447,15 +443,6 @@ entries and makes you confirm the bump against this list.
   module's docstrings only once that module has an `api/` page — `fleet.history`
   got its first one in 0.3.0, so adding the API pages is what exposed it. The
   docstring is a literal block now, which renders as it already reads in source.
-
-### Added
-
-- **`docs.yml` builds the documentation with `-W`** on every push to `main`, every
-  pull request and every tag, mirroring `.readthedocs.yaml` (same Python, same
-  requirements, same `conf.py`). `release.yaml` grows a matching `docs` job that
-  `publish` depends on, so a tag cannot ship documentation that will not build.
-  This is the one workflow that installs packages; the tools and their tests stay
-  stdlib-only.
 
 ## [0.3.0] - 2026-10-20
 
