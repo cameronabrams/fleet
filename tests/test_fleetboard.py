@@ -1572,3 +1572,177 @@ class ABackupNobodyConfiguredIsSilence(unittest.TestCase):
     def test_the_config_reader_says_none(self):
         from fleet import config as fc
         self.assertIsNone(fc.backup(fc.load()))
+
+
+class AForeignStringIsNotTrustedToBeOneLine(unittest.TestCase):
+    """What a status file says is evidence; how much room it gets is the board's.
+
+    The update checker ran `zypper dup --dry-run` into a dependency conflict,
+    which asks an interactive question. It could not answer, so it stored what it
+    had read -- a truncated XML prompt with five `<option .../>` elements on their
+    own lines -- in its `error` field. All of that was correct behavior. The board
+    then interpolated the field into one row and printed it, and six lines of
+    markup landed between the header and the session table, pushing the top of a
+    `--watch` off the screen (2026-11-01).
+
+    The producer was not at fault and fixing it there would not have been a fix:
+    every string on this board comes from a file written by a program that does
+    not know it is being read onto a fixed-shape screen, and the next one will be
+    a different program. The rule belongs at the draw.
+
+    Three things a foreign string must not be able to do, and all three are
+    tested on every site that prints one:
+
+      * make a second row (a newline, a carriage return, a tab),
+      * drive the terminal (an escape sequence -- an unstripped one recolors
+        every line after it, so the board's own red becomes something the source
+        can switch off),
+      * take the whole screen (no length at all is a length).
+
+    And the one thing it must not be able to do by being empty: a label with
+    nothing after it reads as a source with nothing wrong, which is the outcome
+    every check on this board exists to prevent.
+    """
+    # The real field, shortened, with the host and the package names out of it.
+    # The shape is what matters: a sentence, then markup on its own lines.
+    NOISY = ('RuntimeError: zypper dup --dry-run rc=4: text>\n'
+             '<option value="1" desc="Choose solution 1"/>\n'
+             '<option value="2" desc="Choose solution 2"/>\n'
+             '<option default="1" value="c" desc="Choose no solution and cancel."/>\n'
+             '</prompt>\n</stream>')
+
+    TOML = BASE_TOML + '''
+[backup]
+label = "borg"
+last_archive = "{state}/borg/last-archive.json"
+last_run = "{state}/borg/last-run.json"
+stale_after_h = 26
+'''
+
+    def setUp(self):
+        self.cfg = FakeConfig(toml=self.TOML)
+        self.dir = os.path.join(self.cfg.state, "borg")
+        os.makedirs(self.dir, exist_ok=True)
+        self.b = load_tool("fleetboard")
+        self.b.C = dict.fromkeys(self.b.C, "")
+        self.b.C.update({"red": "<RED>", "dim": "<DIM>", "r": "<->"})
+        # Pin the width. `get_terminal_size` reads COLUMNS before it asks the
+        # kernel, so this decides the truncation point in CI and on a developer's
+        # terminal alike -- without it the length assertions below would pass or
+        # fail on the size of the window the suite happened to run in.
+        self.width(100)
+        self.addCleanup(self.cfg.close)
+
+    def width(self, n):
+        patch = mock.patch.dict(os.environ, {"COLUMNS": str(n), "LINES": "24"})
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def backup_cfg(self, **kw):
+        d = {"label": "borg", "stale_after_h": 26,
+             "last_run": os.path.join(self.dir, "last-run.json")}
+        d.update(kw)
+        return d
+
+    @staticmethod
+    def plain(text):
+        """The row without its color markers -- the width a reader sees."""
+        import re as _re
+        return _re.sub(r"<[A-Za-z>-]*>", "", text)
+
+    # -- the helper itself ----------------------------------------------------
+
+    def test_a_newline_cannot_make_a_second_row(self):
+        self.assertEqual(self.b.oneline("one\ntwo\r\nthree"), "one two three")
+
+    def test_a_tab_and_a_null_are_not_printed_either(self):
+        """Not only the newline. A tab re-columns the row it lands in and a NUL
+        is rendered by nothing twice the same way; neither is text."""
+        self.assertEqual(self.b.oneline("a\tb\x00c"), "a b c")
+
+    def test_an_escape_sequence_does_not_survive(self):
+        """The whole sequence, not just the ESC. Stripping the introducer alone
+        would leave `[31m` sitting in the sentence as literal text."""
+        got = self.b.oneline("\x1b[31mred\x1b[0m and \x1b]0;title\x07done")
+        self.assertEqual(got, "red and done")
+        self.assertNotIn("[31m", got)
+        self.assertNotIn("\x1b", got)
+
+    def test_a_string_with_no_length_limit_of_its_own_gets_one(self):
+        got = self.b.oneline("x" * 500, head="  updates: ")
+        self.assertLessEqual(len(got), 100)
+        self.assertTrue(got.endswith("…"), got[-20:])
+
+    def test_the_head_is_counted_against_the_width(self):
+        """`head` is the visible text the caller prints in front of it, so a
+        longer label must leave the evidence less room, not overflow the row."""
+        short = self.b.oneline("x" * 500, head="  a: ")
+        long = self.b.oneline("x" * 500, head="  a much longer label here: ")
+        self.assertLess(len(long), len(short))
+
+    def test_whitespace_only_comes_back_empty_so_the_fallback_fires(self):
+        for s in ("", "   ", "\n\n", "\x1b[0m", None):
+            self.assertEqual(self.b.oneline(s), "", repr(s))
+
+    def test_a_string_that_already_fits_is_untouched(self):
+        self.assertEqual(self.b.oneline("47 updates pending"), "47 updates pending")
+
+    # -- the sites that print one ---------------------------------------------
+
+    def test_a_failed_update_check_is_one_row(self):
+        line = self.b.updates_line("failed", {"error": self.NOISY})
+        self.assertEqual(line.count("\n"), 0, "the board grew a row:\n" + line)
+        self.assertIn("zypper dup --dry-run rc=4", line, "the signal survived")
+        # Bounded, not sanitized. Markup inside the width is left alone: the
+        # board does not read a foreign string well enough to decide which of it
+        # is noise, and a renderer that edited the evidence would be the worse
+        # bug. Cutting it at the width is a claim this code can actually make.
+        self.assertLessEqual(len(self.plain(line)), 100, line)
+
+    def test_an_unknown_update_check_is_one_row(self):
+        line = self.b.updates_line("unknown", {"error": self.NOISY})
+        self.assertEqual(line.count("\n"), 0, "the board grew a row:\n" + line)
+
+    def test_a_failed_check_with_a_blank_reason_still_says_something(self):
+        line = self.b.updates_line("failed", {"error": "\n\n"})
+        self.assertIn("no reason given", line)
+
+    def test_a_backup_error_is_one_row(self):
+        line = self.b.backup_line("unreadable", {"error": self.NOISY},
+                                  self.backup_cfg())
+        self.assertEqual(line.count("\n"), 0, "the board grew a row:\n" + line)
+
+    def test_an_archive_name_is_one_row_on_a_good_night_too(self):
+        """The quiet path prints a foreign string as much as the loud one does,
+        and it is the path nobody looks at."""
+        line = self.b.backup_line("ok", {"archive": "host\n<script>", "nfiles": 3,
+                                         "_age_s": 60.0}, self.backup_cfg())
+        self.assertEqual(line.count("\n"), 0, "the board grew a row:\n" + line)
+
+    def test_the_last_run_reason_is_one_row(self):
+        with open(os.path.join(self.dir, "last-run.json"), "w") as f:
+            json.dump({"outcome": "aborted\nx", "reason": self.NOISY}, f)
+        line = self.b.backup_line("stale", {"archive": "host-1", "_age_s": 3600 * 30},
+                                  self.backup_cfg())
+        self.assertEqual(line.count("\n"), 0, "the board grew a row:\n" + line)
+
+    def test_a_source_cannot_switch_off_the_boards_own_color(self):
+        """The reset at the end of the row is the board's. A source that could
+        emit its own would leave every line below it wearing this one's color."""
+        line = self.b.updates_line("failed", {"error": "bad \x1b[0m\x1b[32m"})
+        self.assertTrue(line.endswith("<->"), repr(line[-12:]))
+        self.assertNotIn("\x1b", line)
+
+    # -- and not before the draw ----------------------------------------------
+
+    def test_the_reader_keeps_what_the_file_actually_said(self):
+        """Flattening is the board's business, not the reader's. `read_updates`
+        answers for the file, and a later caller of it -- a `--json` that does
+        not exist yet, a test, a different renderer -- must get the real text
+        rather than one cut to the width of today's terminal."""
+        path = os.path.join(self.cfg.state, "status.json")
+        with open(path, "w") as f:
+            json.dump({"schema": 1, "ok": False, "error": self.NOISY}, f)
+        state, data = self.b.read_updates(path, 36)
+        self.assertEqual(state, "failed")
+        self.assertEqual(data["error"], self.NOISY)

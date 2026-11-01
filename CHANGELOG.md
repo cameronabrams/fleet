@@ -68,6 +68,33 @@ entries and makes you confirm the bump against this list.
 
 ### Fixed
 
+- **A status file put six rows of markup in the middle of the board.** The update
+  checker ran `zypper dup --dry-run` into a dependency conflict, which asks an
+  interactive question; it could not answer one, so it recorded what it had read
+  — a truncated prompt and five markup elements, each on its own line — in the
+  `error` field of its status document. `fleetboard` interpolated that field into
+  its one-line update row and printed it as given, and the header and the first
+  sessions were pushed off the top of a `--watch`.
+
+  Nothing was wrong with the producer, and nothing was wrong with the string.
+  Every piece of text on this board that the board did not write comes from a
+  program that does not know it is being read onto a fixed-shape screen, so the
+  rule belongs at the draw rather than in any one producer: control characters
+  are stripped (escape sequences first — an unstripped escape recolors every row
+  below it, which would make the board's own red something a source could switch
+  off), whitespace collapses so a newline cannot make a second row, and what is
+  left is cut to the width the terminal has with `…` to say the file holds more.
+
+  Bounded, **not edited**: markup that fits is left alone, because the board does
+  not read these strings well enough to decide which part of one is noise. The
+  flattening happens at the draw and never in the functions that read the files,
+  which still answer for what the file actually said. Applied to every foreign
+  string the board prints — the update error, the backup error, the archive name
+  on a good night as well as a bad one, and the outcome and reason of the last
+  backup run. A string that was only whitespace now falls back to "no reason
+  given" rather than leaving a bare label, which reads as a source with nothing
+  wrong.
+
 - **`fleetwatch` reported a healthy local job as a monitor whose work had died.**
   It asked one question of every watcher registration — is this job still in
   `squeue` — and `squeue` is keyed by job id, so a watch on a *local* process,

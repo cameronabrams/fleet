@@ -26,7 +26,7 @@ state layout and two of its tools, and that coupling had no test across it: when
 `fleetsnap` changed its housekeeping on 2026-10-03 the board went blind, and only
 one side of the dependency had CI.
 """
-import datetime, json, os, shutil, subprocess, sys, time
+import datetime, json, os, re, shutil, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import kernels
@@ -281,6 +281,52 @@ def load_cache():
 
 HOME = os.path.expanduser("~")
 
+# An escape sequence, and then anything else a terminal would act on rather than
+# show. Stripped in that order: killing the lone ESC first would leave "[31m" as
+# literal text, which is noise where the whole sequence is nothing.
+ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]"      # CSI -- colors, cursor moves
+                  r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC -- window title
+                  r"|\x1b.")                         # anything else ESC-led
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+def oneline(s, head="", lo=40):
+    """Foreign text, made safe to put on a board row. "" when there is none.
+
+    Every string this board prints from a file is written by a program that does
+    not know it is being read onto a fixed-shape screen, and one of them proved
+    it: the update checker caught a `zypper dup` dependency conflict and stored
+    the prompt it could not answer, newlines, markup and all. The board printed
+    the field exactly as given and six lines of XML landed in the middle of the
+    fleet, pushing the header off the top of a `--watch`. The string was correct;
+    assuming it was one line was the bug.
+
+    So the rule for a foreign string is the same as for a foreign number: it is
+    evidence, and the board decides how much room evidence gets.
+
+      * Control characters go, escape sequences first. A status file is not a
+        place a terminal should be driven from -- an unstripped ESC recolors
+        every line after it, and the board's own red would then be a thing the
+        source could switch off.
+      * Whitespace collapses, so a newline cannot make a second row.
+      * The rest is cut to what is left of the terminal after `head`, which is
+        the visible text the caller is about to print in front of it. The `…`
+        says the file holds more.
+
+    Returned EMPTY for a string that was only whitespace or only control
+    characters, so a caller's `or "no reason given"` still fires -- a blank line
+    after a label reads as nothing being wrong, which is the one outcome every
+    source on this board is written against.
+
+    Flattening happens HERE, at the draw, and never in the `read_*` functions:
+    those return what the file actually said, and a future reader of theirs
+    should get the real text rather than a version cut to today's terminal.
+    """
+    if s is None:
+        return ""
+    s = " ".join(CONTROL.sub(" ", ANSI.sub(" ", str(s))).split())
+    limit = max(lo, shutil.get_terminal_size((80, 24)).columns - len(head) - 2)
+    return s if len(s) <= limit else s[:limit - 1].rstrip() + "…"
+
 def short_path(path, width):
     """`path` with $HOME as `~`, cut from the LEFT to fit `width`.
 
@@ -428,7 +474,8 @@ def last_run_detail(path):
         return "and %s could not be read (%s)" % (path, e.strerror or e)
     except ValueError:
         return "and %s is not readable JSON" % path
-    out, why = d.get("outcome"), d.get("reason")
+    out = oneline(d.get("outcome"), lo=24)
+    why = oneline(d.get("reason"), "  last run: %s -- " % (out or "?"))
     if not out and not why:
         return "last run says nothing about its outcome"
     return "last run: %s%s" % (out or "?", " -- %s" % why if why else "")
@@ -516,10 +563,13 @@ def updates_line(u_state, u_data):
     to the top on 2026-10-21 and a block that prints itself cannot be moved.
     """
     if u_state == "unknown":
-        return f"  {C['red']}updates: UNKNOWN -- {u_data.get('error', 'no reason given')}{C['r']}"
+        head = "  updates: UNKNOWN -- "
+        why = oneline(u_data.get("error"), head) or "no reason given"
+        return f"  {C['red']}updates: UNKNOWN -- {why}{C['r']}"
     if u_state == "failed":
-        return (f"  {C['red']}updates: THE CHECK FAILED -- "
-                f"{u_data.get('error') or 'no reason given'}{C['r']}")
+        head = "  updates: THE CHECK FAILED -- "
+        why = oneline(u_data.get("error"), head) or "no reason given"
+        return f"  {C['red']}updates: THE CHECK FAILED -- {why}{C['r']}"
     if u_state in ("ok", "stale"):
         n = u_data.get("total")
         k = u_data.get("kernel_update") or []
@@ -547,9 +597,9 @@ def updates_line(u_state, u_data):
             if k:
                 what += " (kernel)"
             if tgt and tgt != u_data.get("snapshot"):
-                what += " -> %s" % tgt
+                what += " -> %s" % oneline(tgt, what, lo=16)
         else:
-            what = "up to date (%s)" % (u_data.get("snapshot") or "?")
+            what = "up to date (%s)" % (oneline(u_data.get("snapshot"), lo=16) or "?")
         when = "checked %s ago" % age(time.time() - u_data["_age_s"])
         # STALE is said, not implied by a large number: a reader who sees only an
         # age has to do the arithmetic, and the whole point is that a check which
@@ -580,17 +630,21 @@ def backup_line(b_state, b_data, b_cfg):
     if b_state is None:
         return None
     label = (b_cfg or {}).get("label", "backup")
+    label = oneline(label, lo=16) or "backup"
     if b_state in ("missing", "unreadable"):
-        return (f"  {C['red']}{label}: UNKNOWN -- "
-                f"{(b_data or {}).get('error', 'no reason given')}{C['r']}")
+        head = f"  {label}: UNKNOWN -- "
+        why = oneline((b_data or {}).get("error"), head) or "no reason given"
+        return f"  {C['red']}{label}: UNKNOWN -- {why}{C['r']}"
     detail = ""
     if b_state == "stale":
         d = last_run_detail((b_cfg or {}).get("last_run"))
         if d:
             detail = f"{C['dim']}; {d}{C['r']}"
+        head = f"  {label}: NO ARCHIVE FOR {age(time.time() - b_data['_age_s'])} -- the last one is "
         return (f"  {C['red']}{label}: NO ARCHIVE FOR {age(time.time() - b_data['_age_s'])}"
-                f" -- the last one is {b_data.get('archive') or '?'}{C['r']}{detail}")
-    what = [b_data.get("archive") or "?"]
+                f" -- the last one is {oneline(b_data.get('archive'), head) or '?'}"
+                f"{C['r']}{detail}")
+    what = [oneline(b_data.get("archive"), "  %s: " % label) or "?"]
     n = b_data.get("nfiles")
     if n:
         what.append("%s files" % f"{int(n):,}")

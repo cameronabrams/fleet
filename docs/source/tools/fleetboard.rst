@@ -443,6 +443,46 @@ been named cannot say which panes are not its, and guessing in the excluding
 direction would hide real members. That is the one branch that still fails toward
 inclusion, and it is reachable only before :doc:`fleetinit` has run.
 
+A string from a file gets one row, and no more
+----------------------------------------------
+
+Every piece of text on this board that did not come from the board — an error
+from the update checker, an archive name, the reason a backup run gave for
+stopping — is written by a program that does not know it is being read onto a
+fixed-shape screen. The board decides how much room it gets.
+
+On 2026-11-01 the update checker ran ``zypper dup --dry-run`` into a dependency
+conflict, which asks an interactive question. It could not answer one, so it
+recorded what it had read: a truncated prompt, five markup elements, each on its
+own line. The board interpolated that into its one-line update row and printed
+it, and six rows of markup landed between the header and the session table —
+pushing the top of a ``--watch`` off the screen. Nothing was wrong with the
+producer, and nothing was wrong with the string. Assuming it was one line was
+the whole of the bug, and the next such string will come from a different
+program.
+
+So a foreign string is flattened where it is drawn. Control characters go,
+escape sequences first — a status file is not a place a terminal should be
+driven from, and an unstripped escape recolors every row after it, which would
+make this board's own red something a source could switch off. Whitespace
+collapses, so a newline cannot make a second row. What is left is cut to the
+width the terminal actually has, with ``…`` to say the file holds more.
+
+It is **bounded, not edited**. Markup that fits stays, because the board does
+not read these strings well enough to decide which part of one is noise, and a
+renderer that quietly dropped some of the evidence would be the worse bug. Where
+a row is cut, the file named in the configuration still holds all of it.
+
+The flattening happens at the draw and never in the functions that read the
+files. Those answer for what the file said, so that a later reader of theirs
+gets the real text rather than a copy cut to the width of one terminal on one
+afternoon.
+
+A string that was only whitespace, or only control characters, comes back empty
+rather than blank-but-present, so the label it was going to sit beside falls
+back to saying it has no reason to give. A label with nothing after it reads as
+a source with nothing wrong.
+
 Absence is rendered ``?``, never as a pass
 ------------------------------------------
 
