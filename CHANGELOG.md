@@ -30,6 +30,8 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-01
+
 ### Added
 
 - **`fleetboard` says when the last backup landed**, configured in a new
