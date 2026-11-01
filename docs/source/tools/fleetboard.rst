@@ -214,6 +214,10 @@ A file with **no** ``schema`` key is read as schema 1, which is the contract the
 first producer was written to. Treating that absence as a mismatch would break
 the feature on the day it arrived.
 
+Whatever the producer put in ``error`` is shown, flattened to a single row and
+cut to the terminal's width — see `A string from a file gets one row, and no
+more`_. The file keeps the full text.
+
 ``reboot_needed`` is flagged in the **header**, beside the clock, rather than in
 the footer with the aged sources. It is the one fact here that is true *now* and
 is about the fleet rather than about a package list: a reboot ends every session

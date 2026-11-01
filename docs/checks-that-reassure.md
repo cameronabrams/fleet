@@ -9,7 +9,7 @@ is a check that can be wrong, and when it is wrong it says *fine*. None of them
 ever failed toward "something is broken". That asymmetry is what makes them
 expensive: the wrong answer is the one that ends the investigation.
 
-Three mechanisms produce it.
+Four mechanisms produce it.
 
 ## A. The check cannot distinguish itself from its target
 
@@ -709,6 +709,47 @@ Three mechanisms produce it.
   to equal the real machine's `VERSION_ID`, so an existing test about counts and
   ages started reading the host instead of its fixture. Pinned, like the kernel
   state beside it.
+
+## D. The check is fine, and its output hides a check that is not
+
+A late addition, and the one that is not about a check being wrong. Here every
+check works. One of them simply takes the room another one needed, and the
+reader loses the second without ever being told it existed.
+
+- **A status file that put six rows in a one-row slot.** `fleetboard` drew an
+  error field out of the update checker's status document straight into its
+  one-line update row. On 2026-11-01 that field held what the checker had read
+  when `zypper dup --dry-run` hit a dependency conflict and asked an interactive
+  question: a truncated prompt and five markup elements, each on its own line.
+  The row became six.
+
+  The update line itself was *correct* -- loudly red, saying the check had
+  failed, which it had. The cost was paid by everything above it. A `--watch`
+  redraws into a terminal of fixed height, and the rows that scrolled off the
+  top were the header, which is where this board puts `reboot_needed` --
+  deliberately, because a pending reboot ends every session on the machine and
+  is the one fact on the screen that is true *now*. An alarm was moved to the
+  top so it could not be missed, and a different source's error text pushed it
+  off the screen.
+
+  **Direction is why this belongs here.** The visible failure was in the row
+  that was shouting. The silent one was in the rows that were gone, and a board
+  missing its header does not look like a board with a problem -- it looks like
+  a board. Nothing about the screen said anything had been displaced.
+
+  The fix is not in the producer. It recorded exactly what it saw, and the next
+  such string will come from a different program; a renderer that trusts foreign
+  text to be the shape it wants is the defect, wherever the text came from. So
+  the board now flattens every string it did not write, at the draw, and cuts it
+  to the width it actually has. Bounded, not edited: markup that fits is left
+  alone, because the board cannot tell which part of a string it does not
+  understand is the noise.
+
+  Found by a human looking at the screen, like the entry above it. Two of the
+  last three entries in this catalog were, which is its own finding -- a check
+  that is about what a display *shows* has no natural test-shaped question to
+  fail, and every test written here afterward had to be invented backwards from
+  the sight of it.
 
 ## The rule that covers them all
 
