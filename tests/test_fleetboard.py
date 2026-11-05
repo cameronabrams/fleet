@@ -751,13 +751,21 @@ class PendingUpdatesAreASourceLikeAnyOther(unittest.TestCase):
     # -- rendering -------------------------------------------------------------
 
     def draw(self, doc=None, kernel=("current", {"running": "7.2.11-1-default"}),
-             superseded=False):
+             superseded=False, rebooted=False):
         """`superseded` is PINNED for the same reason `kernel` is. Left to the
         host, `snapshot.superseded` reads the real `/etc/os-release` -- and the
         moment a fixture's `target_snapshot` happened to equal this machine's
         actual VERSION_ID, an unrelated test about counts and ages started
         getting the supersession line instead. Which is exactly how it was
-        found."""
+        found.
+
+        `rebooted` is PINNED for the third time for the same reason. It reads
+        `/proc/stat`, so left to the host every assertion about the reboot marker
+        would be decided by how long ago the machine running the suite happened
+        to boot: a fixture whose `checked_epoch` is an hour old says "rebooted
+        since" on a machine booted ten minutes ago and the opposite on one up for
+        a week. Same shape as the two above it, and the third time this file has
+        been bitten by a test reading the host instead of its fixture."""
         """`kernel` is PINNED, because the board now reads the running kernel
         live. Left to the host, every assertion about the reboot marker would be
         answered by whichever kernel the test machine happens to have booted:
@@ -775,6 +783,7 @@ class PendingUpdatesAreASourceLikeAnyOther(unittest.TestCase):
              mock.patch.object(self.b, "load_cache", lambda: None), \
              mock.patch.object(self.b.kernels, "state", lambda *a, **k: kernel), \
              mock.patch.object(self.b.snapshot, "superseded", lambda d, **k: superseded), \
+             mock.patch.object(self.b.snapshot, "rebooted_since", lambda d, **k: rebooted), \
              mock.patch.object(self.b.versions, "installed", lambda *a, **k: "2.1.303"), \
              mock.patch.object(self.b.versions, "target", lambda *a, **k: ("2.1.302", "/v")):
             buf = io.StringIO()
@@ -1746,3 +1755,145 @@ stale_after_h = 26
         state, data = self.b.read_updates(path, 36)
         self.assertEqual(state, "failed")
         self.assertEqual(data["error"], self.NOISY)
+
+
+class AnAlarmNothingCanClearIsHowATrueOneGetsMissed(unittest.TestCase):
+    """The header demanded a reboot of a machine that had just had one.
+
+    The 06:15 check on 2026-11-05 recorded ``reboot_needed: true`` with both of
+    its reasons -- kernel 7.3.0 running against 7.3.1 installed, and
+    ``needs-rebooting`` reporting updated core libraries. The machine was
+    rebooted at 09:01 onto 7.3.1. The board went on printing REBOOT NEEDED
+    beside the clock, and would have until the next morning's check, because it
+    read that field and the file had no way to notice what had happened to it.
+
+    The board already read the KERNEL half live, for the mirror-image case: a
+    kernel unpacked hours after the document was written, which a document-only
+    board would not mention for up to a day. This is the same fact from the
+    other side, and the block that fixed the first one carried a comment saying
+    so -- "it is also the direction a stale document gets WRONG in the
+    reassuring sense once the reboot happens" -- while going on to trust the
+    field anyway.
+
+    **The direction matters more than the nuisance.** A reboot demanded of a
+    machine that has had one is not merely wrong, it teaches the reader that the
+    marker means nothing; the next one, which is true, is read as the same
+    leftover. So the rule here is narrow and fails toward the alarm: only a boot
+    PROVEN later than the document retires its claim, and anything unreadable --
+    the timestamp, the boot clock -- leaves the alarm standing.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.b = load_tool("fleetboard")
+        self.addCleanup(self.cfg.close)
+
+    def doc(self, **kw):
+        d = {"schema": 1, "ok": True, "total": 3, "snapshot": "20261102",
+             "checked_epoch": time.time() - 4 * 3600, "reboot_needed": True}
+        d.update(kw)
+        return d
+
+    # -- the rule itself, against the real function ---------------------------
+
+    def test_a_boot_after_the_check_retires_its_claim(self):
+        self.assertIs(self.b.snapshot.rebooted_since(
+            {"checked_epoch": 1000}, booted=2000), True)
+
+    def test_a_boot_before_the_check_does_not(self):
+        self.assertIs(self.b.snapshot.rebooted_since(
+            {"checked_epoch": 2000}, booted=1000), False)
+
+    def test_a_boot_clock_of_zero_is_unknown_not_1970(self):
+        """Read as a timestamp it is older than every document ever written,
+        which answers "has it rebooted since" with a confident no for ever."""
+        self.assertIsNone(self.b.snapshot.rebooted_since(
+            {"checked_epoch": 1000}, booted=0))
+
+    def test_an_unreadable_timestamp_is_unknown(self):
+        for doc in ({}, {"checked_epoch": None}, {"checked_epoch": "this morning"}):
+            self.assertIsNone(self.b.snapshot.rebooted_since(doc, booted=2000),
+                              repr(doc))
+
+    def test_an_unreadable_boot_clock_is_unknown(self):
+        """`/proc/stat` is Linux's, and this is the one fact in that module a
+        container can be odd about."""
+        with mock.patch.object(self.b.kernels, "booted", lambda: None):
+            self.assertIsNone(self.b.snapshot.rebooted_since({"checked_epoch": 1000}))
+
+    def test_it_asks_the_boot_clock_when_not_told_one(self):
+        with mock.patch.object(self.b.kernels, "booted", lambda: 9999):
+            self.assertIs(self.b.snapshot.rebooted_since({"checked_epoch": 1000}), True)
+
+    # -- what the header does with it -----------------------------------------
+
+    def head(self, out):
+        return [l for l in out.splitlines() if "FLEET" in l][0]
+
+    def draw(self, doc, kernel=("current", {"running": "7.3.1-1-default"}),
+             rebooted=False):
+        """Same pinning as the class above: the kernel state and the boot
+        comparison are both read from the host otherwise, and both decide
+        exactly what these assertions are about."""
+        path = os.path.join(self.cfg.state, "status.json")
+        with open(path, "w") as f:
+            json.dump(doc, f)
+        with open(os.path.join(self.cfg.config, "fleet.toml"), "a") as f:
+            f.write('\n[updates]\nstatus = "%s"\n' % path)
+        with mock.patch.object(self.b, "panes", lambda: {}), \
+             mock.patch.object(self.b, "agents", lambda: {}), \
+             mock.patch.object(self.b, "load_cache", lambda: None), \
+             mock.patch.object(self.b.kernels, "state", lambda *a, **k: kernel), \
+             mock.patch.object(self.b.snapshot, "superseded", lambda d, **k: False), \
+             mock.patch.object(self.b.snapshot, "rebooted_since",
+                               lambda d, **k: rebooted), \
+             mock.patch.object(self.b.versions, "installed", lambda *a, **k: "2.1.303"), \
+             mock.patch.object(self.b.versions, "target", lambda *a, **k: ("2.1.303", "/v")):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.b.draw()
+        return buf.getvalue()
+
+    def test_the_marker_goes_when_the_machine_has_since_rebooted(self):
+        head = self.head(self.draw(self.doc(), rebooted=True))
+        self.assertNotIn("REBOOT NEEDED", head, head)
+
+    def test_and_the_live_kernel_takes_its_place(self):
+        """Not silence. The release is read live and it is the evidence for
+        disbelieving the document, so it is what the header shows instead."""
+        head = self.head(self.draw(self.doc(), rebooted=True))
+        self.assertIn("7.3.1-1-default", head)
+
+    def test_the_disagreement_is_said_out_loud(self):
+        """A reader who knows the producer still claims a reboot is owed would
+        otherwise find the board simply quiet about it, with no way to tell
+        which of the two to believe."""
+        head = self.head(self.draw(self.doc(), rebooted=True))
+        self.assertIn("rebooted since the check", head)
+
+    def test_a_claim_not_yet_overtaken_still_stands(self):
+        head = self.head(self.draw(self.doc(), rebooted=False))
+        self.assertIn("REBOOT NEEDED", head, head)
+
+    def test_an_unknown_boot_comparison_leaves_the_alarm_up(self):
+        """None is not False. A reboot wrongly still demanded costs a reader a
+        glance at `uname`; one wrongly retired costs them the next reboot."""
+        head = self.head(self.draw(self.doc(), rebooted=None))
+        self.assertIn("REBOOT NEEDED", head, head)
+
+    def test_the_live_kernel_half_is_untouched_by_any_of_this(self):
+        """A reader who rebooted into an OLDER kernel from the boot menu has
+        rebooted since the check and still owes a reboot. The document's claim is
+        retired; the live comparison is what tells them, and it must survive the
+        retirement of the other half."""
+        head = self.head(self.draw(
+            self.doc(), rebooted=True,
+            kernel=("pending", {"running": "7.3.0-1-default",
+                                "newest": "7.3.1-1-default"})))
+        self.assertIn("REBOOT NEEDED", head, head)
+
+    def test_a_document_that_never_claimed_one_is_not_given_the_note(self):
+        """The note explains a disagreement. With nothing to disagree with it
+        would be a line of commentary about a file the reader cannot see."""
+        head = self.head(self.draw(self.doc(reboot_needed=False), rebooted=True))
+        self.assertNotIn("rebooted since the check", head)
+        self.assertNotIn("REBOOT NEEDED", head)

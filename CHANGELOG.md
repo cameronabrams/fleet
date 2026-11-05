@@ -30,6 +30,39 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The header demanded a reboot of a machine that had just had one.** The board
+  raises `REBOOT NEEDED` on either of two halves: the live kernel comparison, or
+  a `reboot_needed` in the update document — which the producer derives from more
+  than the kernel, `zypper needs-rebooting` reporting core libraries replaced
+  under a running system among them. The second half was believed unconditionally.
+
+  That field is a claim about the moment it was written, and a boot since that
+  moment settles every reason it could have given. The file cannot notice, and
+  the next check may be most of a day away. Observed 2026-11-05: the 06:15 check
+  recorded a reboot owed for kernel 7.3.0 against 7.3.1 installed, the machine
+  was rebooted at 09:01 onto 7.3.1, and the header went on demanding a reboot —
+  the exact failure the kernel half had already been fixed for, arriving through
+  the half that had not. **An alarm nothing can clear is how a true one gets
+  missed.**
+
+  The board now compares the document's `checked_epoch` against the machine's
+  boot clock (`fleet.snapshot.rebooted_since`, with `fleet.kernels.booted` made
+  public for it), and a document written before the running boot no longer speaks
+  for it. The header shows the live release with a note rather than falling
+  silent, because the two sources disagree and a reader needs to know which one
+  was believed:
+
+      kernel 7.3.1-1-default (rebooted since the check)
+
+  Only a boot **proven** later than the document retires its claim. An unreadable
+  `checked_epoch`, or no boot clock, is unknown, and an unknown leaves the alarm
+  standing: a reboot wrongly still demanded costs a reader a glance at `uname`,
+  and one wrongly retired costs them the next reboot. The live kernel comparison
+  is untouched — a reader who rebooted into an older kernel from the boot menu
+  has rebooted since the check and still owes a reboot, and that half tells them.
+
 ## [0.4.1] - 2026-11-01
 
 ### Added

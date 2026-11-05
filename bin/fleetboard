@@ -758,9 +758,22 @@ def draw(full=False, auto=False, show_parked=False):
     # board reading only the document would have said nothing. It is also the
     # direction a stale document gets WRONG in the reassuring sense once the
     # reboot happens -- an alarm nothing can clear is how a true one gets missed.
+    #
+    # The document's own half is believed only until the machine answers it. A
+    # `reboot_needed` is a claim about the moment it was written, and a boot
+    # since that moment settles every reason it could have given -- but the file
+    # cannot notice, and the next check may be a day away. On 2026-11-05 the
+    # 06:15 check recorded a reboot owed for kernel 7.3.0 against 7.3.1; the
+    # machine was rebooted at 09:01 onto 7.3.1 and the header went on demanding a
+    # reboot anyway. That is this block's own warning turned on itself: an alarm
+    # nothing can clear is how a true one gets missed.
     k_state, k_info = kernels.state()
-    if u_state in ("ok", "stale", "failed") and u_data.get("reboot_needed") \
-            or k_state == "pending":
+    claimed = bool(u_state in ("ok", "stale", "failed")
+                   and u_data.get("reboot_needed"))
+    # `is True` and not a truth test: None means the boot clock or the timestamp
+    # could not be read, and an unknown must leave the alarm standing.
+    outlived = claimed and snapshot.rebooted_since(u_data) is True
+    if (claimed and not outlived) or k_state == "pending":
         head += f"   {C['red']}REBOOT NEEDED{C['r']}"
         if k_state == "pending":
             # Both releases and the wait, because the owner reading this already
@@ -807,6 +820,13 @@ def draw(full=False, auto=False, show_parked=False):
         # an empty field, which would read as a bug in the board rather than in
         # what it was handed.
         head += f"   {C['dim']}kernel {k_info['running']}{C['r']}"
+        if outlived:
+            # Said, rather than left as a silent disagreement. A reader who knows
+            # the producer still claims a reboot is owed would otherwise find the
+            # board quiet about it and have no way to tell which of the two it
+            # should believe. The release beside it is the evidence: it is read
+            # live, and it is the one the machine is actually running.
+            head += f"{C['dim']} (rebooted since the check){C['r']}"
     print(head)
     if a is None:
         print(f"  {C['red']}claude agents could not be read -- every status below is ?{C['r']}")

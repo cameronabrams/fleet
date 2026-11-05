@@ -127,7 +127,7 @@ def state(root=MODULES, wsl_image=WSL_IMAGE):
                            "error": f"no kernel image found under {root}"}
     newest, since = have[0]
     info = {"running": now, "newest": newest, "since": since,
-            "booted": _booted(), "installed": [r for r, _ in have]}
+            "booted": booted(), "installed": [r for r, _ in have]}
     return ("current" if newest == now else "pending"), info
 
 
@@ -187,7 +187,7 @@ def _wsl_state(now, path):
     except OSError:
         since = None
     info = {"running": now, "newest": newest, "since": since,
-            "booted": _booted(), "installed": [newest], "wsl": True,
+            "booted": booted(), "installed": [newest], "wsl": True,
             "remedy": "wsl --shutdown"}
     return ("current" if newest == now else "pending"), info
 
@@ -219,11 +219,17 @@ def differing(a, b):
             "-".join(pb[:len(pb) - n] or pb))
 
 
-def _booted():
+def booted():
     """When the running kernel started, from `/proc/stat`, or None.
 
     Corroborates the version comparison from a second direction: a newer kernel
     whose directory is younger than this boot is one that arrived after it.
+
+    Public because a second caller needs it for a different question. The update
+    document carries a `reboot_needed` the producer derived at a moment in time,
+    and the only thing that can retire that claim is a boot after the moment it
+    was made -- so `fleet.snapshot` asks for this timestamp to decide whether a
+    document still speaks for the machine it describes.
     """
     try:
         with open("/proc/stat") as fh:

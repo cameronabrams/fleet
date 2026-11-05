@@ -1,5 +1,12 @@
 """Whether the pending-updates document still describes this machine.
 
+Two claims in it can go out of date while the file itself sits unchanged, and
+both are answered the same way -- by asking the machine what it is now, rather
+than by asking how old the document is. An age says when something was written;
+it never says whether it is still true. `superseded` answers that for the
+pending COUNT, against `/etc/os-release`; `rebooted_since` answers it for the
+`reboot_needed` flag, against the boot clock.
+
 `fleetboard` reads a document written by a daily timer and prints what it says:
 `updates: 47 updates -> 20261021 - checked 6h ago`. The age is honest and the
 COUNT is not, once a human has installed the updates in between -- the line then
@@ -25,6 +32,8 @@ Unknown is never "fine". If `/etc/os-release` cannot be read, or carries no
 keeps saying what it said before.
 """
 import os
+
+from fleet import kernels
 
 OS_RELEASE = "/etc/os-release"
 
@@ -70,3 +79,56 @@ def superseded(doc, now_id=None, path=OS_RELEASE):
     if not have:
         return None
     return str(have) == str(target)
+
+
+def rebooted_since(doc, booted=None):
+    """True when this machine has booted since `doc` was written.
+
+    The document's `reboot_needed` is a claim about a moment: the producer
+    compared the running kernel against the newest installed one, asked the
+    package manager whether core libraries had moved under it, and wrote down
+    what was true then. A boot after that moment answers every one of those
+    reasons, and the document has no way to notice.
+
+    Observed 2026-11-05. The 06:15 check recorded `reboot_needed: true` with
+    both reasons -- kernel 7.3.0 running against 7.3.1 installed, and
+    `needs-rebooting` reporting updated libraries. The machine was rebooted at
+    09:01 onto 7.3.1. The board went on printing REBOOT NEEDED beside the clock,
+    because it read that field and the next check was not due until the morning.
+
+    **An alarm nothing can clear is how a true one gets missed**, which is the
+    reason this is not merely cosmetic. `fleetboard` already reads the KERNEL
+    half live for the mirror-image case -- a kernel unpacked hours after the
+    document was written, which it would otherwise not mention until the next
+    day -- and this is the same fact approached from the other side.
+
+    It does not make the machine's reboot state knowable; it only retires a
+    claim that has been overtaken. Anything a reboot owes from AFTER the boot is
+    the next check's to find, and the board goes on showing the document's age
+    so a reader can see how long ago that was. The live kernel comparison is
+    unaffected and still speaks for itself -- a reader who rebooted into an older
+    kernel from the boot menu is told so by that half, not by this one.
+
+    **None means it cannot be told**, as everywhere else here: no readable
+    `checked_epoch`, or no boot time (`/proc/stat` is Linux's, and this is the
+    one fact in this module a container can be odd about). A caller then keeps
+    saying what it said before, which leaves the alarm up. That is the direction
+    this must fail in: a reboot wrongly still demanded costs a reader a glance at
+    `uname`, and one wrongly retired costs them the next reboot.
+    """
+    if not isinstance(doc, dict):
+        return None
+    try:
+        checked = float(doc["checked_epoch"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    when = kernels.booted() if booted is None else booted
+    try:
+        when = float(when)
+    except (TypeError, ValueError):
+        return None
+    # A boot clock of zero is not an epoch in 1970, it is a machine that could
+    # not tell us -- and read as a timestamp it would be older than every
+    # document ever written, which answers "has it rebooted since" with a
+    # confident no for ever.
+    return None if when <= 0 else when > checked

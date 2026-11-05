@@ -362,6 +362,45 @@ Unreadable is ``kernel: ?`` in the header, never silence — this is read locall
 so failing means something odd about the machine itself, and omitting it reads
 exactly like a machine with nothing to report.
 
+The document's own ``reboot_needed`` is believed until the machine answers it
+-----------------------------------------------------------------------------
+
+The header raises a reboot on either half: the live kernel comparison above, or
+a ``reboot_needed`` in the update document — which the producer derives from
+more than the kernel, ``zypper needs-rebooting`` reporting core libraries
+replaced under a running system among them.
+
+That field is a claim about **the moment it was written**, and a boot since that
+moment settles every reason it could have given. The file cannot notice, and the
+next check may be most of a day away. Observed 2026-11-05: the 06:15 check
+recorded a reboot owed for kernel 7.3.0 against 7.3.1 installed, the machine was
+rebooted at 09:01 onto 7.3.1, and the header went on demanding a reboot. It was
+the very failure this section already warns about, arriving through the half
+that had not been fixed.
+
+So the board compares the document's ``checked_epoch`` against the machine's
+boot clock, and a document written before the running boot no longer speaks for
+it. The header then shows the live release with a note, rather than falling
+silent::
+
+   kernel 7.3.1-1-default (rebooted since the check)
+
+Said out loud because the two sources disagree, and a reader who knows the
+producer still claims a reboot is owed needs to be told which one the board
+believed.
+
+**Only a boot proven later than the document retires its claim.** An unreadable
+``checked_epoch``, or no boot clock — ``/proc/stat`` is Linux's — is unknown,
+and an unknown leaves the alarm standing. A reboot wrongly still demanded costs
+a reader a glance at ``uname``; one wrongly retired costs them the next reboot.
+
+This retires a claim; it does not make the machine's reboot state knowable.
+Anything a reboot owes from *after* the boot is the next check's to find, and
+the document's age goes on being shown so a reader can see how long ago that
+was. The live kernel comparison is untouched and still speaks for itself — a
+reader who rebooted into an older kernel from the boot menu has rebooted since
+the check and still owes a reboot, and that half is what tells them.
+
 Under WSL2 the kernel is Windows's, not the distribution's
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
