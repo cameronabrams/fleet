@@ -7,6 +7,21 @@ UUID = "aaaaaaaa-0000-4000-8000-000000000001"
 IDLE = "❯ \n──────\n  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent\n"
 BUSY = "· Working… (48s)\n❯ \n──────\n  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt\n"
 TYPED = "❯ /exit\n──────\n  /exit  Exit the REPL\n"
+# A pane whose input line holds text the HUMAN typed and has not sent. Drawn at
+# normal intensity, which is what makes it a draft.
+DRAFT = "❯ leave it, I'll ask later\n──────\n  ⏵⏵ auto mode on (shift+tab to cycle)\n"
+# The same sentence as a prompt SUGGESTION: Claude Code draws it dim (SGR 2) in
+# an otherwise empty input line. `capture-pane -p` drops the attribute and the
+# two become the same string, so the pre-check has to capture with `-e`.
+GHOST = ("❯ \x1b[2mleave it, I'll ask later\x1b[22m\n──────\n"
+         "  ⏵⏵ auto mode on (shift+tab to cycle)\n")
+# A dialog or a menu: no input line is drawn at all.
+NO_PROMPT = "  1. Yes\n  2. No\n"
+# A turn running WITH a draft typed under it -- the human writing the next
+# message while this one answers. Both states are true at once, and only this
+# fixture can tell which one the pre-check reports.
+BUSY_DRAFT = ("· Working… (48s)\n❯ and then check the logs\n──────\n"
+              "  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt\n")
 # A RESUMED pane. `--resume` re-renders the transcript, and `/exit` records its
 # farewell as a local-command-stdout entry -- so every exit the session has ever
 # made is replayed above the live input line on every restart. Observed on a real
@@ -416,6 +431,70 @@ class Act(Base):
         with mock.patch.object(self.r.time, "time", side_effect=lambda: next(clock)):
             code, out = self.main("alpha", "--park", "--go", "--wait", "1")
         self.assertEqual(code, 4, out)
+
+
+class InputLine(Base):
+    """What the input line already holds, which the pre-check did not read.
+
+    It ran three substring searches -- trust, background dialog, busy footer --
+    on a `capture-pane -p`, and had no fourth branch, while
+    `fleet.panes.screen_state` and `fleet.panes.state_problem` answered the whole
+    question and `fleetcontext` already used both. So a draft the human had typed
+    and not sent passed the pre-check clean, and `stop()` then typed `/exit` onto
+    the end of it: the readback could not match, `clear_input` sent C-u and 200
+    backspaces over the human's own sentence, and the exit-3 message blamed a
+    terminal reply. The session was not stopped and the resume recipe was left
+    pending.
+
+    Reported from the other side -- as a suspected FALSE block on a dim prompt
+    suggestion -- which is the bug this fix would have introduced had the check
+    been added to the pre-check's own attribute-less capture."""
+
+    def test_a_draft_blocks(self):
+        self.screen = DRAFT
+        self.blocked(self.gather()[1], "already holds text")
+
+    def test_a_draft_blocks_before_a_single_key_is_sent(self):
+        self.screen = DRAFT
+        code, out = self.main("alpha", "--park", "--go")
+        self.assertEqual(code, 2, out)
+        self.assertFalse([c for c in self.calls if c[0] == "send-keys"],
+                         "a blocked retire must not type into the pane at all")
+
+    def test_a_dim_suggestion_is_not_a_draft(self):
+        """The reported symptom, which must NOT happen: a suggestion is the
+        session offering text, not the human holding any."""
+        self.screen = GHOST
+        self.assertEqual(self.gather()[1], [])
+
+    def test_the_pre_check_keeps_the_attributes_that_tell_them_apart(self):
+        """A PROXY, and it has to be: the fake tmux returns the same text whatever
+        flags it is handed, so nothing below this line can notice a missing `-e`.
+        Against the real one the attributes are dropped, `DRAFT` and `GHOST`
+        arrive as one string, and every session with a suggestion on its prompt
+        refuses to retire. `test_a_dim_suggestion_is_not_a_draft` guards the
+        reading; this guards the asking."""
+        self.gather()
+        caps = [c for c in self.calls if c[0] == "capture-pane"]
+        self.assertTrue(caps)
+        for c in caps:
+            self.assertIn("-e", c)
+
+    def test_a_pane_with_no_input_line_blocks(self):
+        self.screen = NO_PROMPT
+        self.blocked(self.gather()[1], "no input line")
+
+    def test_a_running_turn_is_reported_before_the_draft_under_it(self):
+        """Both are true: a turn is running and the human has typed ahead. The
+        footer has to be read first, because "wait until it is idle" is the
+        instruction that resolves this screen and "clear the draft" is not --
+        clearing it would delete what they typed and the turn would still be
+        running. `BUSY` alone cannot show this: its input line is empty, so it
+        reports mid-turn whichever order the states are read in."""
+        self.screen = BUSY_DRAFT
+        problems = self.gather()[1]
+        self.blocked(problems, "mid-turn")
+        self.assertFalse([p for p in problems if "already holds text" in p], problems)
 
 
 class Recorded(Base):

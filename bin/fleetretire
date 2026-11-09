@@ -29,7 +29,8 @@ import argparse, glob, json, os, re, shlex, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
-from fleet.panes import LABELS, agent_label, belongs, type_line
+from fleet.panes import (CAPTURE, LABELS, agent_label, belongs, screen_state,
+                         state_problem, type_line)
 from fleet.procs import alive, ancestors, children, claude_procs, named, ppid, starttime
 from fleet.agents import background_named, list_agents
 from fleet.transcripts import resume_handle, session_name
@@ -39,8 +40,10 @@ OURS = fc.fleet_name(CFG)   # which fleet this one is; "" before fleetinit has r
 STATE = fc.state_dir(CFG)
 BIN = os.path.dirname(os.path.realpath(__file__))
 
-BUSY_MARKER = "esc to interrupt"           # footer while a turn runs (2.1.270)
-TRUST_MARKERS = ("trust this folder", "Is this a project you created")
+# Only the marker `stop()` watches for mid-exit. The pre-check's three local
+# copies are gone: `fleet.panes.screen_state` answers the whole question, and
+# keeping a second set here is what let the two tools disagree about what a pane
+# is showing while reading the same screen.
 BACKGROUND_MARKER = "Background work is running"
 # /exit can move a session to the background instead of stopping it (2.1.272,
 # observed with Artifact comment auto-replies armed): the pane prints these, the
@@ -143,14 +146,25 @@ def gather(a):
     else:
         if pane["label"] and pane["label"] != a.name:
             notes.append(f"pane {pane['pane']} is labeled @agent={pane['label']}")
-        _, screen, _ = tmux("capture-pane", "-p", "-t", pane["pane"])
-        if any(m in screen for m in TRUST_MARKERS):
-            problems.append(f"pane {pane['pane']} shows the folder-trust prompt")
-        elif BACKGROUND_MARKER in screen:
-            problems.append(f"pane {pane['pane']} shows the background-work dialog")
-        elif BUSY_MARKER in screen:
-            problems.append(f"{a.name} is mid-turn (pane footer shows '{BUSY_MARKER}'); "
-                            f"wait until it is idle")
+        # `CAPTURE` (-p -e), NOT a plain `-p`: the attributes are the only thing
+        # separating a DRAFT the human typed from the prompt SUGGESTION Claude
+        # Code offers in an empty input line, which it draws dim. Strip them and
+        # the two arrive as the same string -- and a check added on a plain
+        # capture would refuse to retire any session with a suggestion on its
+        # prompt, which is the shape this was first reported as.
+        #
+        # And `screen_state`/`state_problem` rather than three substring searches
+        # of our own. Those had no branch for the input line at all, so a draft
+        # passed here clean and `stop()` typed `/exit` onto the end of it: the
+        # readback could not match, `clear_input` sent C-u and 200 backspaces
+        # over the human's own unsent sentence, and the message that came back
+        # blamed a terminal reply. The states this adds are `input` and
+        # `no-prompt`; `trust`, `dialog` and `busy` keep their order and their
+        # wording, and now read a screen with the escapes stripped first.
+        _, screen, _ = tmux(*CAPTURE, "-t", pane["pane"])
+        stuck = state_problem(screen_state(screen), a.name, pane["pane"])
+        if stuck:
+            problems.append(stuck)
 
     agents = list_agents()
     if agents is None:

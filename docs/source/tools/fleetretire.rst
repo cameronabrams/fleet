@@ -27,7 +27,8 @@ Blocks, and changes nothing, on any of:
 - a resume uuid that is not ``verified:`` (resolved as :doc:`fleetsnap` does)
 - the session's transcript already listed in ``[parked]`` or ``[retired]``
 - the pane busy (``esc to interrupt`` in its footer), at the folder-trust prompt,
-  or at the background-work dialog
+  at the background-work dialog, showing no input line at all, or **holding text
+  somebody typed and has not sent** (see below)
 - child processes of the claude process
 - a live registered watcher for the session (:doc:`fleetregister`)
 - cluster work the session owns or watches, or a failed cluster query
@@ -39,6 +40,34 @@ Blocks, and changes nothing, on any of:
 - a background session already answering to the name (from ``claude agents --json``;
   if that cannot be read, a note says background sessions were not checked)
 - the session being the one running the tool
+
+A draft in the input line is somebody's unsent sentence
+------------------------------------------------------
+
+Until 2026-11-09 the pre-check read the pane with three substring searches of its
+own — trust prompt, background dialog, busy footer — and had no branch for the
+input line at all, while ``fleet.panes.screen_state`` answered the whole question
+in six states and :doc:`fleetcontext` already used it.
+
+So a draft passed the pre-check clean, and then step 2 below typed ``/exit`` onto
+the end of it. The readback could not match, ``fleet.panes.clear_input`` sent
+``C-u`` and up to 200 backspaces **over the human's own unsent text**, and the
+message that came back blamed a terminal reply. The session was not stopped and
+the resume recipe was left pending. It now blocks with exit ``2`` before a single
+key is sent.
+
+The pane is captured with ``capture-pane -p -e``, and the ``-e`` is the whole
+difference between this check and a worse bug. Claude Code draws a **prompt
+suggestion** in an empty input line as dim text (SGR 2); typed text is drawn at
+normal intensity. Strip the attributes and a suggestion and a draft arrive as the
+same string, so the same check on a plain capture would refuse to retire any
+session with a suggestion on its prompt — which is how this was first reported,
+from the other side, as a false block.
+
+A running turn is still reported ahead of the draft under it. Both can be true at
+once — somebody typing the next message while this one answers — and "wait until it
+is idle" is the instruction that resolves that screen, where clearing the draft
+would delete what they typed and leave the turn running.
 
 With ``--go``
 -------------
