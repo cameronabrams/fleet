@@ -11,6 +11,7 @@ Usage
    fleetspawn NAME DIR --beside PANE [--split v|h] [--go]
    fleetspawn NAME DIR --window TITLE [--go]
    fleetspawn --check NAME DIR
+   fleetspawn --color-only NAME DIR [--go]
    fleetspawn NAME DIR --beside PANE --resume UUID [--go]
 
 ``--socket NAME`` builds on the tmux server at that socket instead of the default
@@ -176,6 +177,45 @@ After a ``/clear`` or a restart it is yours again: a ``/clear`` drops the live c
 and keeps the name, and nothing goes back through ``fleetspawn`` at that point.
 :doc:`fleetsnap` and :doc:`fleetupgrade` flag the difference and print the command.
 
+The way back when the spawn stopped before the color
+----------------------------------------------------
+
+The color is the **last** step, so every stop between the launch and it leaves a
+live session with no label — and the folder-trust prompt causes exactly that stop
+every time. The tool exits 3 the moment the prompt appears, the human answers it
+minutes later, the session comes up, and nothing is left running to type the
+color. :doc:`fleetsnap` then reports a missing color that nothing is going to
+supply.
+
+Until 2026-11-09 there was no re-apply at all, and re-running the spawn is not
+one: it would split a second pane and launch a second session beside the live
+one. ``--color-only`` is that step by itself::
+
+   fleetspawn --color-only alpha ~/Git/x --go
+
+It finds the one live session of that name **in that directory** — the name alone
+is not an identity, and a session answering to it somewhere else is a different
+session — reads its pane from ``@agent``, and hands the pane to the same
+``apply_color`` the spawn uses. So it waits for idle, reads the typed line back,
+and confirms the session's own color record, exactly as a spawn would. With
+``--color blue`` it declares the color first, because the session whose color was
+never typed usually never had one declared either.
+
+Three things it refuses rather than guesses at: more than one process answering to
+the name, no color declared, and a pane still showing the folder-trust prompt. The
+last is read **before** the idle wait rather than through it — waiting cannot
+clear that prompt, and coming back after five minutes with "never went idle" names
+the symptom instead of the thing somebody has to answer.
+
+A color already recorded is not retyped. Like everything else here it previews
+unless given ``--go``, because typing into a live session's input line changes that
+session.
+
+It reports the gap as well as fixing it: the stop at the trust prompt now prints
+the ``--color-only`` command to run afterwards, and says the session will come up
+unlabeled until it does. It printed only ``--check`` before, which answers "yes, it
+is running" — true, and not the point.
+
 Every launch is an adoption, and it is logged
 ---------------------------------------------
 
@@ -230,11 +270,13 @@ Exit codes
    * - ``1``
      - ``--check``: not running, wrong directory, or several processes with the name
    * - ``2``
-     - blocked by preflight
+     - blocked by preflight (with ``--color-only``: no such session, several of them,
+       or no color declared)
    * - ``3``
-     - stopped at the folder-trust prompt (with ``--check``: the pane still shows it)
+     - stopped at the folder-trust prompt (with ``--check`` or ``--color-only``: the
+       pane still shows it)
    * - ``4``
-     - timed out waiting for startup
+     - timed out waiting for startup (with ``--color-only``: the color did not apply)
    * - ``5``
      - stopped at the resume-mode prompt (summary or full is the human's choice)
 

@@ -13,6 +13,7 @@ a later restore reads, a launch into the wrong directory).
   fleetspawn ... --no-color                          leave /color to be typed by hand
   fleetspawn --check NAME DIR                        verify a spawned session is live
                                                      (exit 3: still at the trust prompt)
+  fleetspawn --color-only NAME DIR --go              type /color into a session already up
   fleetspawn NAME DIR ... --resume UUID              bring a PARKED session back
 
 A name in [retired] is refused. A name in [parked] is refused unless --resume
@@ -35,6 +36,17 @@ the pane to go idle first, and confirming the color reached the session's own
 transcript record. A color that does not apply is reported with the line to type;
 it never fails the spawn, because the session is up and only its label is wrong,
 and a retry would respawn a live session.
+
+`--color-only` is the way back from a spawn that stopped after the session came
+up but before the color was typed -- which the folder-trust prompt causes every
+time, because the prompt is answered by a human minutes after this tool has
+exited 3. Until it existed there was no re-apply at all: the session was live,
+unlabeled, flagged by `fleetsnap` for the missing color, and the only way to fix
+it was to type `/color` into the pane by hand. Re-running the spawn is not the
+way back -- it would split a second pane and launch a second session beside a
+live one. It is the same `apply_color` the spawn uses, pointed at a pane that is
+already running, so it waits for idle, reads the typed line back, and confirms
+the session's own color record rather than the keystrokes.
 
 It NEVER answers Claude Code's folder-trust prompt. Trusting a directory grants
 an agent read, edit and execute there; that is the human's decision, and on
@@ -446,6 +458,30 @@ def adoption_kind(resume):
     return ("parked", "unpark") if resume else ("new", "spawn")
 
 
+def trust_stop_lines(name, directory, pane, will_color):
+    """What to print when the spawn stops at the folder-trust prompt.
+
+    A function rather than prints at the call site, for the reason `adoption_kind`
+    is one: there has to be something a test can call. A test that greps this file
+    for the strings passes whether or not anything reaches them.
+
+    `will_color` is the half that was missing. The color step is BELOW this exit
+    and never runs, so once the human answers the prompt the session comes up
+    live and unlabeled -- and `fleetsnap` then reports a missing color that
+    nothing is going to type. Saying `--check` and stopping there sent them to a
+    command that answers "yes, it is running", which is true and not the point.
+    """
+    q = f"{shlex.quote(name)} {shlex.quote(directory)}"
+    out = [f"\n  STOPPED at the folder-trust prompt in pane {pane}.",
+           "  That is the human's decision, not the agent's. Answer it in the pane,",
+           f"  then run:  fleetspawn --check {q}"]
+    if will_color:
+        out += [f"  then:      fleetspawn --color-only {q} --go",
+                "  (this exits before the color is typed, so the session will come up",
+                "   unlabeled until that second command runs)"]
+    return out + [""]
+
+
 def check(a):
     hits = [(p, c, v) for p, c, v in claude_procs() if session_name(p, c, v)[0] == a.name]
     if not hits:
@@ -479,6 +515,82 @@ def check(a):
             return 3
     print("  next: ListAgents should list it by name; then fleetsnap")
     return rc
+
+def locate(name, directory):
+    """(pid, pane, problem) for the ONE live session called `name` in `directory`.
+
+    `check` keeps its own lookup on purpose: it is a diagnostic and reports on
+    every process answering to the name, including the ones in the wrong
+    directory, because that is the finding. This one must REFUSE unless there is
+    exactly one, since what follows types into a pane.
+    """
+    hits = [(p, c) for p, c, v in claude_procs()
+            if session_name(p, c, v)[0] == name
+            and os.path.realpath(c) == os.path.realpath(directory)]
+    if not hits:
+        return None, None, f"no live claude named {name!r} in {directory}"
+    if len(hits) > 1:
+        return None, None, (f"{len(hits)} processes answer to {name!r} in {directory}: "
+                            + ", ".join(f"pid {p}" for p, _ in hits)
+                            + " -- resolve the duplicate first")
+    pid = hits[0][0]
+    _, rows, _ = tmux("list-panes", "-a", "-F", "#{pane_id}\t" + LABELS)
+    pane = next((r.split("\t")[0] for r in rows.splitlines()
+                 if agent_label((r.split("\t") + [""])[1]) == name), None)
+    if not pane:
+        return pid, None, f"no pane carries @agent={name}"
+    return pid, pane, None
+
+
+def color_only(a):
+    """Type the declared color into a session that is already up. The way back
+    from a spawn that stopped between the launch and the color.
+
+    Everything here previews unless --go, like the rest of the tool: typing into
+    a live session's input line changes that session.
+    """
+    pid, pane, problem = locate(a.name, a.dir)
+    if problem:
+        print(f"  BLOCKED: {problem}")
+        return 2
+    color = fc.colors(fc.load()).get(a.name)
+    if not color:
+        print(f"  BLOCKED: no color declared for {a.name} -- add  {a.name} = \"<color>\"  "
+              f"under [colors], or pass --color <color>")
+        return 2
+    print(f"  session {a.name}  pid {pid}  pane {pane}")
+    print(f"  color   {color}")
+    # Read BEFORE anything else, and reported as its own exit code. `apply_color`
+    # would reach the same conclusion through `wait_idle`, but only after burning
+    # the whole idle wait on a screen that waiting cannot change -- and it would
+    # come back as "never went idle", which names the symptom and not the prompt
+    # the human has to answer.
+    state = panes.screen_state(tmux(*panes.CAPTURE, "-t", pane)[1])
+    if state == "trust":
+        print(f"\n  STOPPED: pane {pane} still shows the folder-trust prompt.")
+        print(f"  Answer it in the pane, then run this again.\n")
+        return 3
+    uuid = session_uuid(pid)
+    recorded = agent_color(uuid) if uuid else None
+    if recorded == color:
+        print(f"  already recorded as {color} in transcript {uuid[:8]}; nothing to type\n")
+        return 0
+    print(f"  would type  /color {color}  into {pane} once it is idle"
+          if not a.go else
+          f"  waiting for {a.name} to go idle, then typing /color {color} ...")
+    if not a.go:
+        print("  plan only -- re-run with --go\n")
+        return 0
+    problem = apply_color(pane, a.name, pid, color, a.color_wait)
+    if problem:
+        print(f"\n  the color did not apply: {problem}")
+        print(f"  The session is up and correct; only its label is not. Type  /color {color}")
+        print(f"  in pane {pane} yourself, or run this again once the pane is idle.\n")
+        return 4
+    print(f"  color: {a.name} is now {color}")
+    print("  next: fleetsnap (it checks the color)\n")
+    return 0
+
 
 def main():
     version_flag()
@@ -514,6 +626,11 @@ def main():
                          "out without spawning into the live fleet")
     ap.add_argument("--go", action="store_true")
     ap.add_argument("--check", action="store_true", help="verify only; change nothing")
+    ap.add_argument("--color-only", action="store_true", dest="color_only",
+                    help="do not spawn: type the declared color into the pane of a "
+                         "session that is ALREADY up. The way back from a spawn that "
+                         "stopped at the folder-trust prompt, which exits before the "
+                         "color is typed.")
     ap.add_argument("--resume", metavar="UUID", help="resume a parked session's transcript")
     a = ap.parse_args()
     global SOCKET
@@ -521,6 +638,14 @@ def main():
     a.dir = os.path.realpath(os.path.expanduser(a.dir))
     if a.check:
         sys.exit(check(a))
+    if a.color_only:
+        # `--color` first, so `--color-only --color blue` can declare and apply in
+        # one command: the session whose color was never typed usually never had
+        # one declared either, and sending the human to edit the configuration
+        # between two runs of the same tool is the step that gets skipped.
+        if a.color:
+            declare_color(a)
+        sys.exit(color_only(a))
     if not (a.beside or a.window):
         ap.error("one of --beside/--window is required")
     brief = os.path.expanduser(a.brief or os.path.join(fc.config_dir(), "briefs", f"{a.name}.md"))
@@ -558,6 +683,10 @@ def main():
     # hits this, because `fleetinit` ships `[colors]` empty.
     shown = declared or (f"{a.color} (pending --go)" if getattr(a, "color", None)
                          else "NOT DECLARED")
+    # Whether the color step is going to run at all. Read once here, because the
+    # stop at the trust prompt happens a long way below and has to say whether a
+    # step is still owed.
+    will_color = bool(not a.no_color and (declared or getattr(a, "color", None)))
     print(f"  color {shown}"
           + ("" if not (declared or getattr(a, "color", None)) else
              "  (left to be typed by hand)" if a.no_color else
@@ -603,9 +732,8 @@ def main():
 
     state, pid = wait_for(pane, a.name, a.dir, a.wait)
     if state == "trust":
-        print(f"\n  STOPPED at the folder-trust prompt in pane {pane}.")
-        print(f"  That is the human's decision, not the agent's. Answer it in the pane,")
-        print(f"  then run:  fleetspawn --check {shlex.quote(a.name)} {shlex.quote(a.dir)}\n")
+        for line in trust_stop_lines(a.name, a.dir, pane, will_color):
+            print(line)
         sys.exit(3)
     if state == "resume":
         print(f"\n  STOPPED at the resume-mode prompt in pane {pane}: summary (lossy) or full")

@@ -31,6 +31,17 @@ Four mechanisms produce it.
   (`sleep <n>` in the cmdline) and excluding the checking process's own tree.
   **A check that inspects processes is itself a process.**
 
+- **A test that greps the source for a message passes while the branch holding it
+  is dead.** `fleetspawn`'s stop at the folder-trust prompt gained lines naming
+  the `--color-only` re-apply to run afterwards. The test read `bin/fleetspawn`
+  for the strings `--color-only` and `unlabeled`. Breaking the guard in a
+  breakroom -- replacing the condition those prints hang off with `if False:` --
+  left the test **green**: the strings were still in the file, and a string in a
+  file is what it was reading. Rewritten to call `trust_stop_lines`, which exists
+  only so there is something to call, and then red on the break. The sibling it
+  was copied from greps the source too; that one asserts the ABSENCE of
+  `sys.exit`, which a dead branch cannot fake.
+
 ## B. The proxy diverges from the thing it stands for
 
 - **A progress log is not a checkpoint.** namdcph with `cphRestartFreq` unset
@@ -709,6 +720,16 @@ Four mechanisms produce it.
   to equal the real machine's `VERSION_ID`, so an existing test about counts and
   ages started reading the host instead of its fixture. Pinned, like the kernel
   state beside it.
+
+- **A fixture in which both orders give the same answer.** `fleetretire`'s new
+  pre-check had to read the busy footer BEFORE the input line, so that a turn
+  running under a typed draft reports "wait until it is idle" rather than "clear
+  the draft" -- clearing it would delete what somebody typed and leave the turn
+  running. The test for that used the suite's existing `BUSY` fixture, whose input
+  line is **empty**: it reports mid-turn whichever order the two states are read
+  in, and it passed with the order reversed in a breakroom. A fixture holding both
+  conditions at once was the whole test. The states a check reads in some order
+  need a fixture in which the order is visible, or the order is untested.
 
 ## D. The check is fine, and its output hides a check that is not
 

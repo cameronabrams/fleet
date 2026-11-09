@@ -1,7 +1,7 @@
 import io, os, tempfile, unittest
 from types import SimpleNamespace
 from unittest import mock
-from tests.support import FakeConfig, load_tool
+from tests.support import BASE_TOML, FakeConfig, load_tool
 
 # Captured 2026-09-13 from claude 2.1.270 launched in an untrusted directory, on a
 # private tmux server (`tmux -L`), never answered and killed by pid.
@@ -387,6 +387,141 @@ class AColorThatWillNotApplyDoesNotFailTheSpawn(unittest.TestCase):
         self.assertIn("type  /color", tail)
         self.assertNotIn("sys.exit", tail,
                          "a color that did not apply must not fail the spawn")
+
+
+class AColorCanBeAppliedToASessionAlreadyUp(unittest.TestCase):
+    """`--color-only`. The spawn types the color as its last step, so every stop
+    between the launch and that step leaves a live session with no label -- and
+    the folder-trust prompt causes exactly that stop every time, because this tool
+    exits 3 and the human answers the prompt minutes later. Reported as a false
+    positive in the trust detector; the detector was right. Checked in the trust
+    store: a directory's grant is recorded per directory and is not inherited from
+    its parent, so a first spawn into a new directory really does prompt, and the
+    session that comes up afterwards has never been colored.
+
+    Before this there was no re-apply. Re-running the spawn is not one: it would
+    split a second pane and launch a second session beside the live one.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()                      # [colors] alpha = "red"
+        self.dir = tempfile.mkdtemp(dir=self.cfg.root)
+        self.spawn = load_tool("fleetspawn")
+        self.calls = []
+        self.screen = IDLE
+        self.procs = None                            # None -> the one live alpha
+        self.applied = None
+        self.problem = None
+        self.recorded = None
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def only(self, go=False, name="alpha", directory=None, color_wait=5):
+        procs = (self.procs if self.procs is not None
+                 else [(4242, self.dir, ["claude", "--name", "alpha", "p"])])
+
+        def tmux(*a):
+            self.calls.append(a)
+            if a[0] == "list-panes":
+                return 0, "%16\talpha\ttestfleet", ""
+            if a[0] == "capture-pane":
+                return 0, self.screen, ""
+            return 0, "", ""
+
+        def apply_color(pane, nm, pid, color, idle_wait, **k):
+            self.applied = (pane, nm, pid, color, idle_wait)
+            return self.problem
+
+        a = SimpleNamespace(name=name, dir=directory or self.dir, go=go,
+                            color_wait=color_wait, color=None)
+        with mock.patch.object(self.spawn, "claude_procs", return_value=procs), \
+             mock.patch.object(self.spawn, "tmux", side_effect=tmux), \
+             mock.patch.object(self.spawn, "session_name",
+                               side_effect=lambda p, c, v: ("alpha", None, "")), \
+             mock.patch.object(self.spawn, "session_uuid", lambda pid: "uuuuuuuu-1"), \
+             mock.patch.object(self.spawn, "agent_color", lambda u: self.recorded), \
+             mock.patch.object(self.spawn, "apply_color", apply_color), \
+             mock.patch("builtins.print"):
+            return self.spawn.color_only(a)
+
+    def test_it_applies_the_declared_color_to_the_live_pane(self):
+        self.assertEqual(self.only(go=True), 0)
+        self.assertEqual(self.applied, ("%16", "alpha", 4242, "red", 5))
+
+    def test_without_go_it_types_nothing(self):
+        """It changes a live session's input line, so it previews like the rest of
+        the tool."""
+        self.assertEqual(self.only(), 0)
+        self.assertIsNone(self.applied, "a preview must not type into the pane")
+
+    def test_the_trust_prompt_is_reported_not_waited_out(self):
+        """`apply_color` would reach the same refusal through `wait_idle`, but only
+        after spending the whole idle wait on a screen that waiting cannot change,
+        and it would come back as "never went idle" -- the symptom, not the prompt
+        somebody has to answer."""
+        self.screen = TRUST_SCREEN
+        self.assertEqual(self.only(go=True), 3)
+        self.assertIsNone(self.applied)
+
+    def test_a_session_that_is_not_running_is_refused(self):
+        self.procs = []
+        self.assertEqual(self.only(go=True), 2)
+        self.assertIsNone(self.applied)
+
+    def test_a_session_in_another_directory_is_not_this_one(self):
+        """The name is not the identity: a session answering to `alpha` somewhere
+        else is a different session, and typing into its pane would relabel it."""
+        self.assertEqual(self.only(go=True, directory=tempfile.mkdtemp(dir=self.cfg.root)), 2)
+        self.assertIsNone(self.applied)
+
+    def test_two_processes_with_the_name_are_refused(self):
+        self.procs = [(4242, self.dir, ["claude", "--name", "alpha", "p"]),
+                      (4243, self.dir, ["claude", "--name", "alpha", "p"])]
+        self.assertEqual(self.only(go=True), 2)
+        self.assertIsNone(self.applied)
+
+    def test_a_color_already_recorded_is_not_retyped(self):
+        """The session's own record, not the pane. Typing a color a session already
+        carries is a keystroke into a live session for no reason."""
+        self.recorded = "red"
+        self.assertEqual(self.only(go=True), 0)
+        self.assertIsNone(self.applied)
+
+    def test_a_color_that_does_not_apply_exits_4(self):
+        """Unlike the spawn, this one IS the color step, so there is nothing else
+        for it to have succeeded at -- and a re-run types into a pane rather than
+        spawning a second session, so a non-zero exit here is safe to retry."""
+        self.problem = "typed it, but transcript uuuuuuuu still records no color after 20s"
+        self.assertEqual(self.only(go=True), 4)
+
+    def test_no_color_declared_is_refused_before_anything_is_typed(self):
+        self.cfg.close()
+        self.cfg = FakeConfig(toml=BASE_TOML.replace('alpha = "red"', ''))
+        self.dir = tempfile.mkdtemp(dir=self.cfg.root)
+        self.spawn = load_tool("fleetspawn")
+        self.assertEqual(self.only(go=True), 2)
+        self.assertIsNone(self.applied)
+
+    def test_the_spawns_trust_exit_names_the_way_back(self):
+        """The gap was not only the missing command; it was that the stop said
+        `--check` and stopped there, and a session that checks out live still has
+        no color. Whoever answered the prompt had no way to know a step was owed.
+
+        Called, not grepped for. The first version of this read the source for the
+        strings and passed with the branch holding them disabled -- the whole
+        family of check that cannot tell itself from its target."""
+        said = "\n".join(self.spawn.trust_stop_lines("alpha", "/tmp/x", "%16", True))
+        self.assertIn("--color-only alpha /tmp/x --go", said)
+        self.assertIn("unlabeled", said)
+        self.assertIn("--check alpha /tmp/x", said)
+
+    def test_a_spawn_that_was_never_going_to_color_does_not_promise_it(self):
+        """--no-color, or no declaration at all. Printing the re-apply then would
+        send them to a command that refuses, and the session is unlabeled because
+        that is what was asked for."""
+        said = "\n".join(self.spawn.trust_stop_lines("alpha", "/tmp/x", "%16", False))
+        self.assertNotIn("--color-only", said)
+        self.assertIn("--check alpha /tmp/x", said)
 
 
 class TheRegistryIsTheHandleForAQuietSession(unittest.TestCase):
