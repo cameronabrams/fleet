@@ -42,7 +42,7 @@ Blocks, and changes nothing, on any of:
 - the session being the one running the tool
 
 A draft in the input line is somebody's unsent sentence
-------------------------------------------------------
+-------------------------------------------------------
 
 Until 2026-11-09 the pre-check read the pane with three substring searches of its
 own — trust prompt, background dialog, busy footer — and had no branch for the
