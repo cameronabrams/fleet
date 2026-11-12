@@ -227,6 +227,33 @@ It warns when the copy it is about to name has uncommitted changes, or is not a
 checkout git can read — unknown warns the same as dirty, because a wrong "clean" is
 what puts a timer on a working tree. It warns; it does not refuse.
 
+**Move the deploy checkout forward at each release.** Nothing does it for you and
+nothing warns about it: the dirty check above asks whether that copy has been
+*edited*, never whether it has been left *behind*. A detached checkout sits at
+whatever commit it was created at, indefinitely, while the branch moves::
+
+   git -C <deploy-dir> log -1 --format='%h %d'     # what is deployed
+   git -C <deploy-dir> fetch && git -C <deploy-dir> checkout --detach <tag>
+
+The pin exists so a timer firing every few minutes never executes a file somebody
+is in the middle of editing. That argues for *tested*, not for *old* — so it
+should follow the release tags rather than freeze, and a release is the natural
+moment because it is the commit the suite has already run against.
+
+Left frozen it goes wrong in a way that does not look like this directory's fault.
+The deployed tree carries the whole package, not just the tool, so anything run
+or imported from it gets that release's library: a function added to ``fleet/``
+since the pin is simply absent, and the ``AttributeError`` reads as a broken
+install rather than as an old one. ``fleetmail`` itself is well insulated — it
+imports two things, and a release that touches neither cannot reach the timer —
+but that is a property of the current imports, not a guarantee, and checking it
+costs a diff of the dependency closure every time somebody wonders.
+
+If you would rather keep the checkout deliberately cold — it is also a copy of the
+tools that a broken working tree cannot break, which has its own value on a
+recovery path — write that down beside it, because the filesystem cannot say which
+of the two a stale commit is.
+
 A fetch under a timer waits less patiently for a busy session than a hand-run one
 (``--nudge-wait``, 600 s in the printed unit): the next tick will try again.
 
