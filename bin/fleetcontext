@@ -32,13 +32,13 @@ service, or has uncommitted work: ask it to write down what it would not want su
 and pass --saved once it confirms. Otherwise it is marked skip. --saved is also
 the human's per-session override.
 
-There is no --clear. A clear discards everything not on disk; that is a judgement
+There is no --clear. A clear discards everything not on disk; that is a judgment
 about one session's state, so it stays a human keystroke.
 
 Exit codes: 0 done (or a plan with no blocks), 2 blocked, 3 stopped at an
 unexpected screen, 4 timed out waiting for the result.
 """
-import argparse, glob, json, os, re, subprocess, sys, time
+import argparse, glob, json, os, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
@@ -96,16 +96,6 @@ def panes():
 
 def screen(pane):
     return tmux(*CAPTURE, "-t", pane)[1]
-
-def brief_kind(name):
-    """The `Kind:` a session's brief declares (repo, production, ...), or None."""
-    try:
-        with open(fc.brief_path(name), errors="replace") as f:
-            text = f.read()
-    except OSError:
-        return None
-    m = re.search(r"(?i)\bkind\s*:\s*\**\s*([a-z]+)", text)
-    return m.group(1).lower() if m else None
 
 def watchers(name):
     """Live registered watchers of session `name`: ["job 123 (pid 4)"]."""
@@ -171,7 +161,7 @@ def enrich(r, now=None):
     now = now or time.time()
     me = ancestors(os.getpid())
     r["self"] = bool(SELF_UUID and r["uuid"] == SELF_UUID) or r["pid"] == os.getpid() or r["pid"] in me
-    r["kind"] = brief_kind(r["name"]) if r["name"] else None
+    r["kind"] = fc.brief_kind(r["name"]) if r["name"] else None
     r["verified"] = bool(r["uuid"]) and str(r["uuid_source"]).startswith("verified")
     st = context_stats(r["uuid"]) if r["verified"] else None
     r["tokens"] = st["tokens"] if st else None

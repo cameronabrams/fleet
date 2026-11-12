@@ -122,13 +122,16 @@ class Screens(Base):
         self.assertEqual(ss("just text"), "no-prompt")
 
     def test_brief_kind(self):
+        """Lives in `fleet.config` now: three tools asked this question and three
+        answered it, which is three places for the regex to drift apart."""
+        from fleet import config as fc
         self.brief("gamma", "You are `gamma`, a fleet session (kind: writing).\n")
         self.brief("delta", "Kind: coordinator.\n")
         self.brief("eps", "Kind: <repo | production>\n")
-        self.assertEqual(self.c.brief_kind("gamma"), "writing")
-        self.assertEqual(self.c.brief_kind("delta"), "coordinator")
-        self.assertIsNone(self.c.brief_kind("eps"))
-        self.assertIsNone(self.c.brief_kind("nobody"))
+        self.assertEqual(fc.brief_kind("gamma"), "writing")
+        self.assertEqual(fc.brief_kind("delta"), "coordinator")
+        self.assertIsNone(fc.brief_kind("eps"), "an unfilled placeholder says nothing")
+        self.assertIsNone(fc.brief_kind("nobody"), "no brief at all says nothing")
 
 
 class Recommend(Base):

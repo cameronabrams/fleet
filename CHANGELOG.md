@@ -63,6 +63,56 @@ entries and makes you confirm the bump against this list.
   is untouched — a reader who rebooted into an older kernel from the boot menu
   has rebooted since the check and still owes a reboot, and that half tells them.
 
+- **`fleetrestore` printed `coordinator: ?` on every run for six weeks.** The key
+  it reads, `coordinator` in `manifest.json`, stopped being written on 2026-10-01
+  when the per-fleet sub-manifests it lived in were removed. The reader was never
+  touched, so it went on asking for a key nothing produced. `fleetsnap` writes it
+  again, and the restore now tells a manifest that *predates* the key (`?`, with
+  what to re-run) from one that carries it as null (the snapshot looked and found
+  nobody) — `.get(key, "?")` collapsed those and rendered the second as `None`.
+
+  Both tools had tests and both were green, because `fleetrestore`'s build their
+  manifest by hand and that fixture still carried `"coordinator": "coord"` long
+  after the producer stopped emitting it. A consumer tested only against a fixture
+  is tested against its author's memory of the producer. There is now a test that
+  runs the snapshot and hands the file it really wrote to the real restore.
+
+  The `?` was correct throughout — absence is rendered `?`, never as a pass — and
+  correct is why nobody looked for six weeks. Filed in
+  `docs/checks-that-reassure.md`.
+
+- **The coordinator was identified by the session's name, not by its role.**
+  `fleetsnap` looked for a session whose `kind` was `coordinator`, but no session
+  record carried a `kind`, so the lookup never matched and a fallback behind it
+  took whichever session was literally called `coord`. It agreed with the briefs
+  for as long as nobody renamed anything, and would have handed the role to
+  whatever took the old name on the day somebody did. Session records now carry
+  `kind`, read from the `Kind:` line of the session's own brief — the one place a
+  role is written down — and the name-matching fallback is gone. Several
+  claimants record null and are reported, rather than the first in pane order.
+
+### Changed
+
+- `brief_kind` moved into `fleet.config`, where `brief_path` already lived. Three
+  tools read a brief's `Kind:` line and three had written the regex out, which is
+  three places for it to drift apart; `fleetsnap` was about to be the fourth.
+
+- The remaining British spellings, swept by pattern again rather than by word
+  list: `judgement`, `neighbours`, `normalise`, `generalise`, `authorise`,
+  `acknowledgement`, `unrecognised` — 31 across 26 files, all prose, comments and
+  docstrings. `CANCELLED` (a SLURM job state matched as a literal) and
+  `aria-labelledby` (an HTML attribute) are untouched for the same reasons as
+  last time.
+
+### Documentation
+
+- `fleetmail`'s page said how to create a deploy checkout for the timer and
+  nothing about maintaining one. It now says to move the pin forward at each
+  release, why the pin exists at all, and what a frozen one costs — an import
+  against the deployed tree gets that release's library, and the `AttributeError`
+  reads as a broken install rather than an old one. Raised 2026-11-12 after a
+  session nearly wrote the deployed checkout up as stale.
+
 ## [0.4.1] - 2026-11-01
 
 ### Added
@@ -1585,7 +1635,7 @@ entries and makes you confirm the bump against this list.
 
   Rows are now collapsed by uuid, keeping the copy under a directory a role owns,
   which is the live one and the one that attributes correctly. The remaining
-  tie-breaks are for determinism rather than judgement, because a chart that
+  tie-breaks are for determinism rather than judgment, because a chart that
   redraws differently on each run is its own bug. Found while answering a report
   about something else, and narrowed to `--all` by its reporter.
 

@@ -13,17 +13,26 @@ class SnapshotDirectory(unittest.TestCase):
     def tearDown(self):
         self.cfg.close()
 
+    def brief(self, name, text):
+        with open(os.path.join(self.cfg.config, "briefs", f"{name}.md"), "w") as f:
+            f.write(text)
+
     def manifest(self, proc_cwd="/home/u/work", repo="alpha", title="title",
-                 agents=None, transcript_name=None, fleet="testfleet"):
+                 agents=None, transcript_name=None, fleet="testfleet", labels=None):
         # eleven fields: two labels, `@agent` and `@fleet`. `@fleet` is LAST
         # because appending is what keeps the older indices where their readers
         # expect them -- this unpack has been left behind by a moving format twice.
-        row = ["fleet", "1", "win", "0", "%1", repo, title,
-               "/home/u/somewhere-else", "100", "80x40", fleet]
+        def mkrow(label, pidx):
+            return ["fleet", "1", "win", str(pidx), f"%{pidx + 1}", label, title,
+                    "/home/u/somewhere-else", "100", "80x40", fleet]
+        # `labels` builds a MULTI-session fixture; one row stays the default, so
+        # every test written against the single-pane shape is untouched.
+        rows = ([mkrow(l, i) for i, l in enumerate(labels)] if labels
+                else [mkrow(repo, 0)])
         proc = {"pid": 200, "version": "2.1.276", "resume_uuid": None, "started": "",
                 "argv": ["claude", "--name", "alpha"]}
         sn = self.snap
-        with mock.patch.object(sn, "pane_rows", return_value=[row]), \
+        with mock.patch.object(sn, "pane_rows", return_value=rows), \
              mock.patch.object(sn, "claude_proc", return_value=proc), \
              mock.patch.object(sn, "list_agents", return_value=agents), \
              mock.patch.object(sn, "session_name", return_value=(transcript_name, None, "x")), \
@@ -461,3 +470,102 @@ class OutsidePanes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheCoordinatorIsNamedByItsBrief(SnapshotDirectory):
+    """Which session coordinates is a fact about its ROLE, and the brief is the one
+    place a role is written down. This used to be read off the session's NAME.
+
+    `fleetsnap` had the right lookup -- `kind == "coordinator"` -- but no session
+    record carried a `kind`, so it never matched and a fallback behind it took the
+    session literally called `coord`. Two consequences, both silent: a fleet whose
+    coordinator is called anything else had none, and a renamed coordinator would
+    have handed the role to whatever took the old name. Meanwhile the key the
+    lookup fed stopped being written on 2026-10-01, so `fleetrestore` printed
+    `coordinator: ?` for six weeks with nothing to notice it (2026-11-12).
+    """
+    def coord(self, *labels_and_kinds):
+        """labels_and_kinds: ("alpha", "repo"), ("lead", "coordinator"), ...
+
+        A kind of None writes a brief that declares nothing, which is the shape of
+        a brief somebody has not filled in yet."""
+        for name, kind in labels_and_kinds:
+            self.brief(name, f"# {name}\n" + (f"Kind: {kind}\n" if kind else ""))
+        m = self.manifest(labels=[n for n, _ in labels_and_kinds])
+        with open(os.path.join(self.cfg.state, "index.md")) as f:
+            self.index = f.read()
+        return m
+
+    def test_the_manifest_records_the_coordinator(self):
+        """The key `fleetrestore` prints. Its absence is what `?` was."""
+        m = self.coord(("alpha", "repo"), ("beta", "coordinator"))
+        self.assertIn("coordinator", m, "the key fleetrestore reads must be written")
+        self.assertEqual(m["coordinator"], "beta")
+
+    def test_the_coordinator_need_not_be_called_coord(self):
+        """The case the old fallback could not see at all."""
+        self.assertEqual(self.coord(("alpha", "repo"), ("beta", "coordinator"))
+                         ["coordinator"], "beta")
+
+    def test_a_session_called_coord_is_not_one_unless_its_brief_says_so(self):
+        """The mirror, and the more dangerous half: the old fallback answered this
+        with "coord" on the strength of the name alone."""
+        m = self.coord(("coord", "repo"), ("alpha", "repo"))
+        self.assertIsNone(m["coordinator"],
+                          "the name is not evidence; the brief is")
+
+    def test_every_session_records_the_kind_its_brief_declares(self):
+        m = self.coord(("alpha", "repo"), ("beta", "coordinator"), ("gamma", None))
+        self.assertEqual({s["label"]: s["kind"] for s in m["sessions"]},
+                         {"alpha": "repo", "beta": "coordinator", "gamma": None})
+
+    def test_two_claimants_record_none_rather_than_the_first(self):
+        """Taking the first off the list would render a configuration mistake as a
+        confident answer, and the answer would depend on pane order."""
+        m = self.coord(("alpha", "coordinator"), ("beta", "coordinator"))
+        self.assertIsNone(m["coordinator"])
+        self.assertIn("2 briefs declare", self.out)
+        self.assertIn("alpha", self.out)
+
+    def test_the_index_says_which_of_the_two_absences_it_is(self):
+        """They need opposite fixes -- write the line into a brief, or take it out
+        of all but one -- so one shared `_none_` is not enough."""
+        self.coord(("alpha", "repo"), ("beta", "repo"))
+        self.assertIn("no brief declares", self.index)
+        self.coord(("alpha", "coordinator"), ("beta", "coordinator"))
+        self.assertIn("each declare", self.index)
+
+    def test_the_index_names_the_coordinator_and_says_on_what_evidence(self):
+        self.coord(("alpha", "repo"), ("beta", "coordinator"))
+        self.assertIn("Coordinator: **beta**", self.index)
+        self.assertIn("brief", self.index)
+
+    def test_the_manifest_this_tool_writes_is_the_one_fleetrestore_reads(self):
+        """The handoff, run end to end, because testing each side against its own
+        fixture is what hid this for six weeks.
+
+        `fleetrestore`'s own tests hand-write a manifest, and that fixture kept
+        carrying `"coordinator": "coord"` for the entire time the producer wrote no
+        such key -- so both suites were green and the live tool printed `?` on every
+        run. Nothing here is hand-written: `fleetsnap` above produced the file, and
+        the real `fleetrestore` binary reads that file and is asked what it says.
+        A key renamed on either side fails this and nothing else.
+        """
+        import subprocess, tempfile, shutil
+        self.coord(("alpha", "repo"), ("beta", "coordinator"))
+        tmux = tempfile.mkdtemp(prefix="ftmux", dir="/tmp")
+        home = os.path.join(tmux, "nohome")       # no version store: bare `claude`
+        os.makedirs(home, exist_ok=True)
+        try:
+            env = dict(os.environ, FLEET_CONFIG=self.cfg.config,
+                       TMUX_TMPDIR=tmux, HOME=home)
+            env.pop("TMUX", None)
+            r = subprocess.run([os.path.join(APP, "bin", "fleetrestore")],
+                               capture_output=True, text=True, env=env)
+        finally:
+            shutil.rmtree(tmux, ignore_errors=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        line = next(x for x in r.stdout.splitlines() if "coordinator:" in x)
+        self.assertIn("beta", line)
+        self.assertNotIn("?", line, "the key the producer writes must be the key "
+                                    "the consumer reads")

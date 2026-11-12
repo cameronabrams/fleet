@@ -86,6 +86,29 @@ def brief_path(name):
     """Where a session's brief must be. Required for every member."""
     return os.path.join(config_dir(), "briefs", f"{name}.md")
 
+def brief_kind(name):
+    """The `Kind:` a session's brief declares (repo, production, ...), or None.
+
+    The brief is where a session's ROLE is written down, so it is the only place
+    a tool can ask what a session is rather than guess from what it is called.
+    `fleetnudge` already refuses to nudge a coordinator on this answer; `fleetsnap`
+    records it, and names the fleet's coordinator from it.
+
+    It lives here because it was written three times otherwise. The regex is
+    deliberately loose -- briefs are prose, and the line is as often
+    "a fleet session (kind: writing)" as a heading -- and it stops at the first
+    word, so an unfilled template placeholder like `Kind: <repo | production>`
+    yields None rather than the word "repo". None means the brief does not say,
+    which is not the same as a brief that says something unexpected: callers get
+    the word and decide, and nothing here maps an unknown kind onto a known one.
+    """
+    try:
+        with open(brief_path(name), errors="replace") as f:
+            m = re.search(r"(?i)\bkind\s*:\s*\**\s*([a-z]+)", f.read())
+    except OSError:
+        return None
+    return m.group(1).lower() if m else None
+
 def membership_problems(cfg, name, live_color=None, color_known=True):
     """What a fleet member is missing: [(kind, text, fix)]. Empty means complete.
 

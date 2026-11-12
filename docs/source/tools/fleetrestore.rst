@@ -54,7 +54,7 @@ Behavior
   rest: a typo would otherwise read as a successful partial restore.
 
 It does not restart compute. Local jobs died with the machine; whether to rerun them
-is a judgement, not a recovery step.
+is a judgment, not a recovery step.
 
 The bare command is the power-cycle path. Each window's recorded layout is applied
 only when every session in the manifest is being rebuilt — a named subset, or a run
@@ -63,6 +63,31 @@ needs every pane that was in the window.
 
 After a restore, verify the fleet — per pane, argv against cwd against the manifest
 — not just the snapshot (:doc:`../skills/fleet-snapshot`).
+
+The coordinator line says which of three things it means
+--------------------------------------------------------
+
+A run opens by naming the fleet's coordinator, which ``fleetsnap`` derives from
+the ``Kind:`` line of each session's brief. Three outcomes, and they are not two:
+
+``coordinator: lead``
+  one brief declares ``Kind: coordinator``, and that is the session.
+
+``coordinator: none declared in any brief``
+  the snapshot looked and found nobody — or found several, which it refuses to
+  guess between. Fix it in the briefs and re-snapshot.
+
+``coordinator: ?``
+  **the manifest is older than the key.** Re-run ``fleetsnap``.
+
+Reading these with one ``.get(key, "?")`` is what made the question worth a
+section. The producer stopped writing the key on 2026-10-01 and this line printed
+``?`` on every run until 2026-11-12, while the tool's own tests passed against a
+hand-written manifest fixture that still carried it. A consumer tested only
+against a fixture is tested against its author's memory of the producer; there is
+now a test that snapshots a real fleet and asks this tool what it reads. The same
+``.get`` would also have rendered a genuine "nobody declared it" as the string
+``None``.
 
 A restore is the fleet's largest adoption
 -----------------------------------------

@@ -50,6 +50,39 @@ class Plan(unittest.TestCase):
     def manifest(self):
         return os.path.join(self.cfg.state, "manifest.json")
 
+    def test_the_coordinator_line_tells_the_three_states_apart(self):
+        """`m.get("coordinator", "?")` reads two states where there are three, and
+        the fixture above hid the whole question for six weeks.
+
+        That fixture hand-wrote `"coordinator": "coord"` into the manifest -- so
+        this tool's tests passed against a key its PRODUCER had stopped writing on
+        2026-10-01, and the live tool printed `coordinator: ?` on every run while
+        the suite stayed green. A consumer tested only against a fixture is tested
+        against the author's memory of the producer.
+
+        A manifest with no key at all is an OLD manifest and says to re-snapshot. A
+        manifest carrying null is a snapshot that looked and found nobody, which
+        needs a brief edited instead -- and `.get` alone prints it as "None"."""
+        def line(mutate):
+            man = json.load(open(self.manifest()))
+            mutate(man)
+            json.dump(man, open(self.manifest(), "w"))
+            r = self.run_tool()
+            self.assertEqual(r.returncode, 0, r.stderr)
+            return next(x for x in r.stdout.splitlines() if "coordinator:" in x)
+
+        named = line(lambda m: m.update(coordinator="lead"))
+        self.assertIn("lead", named)
+
+        absent = line(lambda m: m.pop("coordinator", None))
+        self.assertIn("?", absent)
+        self.assertIn("fleetsnap", absent, "an old manifest must say how to fix it")
+
+        null = line(lambda m: m.update(coordinator=None))
+        self.assertNotIn("None", null, "null is a finding, not a name")
+        self.assertNotIn("?", null, "a snapshot that looked is not a snapshot missing")
+        self.assertIn("brief", null)
+
     def test_an_unnamed_session_is_not_relaunched(self):
         man = json.load(open(self.manifest()))
         man["sessions"].append(dict(session(None, 4, 0, uuid="u-unnamed"),

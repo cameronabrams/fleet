@@ -120,14 +120,6 @@ def tag(session, job, mail_from=None):
         return f"[mail: {mail_from} -> {session}]"
     return f"[watcher: {session} job {job}]"
 
-def brief_kind(name):
-    try:
-        with open(fc.brief_path(name), errors="replace") as f:
-            m = re.search(r"(?i)\bkind\s*:\s*\**\s*([a-z]+)", f.read())
-    except OSError:
-        return None
-    return m.group(1).lower() if m else None
-
 def registered(session, job):
     """True if some watcher registered (session, job), live or not."""
     for path in glob.glob(os.path.join(STATE, "watchers", "*.json")):
@@ -158,7 +150,7 @@ def static_problems(session, job, text, mail_from=None):
     rec = fc.stopped(CFG).get(session)
     if rec:
         out.append(f"{session} is [{rec['state']}] in fleet.toml")
-    if not mail_from and brief_kind(session) == "coordinator":
+    if not mail_from and fc.brief_kind(session) == "coordinator":
         # WATCHERS do not nudge the coordinator: their results go to the human, and
         # the coordinator owns no campaign to be told about. Mail is not a watcher.
         # A coordinator is the obvious counterpart for another person's fleet -- it

@@ -346,6 +346,12 @@ def main():
         snap["sessions"].append({
             "label": label,
             "label_note": label_note,
+            # What the session IS, from the one place it is written down: its own
+            # brief. Recorded per session rather than derived once at the end, so a
+            # reader of the manifest can see every role, not only the coordinator's
+            # -- and so the derivation below has something to derive FROM. There
+            # used to be a lookup here for a `kind` no record carried; see it.
+            "kind": fc.brief_kind(label),
             "tmux": {"session": sess, "window": int(win),
                      "window_name": meta.get(f"{sess}:{win}", {}).get("name", winname),
                      "pane_index": int(pidx), "pane_id": pane, "size": size},
@@ -382,6 +388,25 @@ def main():
     for s in snap["sessions"]:
         key = f"{s['tmux']['session']}:{s['tmux']['window']}"
         s["tmux"]["window_name"] = meta.get(key, {}).get("name", s["tmux"]["window_name"])
+
+    # The coordinator is whichever session's BRIEF says it is one, and this must
+    # be settled BEFORE the manifest is written -- the derivation used to live two
+    # hundred lines down with the index, where its only reader was that one page.
+    #
+    # The lookup itself was written before anything recorded a kind, so it never
+    # matched, and a fallback behind it named the coordinator by the literal string
+    # "coord": a check on what a session is CALLED standing in for a check on what
+    # it IS. That agreed with the brief for as long as nobody renamed anything, and
+    # would have gone quietly wrong rather than blank on the day somebody did. The
+    # fallback is gone; `kind` on each session is what makes the lookup real.
+    #
+    # Zero or several is `None`, not a guess: two sessions claiming the role is a
+    # configuration mistake, and taking the first off the list would hide it.
+    # Absence is rendered `?`, never as a pass -- here and in `fleetrestore`, which
+    # printed `coordinator: ?` from 2026-10-01 to 2026-11-12 because this key
+    # stopped being written and nothing was left to notice.
+    coords = [x["label"] for x in snap["sessions"] if x.get("kind") == "coordinator"]
+    snap["coordinator"] = coords[0] if len(coords) == 1 else None
 
     os.makedirs(STATE, exist_ok=True)
     rotate(f"{STATE}/manifest.json")
@@ -425,9 +450,6 @@ def main():
     # human noticed it had known them an hour earlier. The migration had nothing
     # left to do by then: nothing writes `<fleet>.json` any more, so no new residue
     # can appear, and a cleanup that cannot have work is pure blast radius.
-    coord = next((x["label"] for x in snap["sessions"]
-                  if (x.get("kind") or "") == "coordinator"), None) \
-        or next((x["label"] for x in snap["sessions"] if x["label"] == "coord"), None)
     idx = [f"# Sessions on {snap['host']} — {snap['captured']}\n",
            "One manifest: `manifest.json`. `fleetrestore` rebuilds everything with "
            "exact geometry; `fleetrestore <session> ...` rebuilds named ones.\n",
@@ -435,7 +457,15 @@ def main():
     for m in sorted(snap["sessions"], key=lambda x: x["label"] or ""):
         t = m["tmux"]
         idx.append(f"| **{shown(m)}** | {t['window']}.{t['pane_index']} | `{m['cwd']}` |")
-    idx.append(f"\nCoordinator: **{coord or '_none_'}**.\n")
+    if snap["coordinator"]:
+        idx.append(f"\nCoordinator: **{snap['coordinator']}**, "
+                   "by the `Kind:` its own brief declares.\n")
+    else:
+        # Which absence it is, because the two need opposite fixes: write the line
+        # into a brief, or take it out of all but one.
+        idx.append("\nCoordinator: **_none_** (%s).\n" % (
+            "briefs for %s each declare `Kind: coordinator`" % ", ".join(coords)
+            if coords else "no brief declares `Kind: coordinator`"))
     idx.append("A pane belongs to an agent when it carries the tmux pane option "
                "`@agent`. Set it with `tmux set -p -t <pane> @agent <name>` and "
                "re-run `fleetsnap`.")
@@ -515,6 +545,15 @@ def main():
                 print(f"   {shown(s):<20} {p['problem']}\n   {'':<20} -> {p['fix']}")
     else:
         print(f"    membership: all {len(snap['sessions'])} have a brief and their declared color")
+    # Said out loud, because the manifest records the ambiguity as a blank and a
+    # blank reads as "nobody asked". `fleetrestore` prints this key, and a fleet
+    # whose recovery page cannot name its coordinator is worth one line here.
+    if len(coords) > 1:
+        print(f"\n!! {len(coords)} briefs declare `Kind: coordinator` "
+              f"({', '.join(coords)}); the manifest records none")
+        print("   -> leave the line in one brief and take it out of the others")
+    elif not coords and snap["sessions"]:
+        print("\n    coordinator: none (no brief declares `Kind: coordinator`)")
 
 if __name__ == "__main__":
     main()

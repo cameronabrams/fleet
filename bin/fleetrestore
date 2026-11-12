@@ -6,7 +6,7 @@ and @fleet labels, working directories, and resumes each session by transcript
 UUID.
 
 It deliberately does NOT restart any compute. Local jobs died with the power cycle
-and whether to rerun them is a judgement call, not a recovery step.
+and whether to rerun them is a judgment call, not a recovery step.
 
   fleetrestore              plan the whole fleet (default; changes nothing)
   fleetrestore NAME...      plan only these sessions
@@ -114,7 +114,7 @@ def windows_by_name(sess):
 
     A restore that creates a window per manifest group is right only when nothing
     is there yet. After liveness filtering, the usual restore is PARTIAL -- one
-    session died and its window is still on screen holding its neighbours -- and
+    session died and its window is still on screen holding its neighbors -- and
     the group must be split into that window instead of templated beside it.
     """
     r = tmux_run(["list-windows", "-t", sess, "-F", "#{window_name}\t#{window_id}"],
@@ -295,7 +295,16 @@ def main():
     CLAUDE_CMD, launched, claude_why = claude_cmd()
 
     age = time.time() - os.path.getmtime(MANIFEST)
-    print(f"\n  coordinator: {m.get('coordinator','?')}")
+    # Three states, not two. A manifest written before 2026-11-12 has no
+    # `coordinator` key at all -- the producer stopped writing it on 2026-10-01 and
+    # this line read it unchanged for six weeks, so `?` was the honest answer and
+    # also the useless one. A manifest that HAS the key and holds null is a
+    # snapshot that looked and found nobody, which is a different thing to fix:
+    # `.get(key, "?")` alone renders that as the string "None".
+    if "coordinator" not in m:
+        print("\n  coordinator: ? (this manifest predates the key; re-run fleetsnap)")
+    else:
+        print(f"\n  coordinator: {m['coordinator'] or 'none declared in any brief'}")
     print(f"  manifest captured {m['captured']}  ({age/3600:.1f} h ago)")
     print(f"  {len(m['sessions'])} sessions, claude {m['installed_claude']} in the manifest")
     print(f"  launching with: {claude_why}\n")
@@ -392,7 +401,7 @@ def main():
         if len(here) > 1:
             # Two windows already carry this name -- which is what this very bug
             # produced before it was fixed. Guessing between them would put a
-            # session beside the wrong neighbours; say so and leave it.
+            # session beside the wrong neighbors; say so and leave it.
             print(f"    !! {len(here)} windows are already named {wname!r} "
                   f"({', '.join(here)}). NOT restoring "
                   f"{', '.join(x['label'] for x in panes)} into any of them -- "

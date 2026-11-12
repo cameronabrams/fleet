@@ -77,7 +77,7 @@ Four mechanisms produce it.
   confident half.** Found 2026-09-22 by the session putting the chart on a slide,
   not by the session that wrote the chart.
 
-  Two things generalise. First, the direction: a chart with everything neatly
+  Two things generalize. First, the direction: a chart with everything neatly
   attributed looks *more* correct than one with an unattached lane, so the wrong
   answer is the tidy one. Second, and worth more — **the bad inference disabled
   the guard that existed to catch it.** `fleetgantt` already passed
@@ -140,6 +140,25 @@ Four mechanisms produce it.
   confidence: it named a moved TUI marker as the cause, which sent two sessions
   after the wrong hypothesis for eleven days while the marker was verifiably
   present in every pane that was genuinely mid-turn.
+
+- **A fixture is a memory of the producer, not the producer.** `fleetrestore`
+  prints the fleet's coordinator from `manifest.json`. `fleetsnap` stopped writing
+  that key on 2026-10-01, when a refactor removed the per-fleet sub-manifests it
+  had been written into — and the line printed `coordinator: ?` on every run for
+  the next six weeks while the suite stayed green, because the restore tests build
+  their manifest by hand and that hand-written fixture still carried
+  `"coordinator": "coord"`. The consumer was tested against the author's memory of
+  the producer, which is exactly the thing a refactor changes and a fixture does
+  not. **Two tools that must agree about a file, each tested only against its own
+  fixture of that file, are not tested about the thing they must agree on.** The
+  `?` itself was correct throughout — absence rendered as absence, by the rule this
+  repository keeps — which is why nobody looked: *a doctrine that makes failure
+  quiet makes failure quiet*, and it bought six weeks of silence here. Found
+  2026-11-12 by the human asking why he kept seeing a question mark.
+  <br>The repair is a test that runs the producer and asserts on what the consumer
+  reads, plus a consumer that tells a MISSING key (an old manifest) from a null one
+  (a snapshot that looked and found nobody) — `.get(key, "?")` collapses those two
+  into one answer, and renders the second as the string `"None"`.
 
 ## C. The check had only one possible outcome
 
@@ -649,7 +668,7 @@ Four mechanisms produce it.
   and those differ precisely when a cache sits between them. A peer session found
   it, and the author of the original check said so plainly in its own drop.
 
-  The repair generalises past this mount: a watcher on such a directory must read
+  The repair generalizes past this mount: a watcher on such a directory must read
   an unreadable or stale source as **UNKNOWN, never as "nothing arrived"** -- an
   empty directory from a dead mount is indistinguishable from an empty directory
   in a quiet week.
