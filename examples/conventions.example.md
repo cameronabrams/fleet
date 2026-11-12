@@ -27,7 +27,7 @@ transcripts showed.
 - One message per unit of work. Splitting a thought costs a whole extra envelope.
 - **Check the send result.** A drop file on disk looks like finished work whether or
   not the message carrying its path arrived.
-- No content-free acknowledgements. No broadcasts, except the coordinator for things
+- No content-free acknowledgments. No broadcasts, except the coordinator for things
   every recipient must act on.
 
 ## 2. Authority stays with the human

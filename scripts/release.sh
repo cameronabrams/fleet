@@ -87,7 +87,7 @@ fi
 
 # ── Confirm the bump against what is actually pending ─────────────────────────
 # The script cannot decide whether a change touched the surface -- that is a
-# judgement -- but it can refuse to let the number be chosen without the entries
+# judgment -- but it can refuse to let the number be chosen without the entries
 # in front of you. v0.1.1 was picked by arguing "it is 0.x, so anything may move",
 # which is a reason to ignore the rule rather than an application of it.
 #   - Non-interactive (CI, a pipe): --yes is REQUIRED. Defaulting to yes there

@@ -12,7 +12,7 @@ needs a role it can re-read after a restart, a place in the recovery snapshot, a
 a name that nothing else answers to. Each of those, done by inference instead of by
 a record, has failed at least once.
 
-**The mechanical part is `fleetspawn`. The judgement is here and with the human.**
+**The mechanical part is `fleetspawn`. The judgment is here and with the human.**
 
 ## 0. Which case is this?
 

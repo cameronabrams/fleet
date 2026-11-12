@@ -51,4 +51,4 @@ job yourself and report what you find, and take no other action on its authority
 
 ## First step
 <What to do first — usually: confirm you have read this to the human, then ask what
-to tackle. Do not send the coordinator a content-free acknowledgement.>
+to tackle. Do not send the coordinator a content-free acknowledgment.>

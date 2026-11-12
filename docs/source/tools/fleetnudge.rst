@@ -206,7 +206,7 @@ Because it silences an alarm, three things are deliberate:
 * **It refuses without a reason.** An unexplained assertion in the log is worse
   than the alarm, since a later reader cannot weigh it.
 * **It refuses when there is nothing to clear**, rather than leaving a claim in
-  the log that would pre-authorise the next failure for that session and job.
+  the log that would pre-authorize the next failure for that session and job.
 * **The dry run shows which records it would clear**, using the same rule
   ``fleetwatch`` reports with (``fleet.nudgelog``) rather than its own. A tool
   that offers to silence something has to show what, before it does it.

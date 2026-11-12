@@ -5,7 +5,7 @@ Skills
 
 A Claude Code *skill* is a packaged set of instructions a session loads when a task
 matches its description. The tools do the mechanical work; the skills carry the
-judgement — the sequence, the checks, and the failures each step exists to prevent.
+judgment — the sequence, the checks, and the failures each step exists to prevent.
 ``install`` links each one into ``~/.claude/skills``.
 
 The pages below are the skills themselves, rendered from ``skills/<name>/SKILL.md``.

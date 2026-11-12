@@ -110,7 +110,7 @@ A session holding runtime does not exit on `/exit`. It raises:
 
 Option 1 is preselected; `Enter` takes it. `Down` then `Enter` takes option 2.
 
-**Choosing between 1 and 2 is a judgement call, and they are not interchangeable:**
+**Choosing between 1 and 2 is a judgment call, and they are not interchangeable:**
 
 - **Option 2 (background) when the work should outlive the session and nothing
   will re-create it** — a wait-loop whose only remaining job is to write a result
@@ -184,7 +184,7 @@ separates them is **age, and whether the session is mid-turn**: minutes old,
 polling, `busy` in `claude agents` is work in progress; hours old and not polling
 is a hang. `fleetupgrade` now reports every exit-blocking child with its age, its
 real command and the session's status, under **/exit WILL NOT COMPLETE**, and
-leaves the judgement where it belongs — it no longer claims the session is stuck,
+leaves the judgment where it belongs — it no longer claims the session is stuck,
 and it no longer leads with a `kill` line.
 
 After option 1, confirm the work actually stopped; after option 2, confirm it

@@ -752,7 +752,7 @@ class RecordingThatTheNewsArrivedAnotherWay(Base):
 
     def test_it_refuses_when_there_is_nothing_to_clear(self):
         """Writing it anyway would assert something about nothing, and would sit
-        in the log pre-authorising the next failure for that session and job."""
+        in the log pre-authorizing the next failure for that session and job."""
         code, out = self.deliver("I just think so", go=True)
         self.assertEqual(code, 3, out)
         self.assertIn("NOTHING TO CLEAR", out)

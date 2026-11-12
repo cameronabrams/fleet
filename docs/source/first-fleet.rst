@@ -7,7 +7,7 @@ From nothing to a fleet you can leave running, and then to mail with someone els
 fleet. :doc:`installation` puts the tools in place; this page is what to do next, in
 order, and what each step is for. The
 :doc:`fleet-bootstrap skill <skills/fleet-bootstrap>` drives the same sequence from
-inside a session, with the judgement calls spelled out; read this first if you would
+inside a session, with the judgment calls spelled out; read this first if you would
 rather understand the shape before handing it to an agent.
 
 Two things this page assumes you accept. A fleet is **long-lived sessions in tmux

@@ -9,7 +9,7 @@ img.banner {
 
 /* The badge row sits above the banner. Badges are status, not content, so the
    theme's image styling is off and they wrap instead of overflowing on a phone.
-   Heights are normalised because the Read the Docs badge and the shields.io ones
+   Heights are normalized because the Read the Docs badge and the shields.io ones
    are served by different generators. */
 p.badges {
     display: flex;

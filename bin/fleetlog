@@ -544,7 +544,7 @@ def cmd_verify(sessions, edges, args):
             body = open(f, errors="replace").read()
         except OSError:
             continue
-        # the recipient stores our text JSON-escaped; normalise before comparing,
+        # the recipient stores our text JSON-escaped; normalize before comparing,
         # and match on a punctuation-free fragment so entities and quoting cannot
         # produce a false negative. A tool that reports "unsupported" when it
         # simply cannot see is worse than no tool.

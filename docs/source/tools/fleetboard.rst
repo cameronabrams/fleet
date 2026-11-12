@@ -423,7 +423,7 @@ the command that clears it:
 
 The wait is measured from the image's **change** time. The WSL package keeps the
 build date as the modification time, which can be months before the install.
-An unreadable or unrecognised image is
+An unreadable or unrecognized image is
 ``kernel: ? (WSL kernel image unreadable)``: ``/mnt/c`` not mounted, WSL installed
 somewhere else, or an ARM64 image, which has no such header.
 

@@ -90,7 +90,7 @@ def dedupe_by_transcript(rows, owners):
 
     Both copies carry the same events, so the choice decides only ATTRIBUTION:
     prefer the copy under a directory a role owns, which is the live one. The
-    remaining tie-breaks are for determinism, not judgement -- a richer record
+    remaining tie-breaks are for determinism, not judgment -- a richer record
     first, then the project name -- because a chart that redraws differently on
     each run is its own bug.
     """

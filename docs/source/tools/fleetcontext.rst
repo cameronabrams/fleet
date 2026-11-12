@@ -89,7 +89,7 @@ Clearing a session
 
 There is no ``--clear``. A ``clear?`` row is a candidate only: its size is over
 ``clear_above``, its kind is ``repo`` or ``writing``, its tree is clean and it holds
-no runtime. Whether everything it needs is on disk is a judgement about that one
+no runtime. Whether everything it needs is on disk is a judgment about that one
 session. If the human chooses to clear it:
 
 1. the session writes its state down and says so

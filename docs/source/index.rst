@@ -48,7 +48,7 @@ A session in a pane looks like typing ``claude`` in a terminal. Keeping a dozen 
 them useful for weeks is not: each needs a role it can re-read after a restart, a
 place in a recovery snapshot, a name nothing else answers to, and watchers that
 survive — or are known not to survive — an upgrade. fleet supplies the mechanical
-parts of that and records the judgement parts as skills.
+parts of that and records the judgment parts as skills.
 
 What it gives you:
 

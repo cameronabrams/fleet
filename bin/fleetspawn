@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """fleetspawn - bring ONE new session into the fleet: pane, labels, launch.
 
-Prints the plan and does nothing unless given --go. The judgement -- whether the
+Prints the plan and does nothing unless given --go. The judgment -- whether the
 session should exist, what its role is, what its brief says -- belongs to the
 `fleet-bootstrap` skill and to the human. This does only the mechanical part,
 which is the part that is easy to get subtly wrong (pane-base-index, labels that

@@ -125,7 +125,7 @@ carries only what no repository owns.
   measurement neither convicts nor acquits. Belongs beside `fleetlog`'s initiative
   reconstruction; `fleetcost` is the other candidate home.
 
-  The hard part comes before any code: *essential* is a judgement, not a field,
+  The hard part comes before any code: *essential* is a judgment, not a field,
   and a plausible-looking heuristic that is wrong yields a confident number
   measuring something else — the exact family in `docs/checks-that-reassure.md`.
   Decide the mechanical definition first and state what would falsify it. One
@@ -222,5 +222,5 @@ carries only what no repository owns.
   with a `lock-command`. A `lock-command` naming a binary that is not installed
   fails toward *unlocked* and looks configured, which is this repository's
   signature failure. Both facts are derivable — `tmux show-options -g` and a
-  `PATH` lookup — so the check is small. The judgement is whether a tool about
+  `PATH` lookup — so the check is small. The judgment is whether a tool about
   fleet state should comment on the host's configuration at all.

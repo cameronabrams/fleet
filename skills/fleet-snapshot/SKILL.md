@@ -6,7 +6,7 @@ description: Capture or verify the fleet recovery snapshot (fleetsnap/fleetresto
 # Snapshotting the fleet
 
 `fleetsnap` records enough to rebuild the fleet; `fleetrestore` rebuilds from it.
-**The judgement this skill carries is about time**: a snapshot is a claim about a
+**The judgment this skill carries is about time**: a snapshot is a claim about a
 moment, and it starts decaying the instant it is written, with nothing to
 announce that it has.
 
@@ -142,7 +142,7 @@ validation. **Check all four before treating a snapshot as good:**
 
 **Compute.** `fleetrestore` restores sessions, layout, cwds and resume handles;
 it does not restart jobs. Local runs died with the power cycle and whether to
-rerun them is a judgement call, not a recovery step. Jobs on a remote cluster are
+rerun them is a judgment call, not a recovery step. Jobs on a remote cluster are
 unaffected by anything that happens to this workstation.
 
 **Watchers.** Each session re-arms its own from its ledger. One trap when a

@@ -479,7 +479,7 @@ class EveryGateIsARefusal(unittest.TestCase):
 
     def test_an_exit_blocking_child_is_skipped_and_never_killed(self):
         """The spec's hardest rule. Separating a hang from work in progress means
-        reading the command, which is a judgement; the automation's only correct
+        reading the command, which is a judgment; the automation's only correct
         move is to leave the session alone."""
         why = self.judge(sess(leaders=[{"pid": "99", "cmd": "uv run thing.py",
                                         "age_s": 90.0, "polls": False}]))

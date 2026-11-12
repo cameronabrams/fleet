@@ -2,7 +2,7 @@
 """Which component changed between two versions: major, minor, patch or same.
 
 Used by scripts/release.sh to name the bump before asking you to confirm it.
-Knowing WHICH it is does not decide whether it is right -- that is the judgement
+Knowing WHICH it is does not decide whether it is right -- that is the judgment
 the confirmation exists for -- but a number shown beside the entries is harder to
 pick absent-mindedly than one typed on a command line.
 """
