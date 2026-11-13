@@ -87,7 +87,12 @@ In the state directory:
 ``manifest.json``
    everything above, machine-readable
 ``manifest.md``
-   human-readable, for rebuilding by hand when nothing is running
+   human-readable, for rebuilding by hand when nothing is running. Its opening
+   snippet names **the tmux session this capture came from**, and says how to
+   attach to it. That was a literal ``0`` until 2026-11-13, which was right only
+   for as long as nobody renamed the session — a reader following a stale snippet
+   would have built a second session beside the real one and found it empty. A
+   capture spanning two tmux sessions writes ``<session>`` rather than picking.
 ``index.md``
    the sessions and where they sit
 

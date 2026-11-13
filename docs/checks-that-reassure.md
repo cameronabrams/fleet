@@ -192,6 +192,17 @@ Four mechanisms produce it.
   AFTER the scan: before it, the process has exec'd but not finished dying, so
   it reads alive and the misleading message survives.
 
+- **A fixture that agrees with the hardcoded answer.** `fleetsnap` wrote the
+  rebuild snippet in `manifest.md` with a literal `tmux new-session -d -s 0`,
+  and `fleetrestore`'s test fixture recorded panes in a tmux session named
+  `"0"` — the live one's real name. A test asserting the snippet named the right
+  session would have passed, and passed for the wrong reason: a constant that is
+  correct today and a value that is actually read are the same string until the
+  day the value changes. It was found by reading, not by testing, and the test
+  written afterward uses a session name (`mainfleet`) that no default could
+  produce. **When what you are checking is that a value was READ, the fixture
+  must hold a value nothing could have guessed** (2026-11-13).
+
 ## C. The check had only one possible outcome
 
 - **A path nothing is ever written to.** `ls` on a repo-source dir "proved" a page

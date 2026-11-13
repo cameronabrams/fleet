@@ -18,16 +18,21 @@ class SnapshotDirectory(unittest.TestCase):
             f.write(text)
 
     def manifest(self, proc_cwd="/home/u/work", repo="alpha", title="title",
-                 agents=None, transcript_name=None, fleet="testfleet", labels=None):
+                 agents=None, transcript_name=None, fleet="testfleet", labels=None,
+                 tsessions=None):
         # eleven fields: two labels, `@agent` and `@fleet`. `@fleet` is LAST
         # because appending is what keeps the older indices where their readers
         # expect them -- this unpack has been left behind by a moving format twice.
-        def mkrow(label, pidx):
-            return ["fleet", "1", "win", str(pidx), f"%{pidx + 1}", label, title,
+        def mkrow(label, pidx, tsess="fleet"):
+            return [tsess, "1", "win", str(pidx), f"%{pidx + 1}", label, title,
                     "/home/u/somewhere-else", "100", "80x40", fleet]
         # `labels` builds a MULTI-session fixture; one row stays the default, so
         # every test written against the single-pane shape is untouched.
-        rows = ([mkrow(l, i) for i, l in enumerate(labels)] if labels
+        # `tsessions` gives those rows DIFFERENT tmux session names -- the shape a
+        # capture spanning two servers has, which no fixture could express while
+        # the name was a constant in this helper.
+        rows = ([mkrow(l, i, tsessions[i] if tsessions else "fleet")
+                 for i, l in enumerate(labels)] if labels
                 else [mkrow(repo, 0)])
         proc = {"pid": 200, "version": "2.1.276", "resume_uuid": None, "started": "",
                 "argv": ["claude", "--name", "alpha"]}
@@ -569,3 +574,41 @@ class TheCoordinatorIsNamedByItsBrief(SnapshotDirectory):
         self.assertIn("beta", line)
         self.assertNotIn("?", line, "the key the producer writes must be the key "
                                     "the consumer reads")
+
+
+class TheRebuildSnippetNamesTheSessionItCaptured(SnapshotDirectory):
+    """`manifest.md` carries hand instructions for rebuilding from a plain shell,
+    and they used to open with a literal `tmux new-session -d -s 0`.
+
+    That literal was right only for as long as nobody renamed the tmux session --
+    and the rename was under discussion when this was written. A reader following
+    a stale snippet would have built a second session beside the real one and
+    found an empty fleet in it, which is the failure this file exists to prevent:
+    recovery instructions that look authoritative and point somewhere else."""
+
+    def md(self):
+        with open(os.path.join(self.cfg.state, "manifest.md")) as f:
+            return f.read()
+
+    def test_the_new_session_line_uses_the_captured_name(self):
+        self.manifest()                      # fixture captures session "fleet"
+        self.assertIn("tmux new-session -d -s fleet", self.md())
+
+    def test_no_literal_zero_is_written(self):
+        self.manifest()
+        self.assertNotIn("-s 0", self.md())
+
+    def test_it_also_says_how_to_attach(self):
+        """The snippet told a reader how to BUILD the session and not how to enter
+        it, which is the question actually being asked at that moment."""
+        self.manifest()
+        self.assertIn("tmux attach -t fleet", self.md())
+
+    def test_a_capture_spanning_two_servers_names_neither(self):
+        """Two session names and the snippet picks one: half the rebuild lands in
+        the wrong place. A placeholder is useless in the honest way."""
+        self.manifest(labels=["alpha", "beta"], tsessions=["one", "two"])
+        md = self.md()
+        self.assertIn("-s <session>", md)
+        self.assertNotIn("-s one", md)
+        self.assertNotIn("-s two", md)

@@ -353,6 +353,36 @@ def main():
                   f"(tmux set -p -t {s['tmux'].get('pane_id')} @agent <name>)")
         print()
         m["sessions"] = [s for s in m["sessions"] if s.get("label")]
+        if not m["sessions"]:
+            print("  nothing to restore.\n")
+            return
+
+    # The tmux session every pane goes into. Bound HERE, from the manifest, rather
+    # than beside the first `new-session` sixty lines below, for two reasons.
+    #
+    # It is pure data, available before anything executes -- so a PLAN run can name
+    # it too, and the question it answers ("how do I get back in?") is one the human
+    # asks before a reboot as often as after.
+    #
+    # And it is bound after the filters rather than before, because an empty list
+    # has no first element and every filter above can empty one. The `unnamed`
+    # filter above had no emptiness check until this line needed one: a manifest
+    # whose panes were all unnamed used to reach `m["sessions"][0]` and raise
+    # IndexError, in the tool that runs when nothing else is up.
+    #
+    # Windows are grouped by index alone, so panes from two tmux sessions would
+    # collide at window 0 and half of them would land in the wrong session. The
+    # old line took the name from the first pane and applied it to every one,
+    # which is that collision without the warning. The configuration-side
+    # `fleet-gather` guards the same assumption and refuses; this now refuses
+    # the same way.
+    names = sorted({s["tmux"]["session"] for s in m["sessions"]})
+    if len(names) > 1:
+        sys.exit("this manifest spans more than one tmux session (%s); refusing.\n"
+                 "  Windows are grouped by index alone, so two sessions' window 0 "
+                 "would collide and panes would land in the wrong session.\n"
+                 "  Restore one session's panes at a time by name." % ", ".join(names))
+    sess = names[0]
 
     unver = [s for s in m["sessions"] if s["resume_uuid_source"].startswith("UNVER")]
     if unver:
@@ -417,7 +447,6 @@ def main():
     by_win = {}
     for s_ in m["sessions"]:
         by_win.setdefault(s_["tmux"]["window"], []).append(s_)
-    sess = m["sessions"][0]["tmux"]["session"]
     # Read ONCE, before anything is built, so a window this run creates is never
     # mistaken for one that was already there.
     on_screen = windows_by_name(sess)
@@ -581,7 +610,21 @@ def main():
         if problem:
             print(f"  outcome not logged: {problem}")
     print(f"\n  After restore: run `fleetsnap` to re-capture, and ask each session to "
-          f"confirm it re-armed what its state files require.\n")
+          f"confirm it re-armed what its state files require.")
+    # LAST, and deliberately. It is the only line needed in the next thirty
+    # seconds -- the fleetsnap reminder is for afterwards -- and a closing block
+    # that ends with the second-most useful thing makes the reader scroll back.
+    #
+    # It goes through `tmux_argv`, so a run against `--socket` prints the attach
+    # command for THAT server. A bare `tmux attach` there names the default
+    # server instead: a command that works, attaches to something, and is wrong.
+    #
+    # The session name is a fact the manifest holds and this tool has just used.
+    # Before this line it was a fact the human had to carry in his head across a
+    # reboot -- the one moment when nothing else is up to remind him.
+    attach = " ".join(shlex.quote(c) for c in tmux_argv(["attach", "-t", sess]))
+    print(("\n  Attach with:  %s\n" if a.go
+           else "\n  After `--go`, attach with:  %s\n") % attach)
 
 if __name__ == "__main__":
     main()

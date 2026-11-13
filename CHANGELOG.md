@@ -30,6 +30,47 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Added
+
+- **`fleetrestore` ends by saying how to get back in.** The last line of any run
+  — plan or `--go` — is `Attach with:  tmux attach -t <session>`, and on a plan
+  it reads `After \`--go\`, attach with: ...`. The session name comes from the
+  manifest, so a renamed tmux session is named correctly; the command is built
+  through the same helper as every other tmux call, so a run against `--socket`
+  prints `tmux -L <socket> attach -t ...` rather than a command that attaches to
+  the default server and looks like it worked. It prints after the `fleetsnap`
+  reminder, because it is the only line needed in the next thirty seconds.
+
+  The tool already knew the answer: it binds the session name to create or join
+  the session, two hundred lines before the closing message that did not mention
+  it. What it cost was that the name had to be remembered across a power cycle,
+  at the one moment when nothing is up to remind you.
+
+- `fleetsnap`'s rebuild snippet in `manifest.md` now names **the tmux session the
+  capture came from**, and says how to attach to it. It was a literal
+  `tmux new-session -d -s 0`, correct only until the session was renamed — after
+  which the manifest's own recovery instructions would have built a second
+  session beside the real one. A capture spanning two tmux sessions writes
+  `<session>` rather than picking one.
+
+### Changed
+
+- **`fleetrestore` refuses a manifest that spans two tmux sessions** (new
+  non-zero exit). Windows are grouped by index alone, so panes recorded in two
+  sessions collide at window 0. The name used to be read off the first pane and
+  applied to every one — that collision with no warning, half the fleet restored
+  silently into the wrong session. The configuration-side `fleet-gather` already
+  refused the same shape;
+  these now agree.
+
+### Fixed
+
+- **A manifest whose panes are all unnamed raised `IndexError`.** Two filters
+  above it return early when they empty the session list; the one that drops
+  panes the snapshot could not name did not, and the next line to want the first
+  session crashed — in the tool that runs when nothing else is up. It now says
+  `nothing to restore` like the others.
+
 ## [0.5.1] - 2026-11-13
 
 ### Fixed

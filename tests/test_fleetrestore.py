@@ -499,3 +499,110 @@ class APaneIsAskedWhereItIsUntilItCanAnswer(unittest.TestCase):
         """`run` returns None when tmux says nothing. Empty must never equal a
         wanted path, or a pane nothing can read would launch."""
         self.assertEqual(self.settled([None], wait=0.2), "")
+
+
+class ItSaysHowToGetBackIn(unittest.TestCase):
+    """The tool ended by saying what to do next and never how to get there.
+
+    After a reboot the fleet comes back inside a tmux session whose name only the
+    manifest knows, and the human was left to remember it at the one moment when
+    nothing is up to remind him. The name is a fact this tool has already read and
+    used; printing it costs a line."""
+
+    def setUp(self):
+        self.cfg = FakeConfig(toml=BASE_TOML)
+        self.tmux = tempfile.mkdtemp(prefix="ftmux", dir="/tmp")
+        # NOT "0": a test whose fixture carries the literal this line used to be
+        # cannot tell a name that was read from one that was hardcoded.
+        self.write(["alpha", "beta"], "mainfleet")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmux); self.cfg.close()
+
+    def write(self, labels, tsess, tsessions=None):
+        sess = []
+        for i, lab in enumerate(labels):
+            s = session(lab, 1, i, uuid="u-" + lab)
+            s["tmux"]["session"] = (tsessions or {}).get(lab, tsess)
+            s["tmux"]["pane_id"] = f"%{i + 1}"
+            sess.append(s)
+        man = {"captured": "now", "installed_claude": "x", "coordinator": "alpha",
+               "sessions": sess}
+        json.dump(man, open(os.path.join(self.cfg.state, "manifest.json"), "w"))
+
+    def run_tool(self, *args):
+        env = dict(os.environ, TMUX_TMPDIR=self.tmux)
+        env.pop("TMUX", None)
+        env["HOME"] = os.path.join(self.tmux, "nohome")
+        os.makedirs(env["HOME"], exist_ok=True)
+        return subprocess.run([TOOL, *args], capture_output=True, text=True, env=env)
+
+    def test_a_plan_says_how_to_attach_once_it_has_run(self):
+        """Printed on a PLAN too, in the future tense. The name is in the manifest
+        either way, and the question gets asked before the reboot as often as
+        after -- which is the only time there is still a session to ask in."""
+        out = self.run_tool().stdout
+        self.assertIn("tmux attach -t mainfleet", out)
+        self.assertIn("After `--go`", out)
+
+    def test_the_name_comes_from_the_manifest_not_a_default(self):
+        self.write(["alpha"], "renamed-to-something-else")
+        self.assertIn("tmux attach -t renamed-to-something-else",
+                      self.run_tool().stdout)
+
+    def test_it_is_the_last_thing_printed(self):
+        """The fleetsnap reminder is for afterwards; the attach command is for the
+        next thirty seconds. Printed first, it scrolls past."""
+        lines = [l for l in self.run_tool().stdout.splitlines() if l.strip()]
+        self.assertIn("tmux attach", lines[-1])
+
+    def test_a_run_against_another_server_prints_that_servers_command(self):
+        """`--socket` moves every other tmux call in this tool to another server.
+        A bare `tmux attach` would name the DEFAULT one: a command that runs,
+        attaches to something, and is wrong -- which is worse than none."""
+        out = self.run_tool("--socket", "scratchsock").stdout
+        self.assertIn("tmux -L scratchsock attach -t mainfleet", out)
+
+
+class ItRefusesAManifestSpanningTwoServers(ItSaysHowToGetBackIn):
+    """Windows are grouped by index alone, so panes recorded in two tmux sessions
+    collide at window 0. The old code read the session name off the FIRST pane and
+    applied it to every one, which is that collision with no warning: half the
+    fleet silently restored into the wrong session."""
+
+    def test_it_refuses_rather_than_picking_one(self):
+        self.write(["alpha", "beta"], "one", tsessions={"beta": "two"})
+        r = self.run_tool()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("more than one tmux session", r.stderr)
+
+    def test_the_refusal_names_both(self):
+        self.write(["alpha", "beta"], "one", tsessions={"beta": "two"})
+        err = self.run_tool().stderr
+        self.assertIn("one", err); self.assertIn("two", err)
+
+    def test_it_refuses_before_building_anything(self):
+        self.write(["alpha", "beta"], "one", tsessions={"beta": "two"})
+        r = self.run_tool("--go")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("new-session", r.stdout)
+
+    def test_one_session_is_the_ordinary_case_and_is_not_refused(self):
+        self.assertEqual(self.run_tool().returncode, 0)
+
+
+class EveryPaneUnnamedIsNotACrash(ItSaysHowToGetBackIn):
+    """A manifest whose panes the snapshot could not name is filtered down to
+    nothing, and the filter had no emptiness check: the next line that wanted the
+    first session raised IndexError. Two filters above it check; this one did not,
+    and it crashes in the tool that runs when nothing else is up."""
+
+    def test_it_says_there_is_nothing_to_restore(self):
+        man = json.load(open(os.path.join(self.cfg.state, "manifest.json")))
+        for s in man["sessions"]:
+            s["label"] = ""
+        json.dump(man, open(os.path.join(self.cfg.state, "manifest.json"), "w"))
+        r = self.run_tool()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("nothing to restore", r.stdout)
+        self.assertNotIn("Traceback", r.stderr)

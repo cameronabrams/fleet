@@ -476,12 +476,22 @@ def main():
     L.append(f"# Fleet manifest — {snap['captured']} on {snap['host']}\n")
     L.append(f"Claude Code installed: **{snap['installed_claude']}**. "
              f"{len(snap['sessions'])} sessions captured.\n")
+    # The session name this capture actually came from, not a literal. It WAS a
+    # literal `0` -- so this snippet would have told a reader to rebuild into a
+    # session named `0` on a server where the session had been renamed, and the
+    # rebuilt fleet would have been beside the real one rather than in it. The
+    # manifest knows the name; writing instructions that ignore it is the hazard
+    # the whole file exists to prevent. Several names means the capture spanned
+    # servers and no single one is right, so it says so rather than picking.
+    tsess = sorted({s["tmux"]["session"] for s in snap["sessions"]})
+    tname = tsess[0] if len(tsess) == 1 else "<session>"
     L.append("To rebuild after a power cycle, from a plain shell:\n")
-    L.append("```\ntmux new-session -d -s 0\n"
+    L.append(f"```\ntmux new-session -d -s {tname}\n"
              "# then per session below:\n"
              "#   tmux new-window / split-window -c <cwd>\n"
              "#   tmux set -p @agent <label>\n"
-             "#   claude --resume <uuid>\n```\n")
+             "#   claude --resume <uuid>\n"
+             f"# then, to get back in:\ntmux attach -t {tname}\n```\n")
     L.append("| session | window.pane | cwd | resume uuid | version |")
     L.append("|---|---|---|---|---|")
     for s in snap["sessions"]:

@@ -64,6 +64,37 @@ needs every pane that was in the window.
 After a restore, verify the fleet — per pane, argv against cwd against the manifest
 — not just the snapshot (:doc:`../skills/fleet-snapshot`).
 
+It ends by saying how to get back in
+------------------------------------
+
+The last line of any run — plan or ``--go`` — is the attach command::
+
+   Attach with:  tmux attach -t mainfleet
+
+The session name comes from the manifest, not from a default, and the command is
+built the same way every other tmux call in this tool is, so a run against
+``--socket`` prints ``tmux -L <socket> attach -t ...``. A bare ``tmux attach``
+there would name the default server: a command that runs, attaches to something,
+and is wrong.
+
+It prints **last**, after the ``fleetsnap`` reminder, because it is the only line
+needed in the next thirty seconds. It prints on a **plan** too, in the future
+tense, because the name is in the manifest either way and the question gets asked
+before a reboot as often as after — which is the only time there is still a
+session to ask in. Before this existed, the name was a fact the human had to carry
+in his head across a power cycle, at the one moment when nothing is up to remind
+him.
+
+A manifest that spans two tmux sessions is refused
+--------------------------------------------------
+
+Windows are grouped by index alone, so panes recorded in two tmux sessions collide
+at window 0. The session name used to be read off the first pane and applied to
+every one, which is that collision with no warning: half the fleet restored
+silently into the wrong session. It now refuses and names both, the way the
+configuration-side ``fleet-gather`` refuses the same shape. Restore one session's
+panes at a time by name.
+
 The coordinator line says which of three things it means
 --------------------------------------------------------
 
