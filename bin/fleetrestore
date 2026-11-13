@@ -191,6 +191,42 @@ def verify(sessions):
                                      f"manifest says {s_['cwd']!r}"))
     return out
 
+def attach_line(sess, future=False):
+    """`  Attach with:  tmux attach -t <sess>`, or "" when there is no answer.
+
+    Built through `tmux_argv`, so a run against `--socket` names THAT server. A
+    bare `tmux attach` there would reach the default one: a command that runs,
+    attaches to something, and is wrong, which is worse than printing nothing.
+
+    `sess` is None when the manifest spans several tmux sessions, because then no
+    single name is the answer and naming one of them is the same mistake the
+    restore itself now refuses to make.
+    """
+    if not sess:
+        return ""
+    cmd = " ".join(shlex.quote(c) for c in tmux_argv(["attach", "-t", sess]))
+    return ("\n  After `--go`, attach with:  %s\n" if future
+            else "\n  Attach with:  %s\n") % cmd
+
+def attach_line_if_up(sess):
+    """The same line, but only when that session is actually there to attach to.
+
+    The runs that end early end for two different reasons. "Every session is
+    already running" means the fleet is up and this is exactly the person asking
+    how to get into it. "Everything in the manifest is parked or retired" can mean
+    there is nothing on that server at all, and a command that fails is a worse
+    answer than silence. Asking tmux tells them apart; it costs one call on a path
+    that is otherwise about to return.
+    """
+    if not sess:
+        return ""
+    try:
+        up = tmux_run(["has-session", "-t", sess],
+                      capture_output=True, timeout=5).returncode == 0
+    except Exception:
+        return ""
+    return attach_line(sess) if up else ""
+
 PANE_CWD_WAIT = 5.0
 
 def pane_cwd_settled(target, want, go, wait=PANE_CWD_WAIT):
@@ -270,6 +306,18 @@ def main():
     # so a named subset is partial too.
     full = len(m["sessions"])
 
+    # The tmux session this capture came from, read from the manifest AS LOADED
+    # rather than from whatever survives filtering. The attach target is where the
+    # fleet IS, and the run that most needs the answer is the one with nothing to
+    # restore because every session is already up -- which is also the run that
+    # returns before anything downstream of the filters exists. A terminal can die
+    # without taking the tmux server with it; that is the ordinary way to be
+    # outside a fleet that is perfectly healthy.
+    #
+    # None when the capture spans several sessions: no single name is the answer.
+    captured = sorted({s["tmux"]["session"] for s in m["sessions"]})
+    where = captured[0] if len(captured) == 1 else None
+
     # A name given on the command line that the manifest does not hold is a typo or
     # a session that was never snapshotted, and silently restoring the rest would
     # read as success. Refuse, the way fleetwatch refuses an unknown session.
@@ -305,14 +353,14 @@ def main():
             f"{x['label']} is {held[x['resume_uuid']][1]}" for x in gone))
         m["sessions"] = [x for x in m["sessions"] if x.get("resume_uuid") not in held]
         if not m["sessions"]:
-            print("  nothing to restore.\n")
+            print("  nothing to restore." + (attach_line_if_up(where) or "\n"))
             return
     already = [x["label"] for x in m["sessions"] if x["label"] in live]
     if already:
         print(f"\n  already running, will be skipped: {', '.join(already)}")
         m["sessions"] = [x for x in m["sessions"] if x["label"] not in live]
         if not m["sessions"]:
-            print("  nothing to restore.\n")
+            print("  nothing to restore." + (attach_line_if_up(where) or "\n"))
             return
     # Which binary every session will come up on. Resolved ONCE, before anything
     # is built, so a run cannot start some sessions on one release and the rest on
@@ -354,7 +402,7 @@ def main():
         print()
         m["sessions"] = [s for s in m["sessions"] if s.get("label")]
         if not m["sessions"]:
-            print("  nothing to restore.\n")
+            print("  nothing to restore." + (attach_line_if_up(where) or "\n"))
             return
 
     # The tmux session every pane goes into. Bound HERE, from the manifest, rather
@@ -622,9 +670,7 @@ def main():
     # The session name is a fact the manifest holds and this tool has just used.
     # Before this line it was a fact the human had to carry in his head across a
     # reboot -- the one moment when nothing else is up to remind him.
-    attach = " ".join(shlex.quote(c) for c in tmux_argv(["attach", "-t", sess]))
-    print(("\n  Attach with:  %s\n" if a.go
-           else "\n  After `--go`, attach with:  %s\n") % attach)
+    print(attach_line(sess, future=not a.go), end="")
 
 if __name__ == "__main__":
     main()

@@ -606,3 +606,83 @@ class EveryPaneUnnamedIsNotACrash(ItSaysHowToGetBackIn):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("nothing to restore", r.stdout)
         self.assertNotIn("Traceback", r.stderr)
+
+
+class ARunWithNothingToRestoreStillSaysHowToGetIn(ItSaysHowToGetBackIn):
+    """The runs that end early are the ones that most need the attach line.
+
+    `sess` binds after the filters, so the three "nothing to restore" returns fired
+    before it existed and printed no attach line at all -- including the case where
+    every session is already up, which is precisely the person in a fresh shell
+    asking how to get back into a fleet that is perfectly healthy. A terminal can
+    die without taking the tmux server with it; that is the ordinary way to be
+    outside a running fleet.
+
+    It is gated on the session actually being there. "Everything is parked" reaches
+    the same return and can mean there is nothing on that server at all, and a
+    command that fails is a worse answer than silence."""
+
+    def park_everything(self):
+        man = json.load(open(os.path.join(self.cfg.state, "manifest.json")))
+        with open(os.path.join(self.cfg.config, "fleet.toml"), "a") as f:
+            for i, s in enumerate(man["sessions"]):
+                s["resume_uuid"] = "aaaaaaaa-0000-4000-8000-00000000000%d" % (i + 1)
+                f.write('\n[retired.%s]\nuuid = "%s"\nsince = "2026-09-13"\n'
+                        % (s["label"], s["resume_uuid"]))
+        json.dump(man, open(os.path.join(self.cfg.state, "manifest.json"), "w"))
+
+    def serve(self, name):
+        """A real tmux server of this test's own, holding one session of `name`."""
+        env = dict(os.environ, TMUX_TMPDIR=self.tmux)
+        env.pop("TMUX", None)
+        subprocess.run(["tmux", "-L", "attachtest", "new-session", "-d",
+                        "-s", name], env=env, check=True,
+                       capture_output=True, timeout=10)
+        self.addCleanup(subprocess.run, ["tmux", "-L", "attachtest", "kill-server"],
+                        env=env, capture_output=True)
+
+    def test_a_session_that_is_not_there_is_not_offered(self):
+        """No server at all on this socket: there is nowhere to attach, and a
+        command that fails would be a confident wrong answer."""
+        self.park_everything()
+        out = self.run_tool("--socket", "no-such-server-here").stdout
+        self.assertIn("nothing to restore", out)
+        self.assertNotIn("attach", out)
+
+    @unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
+    def test_a_fleet_that_is_already_up_is_told_how_to_be_entered(self):
+        self.serve("mainfleet")
+        self.park_everything()
+        out = self.run_tool("--socket", "attachtest").stdout
+        self.assertIn("nothing to restore", out)
+        self.assertIn("tmux -L attachtest attach -t mainfleet", out)
+
+    @unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
+    def test_it_is_the_present_tense_there_because_the_fleet_is_up(self):
+        """Not `After --go`: there is no --go to come, and the command works now."""
+        self.serve("mainfleet")
+        self.park_everything()
+        out = self.run_tool("--socket", "attachtest").stdout
+        self.assertIn("Attach with:", out)
+        self.assertNotIn("After `--go`", out)
+
+    @unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
+    def test_every_pane_unnamed_also_says_it(self):
+        """The third early return, reached by a different filter."""
+        self.serve("mainfleet")
+        man = json.load(open(os.path.join(self.cfg.state, "manifest.json")))
+        for s in man["sessions"]:
+            s["label"] = ""
+        json.dump(man, open(os.path.join(self.cfg.state, "manifest.json"), "w"))
+        out = self.run_tool("--socket", "attachtest").stdout
+        self.assertIn("tmux -L attachtest attach -t mainfleet", out)
+
+    @unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
+    def test_a_two_session_manifest_offers_neither_name(self):
+        """The early returns fire before the refusal, so they cannot lean on it."""
+        self.serve("one")
+        self.write(["alpha", "beta"], "one", tsessions={"beta": "two"})
+        self.park_everything()
+        out = self.run_tool("--socket", "attachtest").stdout
+        self.assertIn("nothing to restore", out)
+        self.assertNotIn("attach", out)

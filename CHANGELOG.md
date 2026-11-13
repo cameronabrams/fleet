@@ -30,6 +30,23 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A run with nothing to restore now says how to attach too.** The session name
+  was bound after the filters, so the three `nothing to restore` returns fired
+  before it existed — including the one that means *every session is already
+  running*, which is exactly the person in a fresh shell asking how to get back
+  into a fleet that is perfectly healthy. A terminal can die without taking the
+  tmux server with it, and that is the ordinary way to be outside a running
+  fleet. The name is now read from the manifest as loaded rather than from what
+  survives filtering.
+
+  On those paths the line is gated on `tmux has-session`: "everything in the
+  manifest is parked" reaches the same return and can mean there is nothing on
+  that server at all, where a command that fails is a worse answer than silence.
+  A manifest spanning several sessions prints nothing, for the same reason the
+  restore refuses it.
+
 ## [0.6.0] - 2026-11-13
 
 ### Added

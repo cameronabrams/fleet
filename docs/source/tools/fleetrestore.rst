@@ -85,6 +85,19 @@ session to ask in. Before this existed, the name was a fact the human had to car
 in his head across a power cycle, at the one moment when nothing is up to remind
 him.
 
+It prints on a run with **nothing to restore** as well, and that is the run that
+needs it most: "every session is already running" is exactly the person in a fresh
+shell asking how to get back into a fleet that is perfectly healthy. A terminal can
+die without taking the tmux server with it, which is the ordinary way to be outside
+a running fleet. Those runs return before the plan exists, so the name is read from
+the manifest as loaded rather than from what survives filtering.
+
+There it is gated on the session being **there**: ``tmux has-session`` decides.
+"Everything in the manifest is parked" reaches the same return and can mean there
+is nothing on that server at all, and a command that fails is a worse answer than
+silence. A manifest spanning several sessions prints nothing, for the reason the
+restore itself refuses: no single name is the answer.
+
 A manifest that spans two tmux sessions is refused
 --------------------------------------------------
 
