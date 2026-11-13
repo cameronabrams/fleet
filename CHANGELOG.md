@@ -30,6 +30,8 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-13
+
 ### Fixed
 
 - **`fleetrestore` could refuse to launch into panes it had just placed

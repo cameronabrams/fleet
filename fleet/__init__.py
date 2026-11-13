@@ -10,7 +10,7 @@ because the tools are the recovery path after a disk loss and a recovery tool
 that needs a package installed first fails exactly when it is needed.
 """
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 
 def version_flag(argv=None, prog=None):
