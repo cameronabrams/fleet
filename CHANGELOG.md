@@ -30,6 +30,8 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-13
+
 ### Fixed
 
 - **The header demanded a reboot of a machine that had just had one.** The board
