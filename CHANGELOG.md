@@ -30,6 +30,31 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`fleetrestore` could refuse to launch into panes it had just placed
+  correctly.** After creating a pane it reads `pane_current_path` back and
+  refuses on a mismatch — the guard that exists because seven `claude --resume`
+  lines once went into the wrong panes. That path is the pane shell's working
+  directory, and tmux answers the question before the shell has exec'd, so the
+  first read can be the directory the tool was run in. It now asks again until a
+  deadline. A pane genuinely somewhere else stays somewhere else and is still
+  refused, so the guard is unchanged; what goes away is the false refusal, which
+  was likeliest on a loaded machine rebuilding a fleet after a power cycle. The
+  refusal message now names where the pane really is rather than where the tmux
+  server started.
+
+### Changed
+
+- `tests/test_procs` no longer builds its fixture from `sleep`. Ubuntu 26.04
+  ships uutils-coreutils, where `/usr/bin/sleep` is one of 116 hard links to a
+  multi-call binary that dispatches on `argv[0]` — and this fixture deliberately
+  renames the binary it copies, so under it the copy refuses to run. It uses
+  `bash` instead, and asserts the fixture is still alive before concluding
+  anything about what the fleet can see. Both failures are in
+  `docs/checks-that-reassure.md`.
+
+
 ## [0.5.0] - 2026-11-13
 
 ### Fixed

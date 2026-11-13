@@ -39,15 +39,31 @@ class _Spawned:
 
     A script will not do either: for `#!/bin/sh ...`, `/proc/<pid>/exe` is the
     interpreter, not the script.
+
+    **And it cannot be a coreutils program.** This copied `sleep` until
+    2026-11-13, when GitHub's runners moved to Ubuntu 26.04 and `/usr/bin/sleep`
+    became one of 116 hard links to a single uutils-coreutils binary, which
+    dispatches on its own `argv[0]`. Copied to a path whose basename is a version
+    string it is no longer sleep -- it exits 1 with "Security violation:
+    Requested utility `2.1` does not match executable name" -- so the fixture was
+    a zombie by the time anything looked at it, and the test failed saying a
+    pinned session was invisible to the fleet. The fixture renames the binary it
+    copies; a multi-call binary is therefore the one kind it cannot use.
+
+    `bash` is not multi-call and ignores its `argv[0]` apart from a leading `-`.
+    The trailing `:` matters: with a single command `bash -c` execs it in place,
+    which would replace the copy with the real `sleep` and move `/proc/exe` off
+    the pinned path -- the very thing being tested.
     """
     def __init__(self, relpath, argv0=None):
         self.dir = tempfile.mkdtemp(prefix="fleet-procs-")
         self.path = os.path.join(self.dir, relpath)
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        shutil.copy(shutil.which("sleep") or "/bin/sleep", self.path)
+        shutil.copy(shutil.which("bash") or "/bin/bash", self.path)
         os.chmod(self.path, 0o755)
         self.argv0 = argv0 or self.path
-        self.p = subprocess.Popen([self.argv0, "60"], executable=self.path,
+        self.p = subprocess.Popen([self.argv0, "-c", "sleep 60; :"],
+                                  executable=self.path,
                                   stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL)
         # Wait for the EXEC, and say so if it never happens. `Popen` returns as
@@ -71,6 +87,17 @@ class _Spawned:
                 raise AssertionError("the fixture never exec'd %s within 10s"
                                      % self.path)
             time.sleep(0.01)
+
+    def still_running(self):
+        """Exec'd is not the same as alive, and the gap between them lied once.
+
+        Under uutils-coreutils the copied binary exec'd fine and exited one
+        instruction later, so the loop above broke on a `/proc/exe` that was
+        already about to become a zombie. The test then reported that a pinned
+        session was invisible to the fleet -- a true sentence about a dead
+        fixture, and six hours of looking in the wrong place. Assert this before
+        asserting anything about what the fleet can see."""
+        return self.p.poll() is None
 
     def __enter__(self):
         return self
@@ -138,6 +165,16 @@ class ASessionIsFoundHoweverItWasLaunched(unittest.TestCase):
         """Not `is_claude` in isolation: the function the four tools call."""
         with _Spawned("claude/versions/2.1.302") as s:
             found = {p for p, _cwd, _argv in procs.claude_procs()}
+            # Asked only once the scan has missed it, and deliberately in this
+            # order: a liveness check BEFORE the scan is its own race -- the
+            # fixture has exec'd by then but may not have finished dying, so it
+            # reads alive and the real message is still the misleading one.
+            # Afterwards the death has happened and `poll` is decisive.
+            if s.p.pid not in found:
+                self.assertTrue(s.still_running(),
+                                "the FIXTURE died, so this says nothing about "
+                                "the fleet: the binary it copies must not be a "
+                                "multi-call program that dispatches on argv[0]")
             self.assertIn(s.p.pid, found,
                           "a pinned session is invisible to the fleet")
 

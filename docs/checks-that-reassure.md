@@ -160,6 +160,38 @@ Four mechanisms produce it.
   (a snapshot that looked and found nobody) — `.get(key, "?")` collapses those two
   into one answer, and renders the second as the string `"None"`.
 
+- **A check that races the thing it checks.** `fleetrestore` creates a pane with
+  `split-window -c <dir>`, reads `pane_current_path` back, and refuses to launch
+  into it if the two disagree — the guard added after seven `claude --resume`
+  lines went into the wrong panes. But that path is the pane SHELL's working
+  directory, read from /proc, and tmux answers whenever it is asked: between the
+  fork and the shell's exec the answer is the directory the server was started
+  from. A probe on two runner images showed the pane reading as the repository
+  checkout at 0 s and as its real directory at 0.25 s. **A guard that fails safe
+  can still fail wrong**, and this one fails wrong exactly where it matters — on
+  a loaded machine rebuilding a fleet after a power cycle, which is the only
+  machine the tool exists for. It would have printed "NOT launching it" about
+  panes that were perfectly placed, and the message would have named the
+  directory the operator ran the command in. Fixed by asking again until the
+  deadline; a pane genuinely elsewhere stays elsewhere, so nothing is weakened.
+  Found 2026-11-13 because GitHub moved its runners to a slower image, not
+  because anything here looked.
+
+- **A fixture that exec'd and then died, reported as a finding about the code.**
+  The same day, `test_procs` began saying "a pinned session is invisible to the
+  fleet". Its fixture copies `sleep` to a path whose basename is a version
+  string, because the thing under test is whether a session pinned to a release
+  path can still be found. Ubuntu 26.04 ships uutils-coreutils: `/usr/bin/sleep`
+  is one of 116 hard links to a single binary that dispatches on its own
+  `argv[0]`, so the copy exits 1 with *"Security violation: Requested utility
+  `2.1` does not match executable name"*. The fixture's own guard — wait until
+  `/proc/<pid>/exe` is the pinned path — passed, because it exec'd before it
+  died. **The test then made a true statement about a dead fixture and it read
+  as a statement about the fleet.** A fixture must assert it is still alive at
+  the moment the assertion depends on it, and the liveness check has to come
+  AFTER the scan: before it, the process has exec'd but not finished dying, so
+  it reads alive and the misleading message survives.
+
 ## C. The check had only one possible outcome
 
 - **A path nothing is ever written to.** `ls` on a repo-source dir "proved" a page

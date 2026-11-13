@@ -432,3 +432,70 @@ class TheAdoptionLineNamesWhatWasLaunched(Plan):
         src = open(TOOL).read()
         i = src.index("restore DONE")
         self.assertIn("launched on %s", src[i:i + 120])
+
+
+class APaneIsAskedWhereItIsUntilItCanAnswer(unittest.TestCase):
+    """`pane_current_path` is the pane SHELL's working directory, so it is not
+    true yet at the moment the pane is created.
+
+    tmux forks the shell and answers the question whenever it is asked. Between
+    the fork and the shell's exec, the answer is the directory the tmux server
+    was started from -- whatever directory somebody happened to run this tool in.
+    The restore read it once, immediately, and refuses to launch on a mismatch,
+    so losing that race leaves a correctly placed pane empty and prints that it
+    is in the wrong directory.
+
+    Invisible on a fast machine and on tmux 3.4. GitHub moved its runners to
+    Ubuntu 26.04 on 2026-11-13 and three tests went red at once: a probe on both
+    images showed the pane reading as the repository checkout at 0 s and as its
+    real directory at 0.25 s. The machine most likely to lose this race is a
+    loaded one rebuilding a fleet after a power cycle, which is the only machine
+    this tool is for.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig()
+        self.r = load_tool("fleetrestore")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def reader(self, answers):
+        """Stands in for `run`, handing back one answer per call, last repeating."""
+        self.asked = 0
+
+        def fake(cmd, go, capture=False):
+            self.asked += 1
+            return answers[min(self.asked - 1, len(answers) - 1)]
+        return fake
+
+    def settled(self, answers, want="/home/u/work", wait=1.0):
+        with mock.patch.object(self.r, "run", self.reader(answers)):
+            return self.r.pane_cwd_settled("%1", want, True, wait=wait)
+
+    def test_a_pane_that_has_not_started_yet_is_asked_again(self):
+        """The failing case. One read gets the server's directory and refuses."""
+        self.assertEqual(self.settled(["/somewhere/else", "/home/u/work"]),
+                         "/home/u/work")
+        self.assertEqual(self.asked, 2)
+
+    def test_a_pane_already_there_is_asked_once(self):
+        """No delay added to the common case, which runs once per session."""
+        self.assertEqual(self.settled(["/home/u/work"]), "/home/u/work")
+        self.assertEqual(self.asked, 1)
+
+    def test_a_pane_that_is_really_elsewhere_still_fails(self):
+        """What polling must NOT do. A pane somewhere else stays somewhere else,
+        so the guard still refuses -- later, and with the same answer."""
+        self.assertEqual(self.settled(["/wrong/place"], wait=0.2), "/wrong/place")
+        self.assertGreater(self.asked, 1, "it gave up without asking twice")
+
+    def test_the_refusal_names_where_the_pane_really_is(self):
+        """The LAST reading, not the first. The first is the directory the tool
+        was run in, which tells a reader nothing about the pane."""
+        self.assertEqual(self.settled(["/tool/was/run/here", "/wrong/place"],
+                                      wait=0.2), "/wrong/place")
+
+    def test_an_unreadable_pane_is_not_an_empty_match(self):
+        """`run` returns None when tmux says nothing. Empty must never equal a
+        wanted path, or a pane nothing can read would launch."""
+        self.assertEqual(self.settled([None], wait=0.2), "")

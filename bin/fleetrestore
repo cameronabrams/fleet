@@ -191,6 +191,39 @@ def verify(sessions):
                                      f"manifest says {s_['cwd']!r}"))
     return out
 
+PANE_CWD_WAIT = 5.0
+
+def pane_cwd_settled(target, want, go, wait=PANE_CWD_WAIT):
+    """`pane_current_path` for `target`, once it has had a chance to become real.
+
+    A pane's path is its SHELL's working directory, read from /proc, and tmux
+    answers the question whenever it is asked -- including before the shell it
+    just forked has exec'd and chdir'd. Until then the answer is the directory
+    the server was started from, which is whatever directory somebody ran this
+    tool in.
+
+    So a single read is a race, and the check it feeds refuses to launch on a
+    mismatch. Losing that race means a correctly placed pane is reported as being
+    in the wrong directory and left empty -- on exactly the machine where it is
+    most likely, a loaded one coming up after a power cycle with a fleet to
+    rebuild. It was invisible here until GitHub moved its runners to a slower
+    image on 2026-11-13; at 0 s the pane read as the repository checkout, at
+    0.25 s as the directory it had been given.
+
+    Polling does not weaken the check. A pane that is genuinely somewhere else
+    stays somewhere else, so it still fails, `wait` seconds later; the only
+    answer that changes is the one that was about to be wrong. Returning the LAST
+    reading rather than the first also makes the refusal message name where the
+    pane really is instead of where the server happened to start.
+    """
+    deadline = time.time() + wait
+    while True:
+        here = (run(["tmux", "display", "-p", "-t", target,
+                     "#{pane_current_path}"], go, capture=True) or "").strip()
+        if here == want or time.time() >= deadline:
+            return here
+        time.sleep(0.05)
+
 def main():
     version_flag()
     ap = argparse.ArgumentParser()
@@ -485,8 +518,7 @@ def main():
                       f"cannot name.")
                 continue
             if a.go:
-                here = (run(["tmux", "display", "-p", "-t", target,
-                             "#{pane_current_path}"], a.go, capture=True) or "").strip()
+                here = pane_cwd_settled(target, s_["cwd"], a.go)
                 if here != s_["cwd"]:
                     # Issue 2: a tmux failure never stopped the run, so seven
                     # `claude --resume` lines were typed into the wrong panes.
