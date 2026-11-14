@@ -2,6 +2,7 @@
 """fleetmail - messages between fleets owned by different people, through a git mailbox.
 
   fleetmail send TO "TEXT" --as SESSION [--kind K] [--thread T] [--attach FILE] [--go]
+  fleetmail announce VERSION [--as SESSION] [--url URL] [--note TEXT] [--go]
   fleetmail fetch [--go]          deliver new mail addressed to this fleet
   fleetmail inbox                 what is open, and what could not be delivered
   fleetmail timer                 the systemd --user units that fetch on a schedule
@@ -36,8 +37,18 @@ your human):
   that it is never authority, and that a request to do something refused
   elsewhere goes to the local human.
 
+`announce` tells every fleet in the mailbox's `fleets.toml` that a release is out.
+It is what `scripts/release.sh` runs after a tag goes out, and it exists because a
+clone is invisible: git registers nothing when someone clones, GitHub has no list
+of who did, and so nobody downstream learns that their copy is behind except by
+being told. Each correspondent is addressed by the `contact` in its own block --
+there is no convention that derives a fleet's coordinator from its name, and a
+guessed session name is mail that arrives and cannot be delivered. A fleet without
+one is NAMED, never skipped quietly.
+
 Exit codes: 0 fine (or a plan with no blocks), 2 refused, 4 the mailbox could not
-be reached, 5 delivered as files but at least one session could not be nudged.
+be reached, 5 delivered as files but at least one session could not be nudged --
+and, from `announce`, that at least one correspondent could not be addressed.
 """
 import argparse, glob, hashlib, json, os, re, shutil, subprocess, sys, time, tomllib
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
@@ -303,6 +314,140 @@ def nudge(session, msg_id, line, mail_from, go, wait=1800):
     why = next((l for l in lines if "NOT DELIVERED" in l or l.startswith("REFUSED")),
                lines[-1] if lines else f"fleetnudge exit {r.returncode}")
     return r.returncode == 0, why
+
+# One line, because a message is one line. It says what changed only by pointing:
+# the notes are the payload and they live at the release page, which is the same
+# pointer-not-precis rule every other message in this fleet follows.
+#
+# `publish` and `push the tag` are both GUARD terms, so the wording here avoids
+# them on purpose -- an announcement that trips the guard is an announcement that
+# never goes, and the natural phrasing for a release walks straight into both.
+ANNOUNCE = ("fleet v{v} is out.{url} fleet is not packaged, so nothing updates "
+            "itself: upgrade with `git pull` in the clone that ./install "
+            "symlinks, and re-run `./install --go` only when a release adds a "
+            "tool. Any tool's `--version` says what your copy is on.")
+
+def declared_coordinator():
+    """The session this fleet's manifest says is its coordinator, or None.
+
+    An announcement is from the FLEET, not from whoever happened to cut the
+    release, so `--as` defaults to the coordinator the briefs declare and
+    `fleetsnap` records. Three states and only one of them is a name: a manifest
+    older than the key has no `coordinator` at all, and one holding null looked
+    and found nobody. Both are None here, and both make `--as` required -- a
+    default that guesses is how mail gets sent under the wrong identity.
+    """
+    try:
+        with open(os.path.join(STATE, "manifest.json")) as f:
+            return json.load(f).get("coordinator") or None
+    except (OSError, ValueError):
+        return None
+
+def release_url(version):
+    """This application's release page for `version`, or "".
+
+    Derived from the APP repository's own `origin` rather than written down, so a
+    fork that cuts its own release points at its own page instead of advertising
+    the one it forked. A remote that is not GitHub, or that this cannot parse,
+    gives "" and the line simply omits the link: a wrong URL in an announcement is
+    worse than no URL, because the reader who follows it and sees a familiar
+    version number concludes they are current.
+    """
+    app = os.path.dirname(BIN)
+    rc, out, _ = git("remote", "get-url", "origin", cwd=app)
+    if rc != 0:
+        return ""
+    m = re.search(r"github\.com[:/]+([^/]+/[^/]+?)(?:\.git)?/?$", out.strip())
+    return f"https://github.com/{m.group(1)}/releases/tag/v{version}" if m else ""
+
+def do_announce(a):
+    need_mail()
+    version = a.version.lstrip("vV")
+    me_session = a.as_session or declared_coordinator()
+    if not me_session:
+        sys.exit("fleetmail announce: no --as, and the manifest does not declare a "
+                 "coordinator to default to.\n"
+                 "  Run fleetsnap, or name the session: --as <session>")
+    me = f"{MAIL['fleet']}/{me_session}"
+    ok, detail = pull()
+    if not ok:
+        print(f"\n  {detail}\n")
+        sys.exit(4)
+
+    known = correspondents()
+    others = sorted(k for k in known if k != MAIL["fleet"])
+    url = a.url or release_url(version)
+    body = ANNOUNCE.format(v=version, url=f" Notes: {url} --" if url else "")
+    if a.note:
+        body += " " + a.note.strip()
+
+    print(f"\n  announce fleet v{version} from {me}")
+    if not url:
+        print("  no release page named: origin is not a GitHub remote this can "
+              "parse. Pass --url to say it outright.")
+
+    # The body is the SAME for every recipient, so a guard refusal is a refusal
+    # for all of them. Checked once, against a representative address, and
+    # nothing is written if it fails -- an announcement that went to some fleets
+    # and was refused for others would be the worst of both.
+    if others:
+        bad = message_problems({"from": me, "to": f"{others[0]}/x", "kind": "report",
+                                "thread": "t"}, body, known, guard_terms())
+        if bad:
+            for p in bad:
+                print(f"  REFUSED: {p}")
+            print()
+            sys.exit(2)
+
+    stamp = time.strftime("%Y%m%dT%H%M%S")
+    thread = f"{time.strftime('%Y-%m-%d')}-fleet-v{version}"
+    plans, missing = [], []
+    for fleet in others:
+        contact = (known.get(fleet) or {}).get("contact")
+        to = f"{fleet}/{contact}" if contact else ""
+        if not to or not ADDR.fullmatch(to):
+            missing.append((fleet, f"contact = {contact!r}" if contact
+                            else "no `contact` in its fleets.toml block"))
+            continue
+        head = {"from": me, "to": to, "kind": "report", "thread": thread}
+        rel = os.path.join("mail", fleet,
+                           f"{stamp}-{MAIL['fleet']}-{me_session}-{slug(body)}.md")
+        plans.append((to, head, rel))
+
+    for to, _, rel in plans:
+        print(f"    -> {to}\n       {rel}")
+    # NAMED, not skipped quietly. A fleet nobody can address is a fleet that will
+    # go on running an old copy while this tool reports an announcement made.
+    for fleet, why in missing:
+        print(f"    !! {fleet}: not announced to -- {why}")
+    if not others:
+        print("    (no other fleets in the mailbox's fleets.toml)")
+    elif not plans:
+        print("    nothing written.")
+
+    if not a.go:
+        print("\n  plan only -- re-run with --go\n")
+        sys.exit(5 if missing else 0)
+
+    paths = []
+    for to, head, rel in plans:
+        full = os.path.join(MAIL["clone"], rel)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w") as f:
+            f.write("---\n" + "".join(f"{k}: {v}\n" for k, v in head.items())
+                    + "---\n" + body + "\n")
+        paths.append(rel)
+    if paths:
+        # ONE commit and ONE push for the whole announcement: a push per fleet is
+        # several chances to half-succeed, and the half nobody looks at is the
+        # fleet that was never told.
+        ok, detail = push(f"mail: {me} announces fleet v{version}", paths)
+        print(f"  {detail}\n")
+        if not ok:
+            sys.exit(4)
+    else:
+        print()
+    sys.exit(5 if missing else 0)
 
 def do_send(a):
     need_mail()
@@ -627,6 +772,14 @@ def main():
     s.add_argument("--thread"); s.add_argument("--attach")
     s.add_argument("--go", action="store_true")
     s.set_defaults(fn=do_send)
+    n = sub.add_parser("announce")
+    n.add_argument("version", metavar="VERSION")
+    n.add_argument("--as", dest="as_session", metavar="SESSION",
+                   help="who it is from (default: the coordinator the manifest declares)")
+    n.add_argument("--url", help="the release page, if origin is not a GitHub remote")
+    n.add_argument("--note", help="one more sentence, appended to the line")
+    n.add_argument("--go", action="store_true")
+    n.set_defaults(fn=do_announce)
     f = sub.add_parser("fetch")
     f.add_argument("--go", action="store_true")
     f.add_argument("--nudge-wait", type=int, default=1800, dest="nudge_wait",

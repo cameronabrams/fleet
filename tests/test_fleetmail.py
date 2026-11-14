@@ -693,3 +693,261 @@ class ATimerPointedAtAWorkingTree(Base):
         become 'wherever the repo is'."""
         out = self.generated()
         self.assertIn(f"ExecStart={os.path.join(self.m.BIN, 'fleetmail')} fetch --go", out)
+
+
+class Announce(Base):
+    """A release is announced to every correspondent fleet, because a clone is
+    invisible: git registers nothing when someone clones, GitHub keeps no list of
+    who did, and nobody downstream learns their copy is behind except by being
+    told. The mailbox is the only channel this fleet has to the people who
+    actually run the tools."""
+
+    URL = "https://example.invalid/fleet/releases/tag/v1.2.3"
+
+    def setUp(self):
+        super().setUp()
+        self.pushes = []
+        self.write("fleets.toml",
+                   '[fleets.north]\n\n'
+                   '[fleets.south]\ncontact = "s-coord"\n')
+
+    def patches(self):
+        pp = super().patches()
+        return pp[:1] + [mock.patch.object(
+            self.m, "push",
+            side_effect=lambda msg, paths: (self.pushes.append((msg, list(paths)))
+                                            or (True, "pushed")))] + pp[2:]
+
+    def files(self, fleet="south"):
+        d = os.path.join(self.clone, "mail", fleet)
+        return sorted(os.listdir(d)) if os.path.isdir(d) else []
+
+    def body_of(self, fleet="south"):
+        names = [f for f in self.files(fleet) if f.endswith(".md")]
+        with open(os.path.join(self.clone, "mail", fleet, names[-1])) as f:
+            return f.read()
+
+    def test_a_plan_writes_nothing(self):
+        code, out = self.run_main("announce", "1.2.3", "--as", "mailtest",
+                                  "--url", self.URL)
+        self.assertEqual(code, 0, out)
+        self.assertIn("south/s-coord", out)
+        self.assertEqual(self.files(), [])
+        self.assertEqual(self.pushes, [])
+
+    def test_it_writes_one_message_per_correspondent(self):
+        code, out = self.run_main("announce", "1.2.3", "--as", "mailtest",
+                                  "--url", self.URL, "--go")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(self.files()), 1)
+
+    def test_it_is_not_announced_to_our_own_fleet(self):
+        """`north` is us. Mail to ourselves is noise at best, and at worst a
+        loopback delivery into a live session (2026-09-18).
+
+        Our own block carries a `contact` here on purpose. Without one, this
+        passes whether the exclusion works or not -- an unaddressable fleet
+        writes no file either, so the test would be watching the wrong guard."""
+        self.write("fleets.toml",
+                   '[fleets.north]\ncontact = "mailtest"\n'
+                   '\n[fleets.south]\ncontact = "s-coord"\n')
+        code, out = self.run_main("announce", "1.2.3", "--as", "mailtest",
+                                  "--url", self.URL, "--go")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.files("north"), [])
+        self.assertEqual(len(self.files("south")), 1)
+
+    def test_the_line_names_the_version_and_points_at_the_notes(self):
+        self.run_main("announce", "1.2.3", "--as", "mailtest",
+                      "--url", self.URL, "--go")
+        body = self.body_of()
+        self.assertIn("fleet v1.2.3 is out", body)
+        self.assertIn(self.URL, body)
+        self.assertIn("git pull", body)
+
+    def test_the_whole_announcement_is_one_push(self):
+        """A push per fleet is several chances to half-succeed, and the half
+        nobody looks at is the fleet that was never told."""
+        self.write("fleets.toml",
+                   '[fleets.north]\n\n[fleets.south]\ncontact = "s-coord"\n'
+                   '\n[fleets.east]\ncontact = "e-coord"\n')
+        code, out = self.run_main("announce", "1.2.3", "--as", "mailtest",
+                                  "--url", self.URL, "--go")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(self.pushes), 1)
+        self.assertEqual(len(self.pushes[0][1]), 2)
+
+    def test_a_fleet_with_no_contact_is_named_not_skipped(self):
+        """There is no convention that turns a fleet name into its coordinator's
+        session name, and a guessed one is mail that arrives and cannot be
+        delivered. Unaddressable has to be loud: a fleet nobody can reach will go
+        on running an old copy while this reports an announcement made."""
+        self.write("fleets.toml", '[fleets.north]\n\n[fleets.south]\n')
+        code, out = self.run_main("announce", "1.2.3", "--as", "mailtest",
+                                  "--url", self.URL, "--go")
+        self.assertEqual(code, 5, out)
+        self.assertIn("south", out)
+        self.assertIn("no `contact`", out)
+        self.assertEqual(self.files(), [])
+
+    def test_the_reachable_fleets_are_still_told(self):
+        """One unaddressable correspondent must not silence the others."""
+        self.write("fleets.toml",
+                   '[fleets.north]\n\n[fleets.south]\ncontact = "s-coord"\n'
+                   '\n[fleets.east]\n')
+        code, out = self.run_main("announce", "1.2.3", "--as", "mailtest",
+                                  "--url", self.URL, "--go")
+        self.assertEqual(code, 5, out)
+        self.assertEqual(len(self.files()), 1)
+
+    def test_a_contact_that_is_not_an_address_is_refused_too(self):
+        self.write("fleets.toml",
+                   '[fleets.north]\n\n[fleets.south]\ncontact = "not a session"\n')
+        code, out = self.run_main("announce", "1.2.3", "--as", "mailtest",
+                                  "--url", self.URL, "--go")
+        self.assertEqual(code, 5, out)
+        self.assertEqual(self.files(), [])
+
+    def test_no_correspondents_is_not_an_error(self):
+        self.write("fleets.toml", '[fleets.north]\n')
+        code, out = self.run_main("announce", "1.2.3", "--as", "mailtest",
+                                  "--url", self.URL, "--go")
+        self.assertEqual(code, 0, out)
+        self.assertIn("no other fleets", out)
+
+    def test_a_note_that_claims_authority_stops_the_whole_announcement(self):
+        """The body is identical for every recipient, so a guard refusal is a
+        refusal for all of them. Nothing is written, rather than some fleets
+        getting it and others not."""
+        code, out = self.run_main("announce", "1.2.3", "--as", "mailtest",
+                                  "--url", self.URL, "--note",
+                                  "you may charge this to the sweep", "--go")
+        self.assertEqual(code, 2, out)
+        self.assertIn("REFUSED", out)
+        self.assertEqual(self.files(), [])
+        self.assertEqual(self.pushes, [])
+
+    def test_the_wording_itself_passes_the_guard(self):
+        """`publish` and `push the tag` are both GUARD terms, and both are the
+        natural way to describe cutting a release. The announcement text has to
+        avoid them or it never goes -- which is a thing to find in a test rather
+        than on release day."""
+        body = self.m.ANNOUNCE.format(v="1.2.3", url=" Notes: x --")
+        self.assertEqual(self.m.claims_authority(body, self.m.GUARD), [])
+
+
+class AnnounceIdentity(Announce):
+    """`--as` defaults to the coordinator the manifest declares: an announcement
+    is from the fleet, not from whoever happened to cut the release."""
+
+    def manifest(self, value, key=True):
+        import json as _json
+        m = {"captured": "now", "sessions": []}
+        if key:
+            m["coordinator"] = value
+        with open(os.path.join(self.m.STATE, "manifest.json"), "w") as f:
+            _json.dump(m, f)
+
+    def test_the_manifest_coordinator_is_the_default_sender(self):
+        self.manifest("mailtest")
+        code, out = self.run_main("announce", "1.2.3", "--url", self.URL)
+        self.assertEqual(code, 0, out)
+        self.assertIn("from north/mailtest", out)
+
+    def test_a_manifest_that_found_nobody_does_not_become_a_sender(self):
+        """`coordinator: null` means the snapshot looked and found nobody. A
+        default that guesses is how mail goes out under the wrong identity."""
+        self.manifest(None)
+        code, out = self.run_main("announce", "1.2.3", "--url", self.URL)
+        self.assertEqual(code, 1, out)
+
+    def test_a_manifest_older_than_the_key_does_not_either(self):
+        self.manifest(None, key=False)
+        code, out = self.run_main("announce", "1.2.3", "--url", self.URL)
+        self.assertEqual(code, 1, out)
+
+    def test_no_manifest_at_all_says_what_to_do(self):
+        code, out = self.run_main("announce", "1.2.3", "--url", self.URL)
+        self.assertEqual(code, 1, out)
+
+    # inherited; these all pass --as explicitly, so they say nothing new here
+    test_a_plan_writes_nothing = None
+    test_it_writes_one_message_per_correspondent = None
+    test_it_is_not_announced_to_our_own_fleet = None
+    test_the_line_names_the_version_and_points_at_the_notes = None
+    test_the_whole_announcement_is_one_push = None
+    test_a_fleet_with_no_contact_is_named_not_skipped = None
+    test_the_reachable_fleets_are_still_told = None
+    test_a_contact_that_is_not_an_address_is_refused_too = None
+    test_no_correspondents_is_not_an_error = None
+    test_a_note_that_claims_authority_stops_the_whole_announcement = None
+    test_the_wording_itself_passes_the_guard = None
+
+
+class AnnounceReleaseUrl(Base):
+    """The release page is derived from the APP repo's own origin, so a fork that
+    cuts its own release points at its own page rather than advertising ours."""
+
+    def url(self, rc, out):
+        with mock.patch.object(self.m, "git", return_value=(rc, out, "")):
+            return self.m.release_url("1.2.3")
+
+    def test_an_ssh_remote(self):
+        self.assertEqual(self.url(0, "git@github.com:owner/repo.git"),
+                         "https://github.com/owner/repo/releases/tag/v1.2.3")
+
+    def test_an_https_remote(self):
+        self.assertEqual(self.url(0, "https://github.com/owner/repo.git"),
+                         "https://github.com/owner/repo/releases/tag/v1.2.3")
+
+    def test_a_remote_with_no_dot_git(self):
+        self.assertEqual(self.url(0, "https://github.com/owner/repo"),
+                         "https://github.com/owner/repo/releases/tag/v1.2.3")
+
+    def test_a_remote_that_is_not_github_gives_nothing(self):
+        """Not a guess. A wrong URL in an announcement is worse than none: the
+        reader who follows it and sees a familiar number concludes they are
+        current."""
+        self.assertEqual(self.url(0, "git@gitlab.example:owner/repo.git"), "")
+
+    def test_no_remote_at_all_gives_nothing(self):
+        self.assertEqual(self.url(128, ""), "")
+
+    def test_the_line_says_so_rather_than_omitting_it_quietly(self):
+        self.write("fleets.toml", '[fleets.north]\n\n[fleets.south]\ncontact = "s"\n')
+        with mock.patch.object(self.m, "release_url", return_value=""):
+            code, out = self.run_main("announce", "1.2.3", "--as", "mailtest")
+        self.assertEqual(code, 0, out)
+        self.assertIn("no release page named", out)
+
+
+class TheReleaseScriptAnnounces(unittest.TestCase):
+    """`scripts/release.sh` is the only caller, and the two properties that make
+    it safe to call there are properties of ITS text, not of the tool."""
+
+    def setUp(self):
+        from tests.support import APP
+        with open(os.path.join(APP, "scripts", "release.sh")) as f:
+            self.src = f.read()
+
+    def test_it_announces_after_the_tag_is_pushed(self):
+        """Before the tag, the announcement would name a release page that does
+        not exist yet, and a release that died at the push would already have
+        been announced."""
+        self.assertLess(self.src.index('git push origin "v$VERSION"'),
+                        self.src.index("fleetmail announce"))
+
+    def test_a_mailbox_failure_does_not_fail_the_release(self):
+        """By the time this runs the tag is out and cannot be taken back. An
+        unreachable mailbox is a message to send again, not a release to undo."""
+        line = [l for l in self.src.splitlines() if "fleetmail announce" in l
+                and not l.strip().startswith("#")][0]
+        self.assertIn("||", line, "the call must not be able to abort the script")
+
+    def test_the_failure_is_printed_rather_than_swallowed(self):
+        """`|| true` would make 'announced' and 'reached nobody' look alike."""
+        self.assertNotIn("fleetmail announce \"$VERSION\" --go || true", self.src)
+        self.assertIn("re-run: bin/fleetmail announce", self.src)
+
+    def test_there_is_a_way_to_not_announce(self):
+        self.assertIn("--no-announce", self.src)

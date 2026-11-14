@@ -30,6 +30,45 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Added
+
+- **`fleetmail announce <version>`**, and `scripts/release.sh` now runs it after
+  the tag goes out. It writes one `report` to every other fleet in the mailbox's
+  `fleets.toml` saying a release is out, in one commit and one push.
+
+  It exists because a clone is invisible. `git clone` registers nothing anywhere,
+  GitHub keeps no list of who cloned a repository — the traffic graph is a count
+  over fourteen days with no identities — and a fork's "N commits behind" banner
+  shows only to whoever opens the fork's page. The one native mechanism that
+  notifies anybody is a person opting in to Watch → Releases. So the people
+  actually running these tools learn their copy is old by being told, or not at
+  all.
+
+  Three things it will not guess. **Who to address**: nothing derives a fleet's
+  coordinator from its name, so each correspondent names its own `contact` in its
+  `fleets.toml` block, and a fleet without one is named in the output, not
+  written to, and the run exits 5. **Who it is from**: `--as` defaults to the
+  coordinator the manifest declares, because an announcement is from the fleet
+  rather than from whoever cut the release; a manifest that predates the key or
+  holds null makes `--as` required instead. **Where the notes are**: the release
+  page is derived from the application repository's own `origin`, so a fork
+  points at its own page, and a remote this cannot parse gives no link and says
+  so — a wrong URL would be worse than none, because the reader who follows it
+  and sees a familiar version number concludes they are current.
+
+  The body is identical for every recipient, so the wording guard is applied once
+  and a refusal stops the whole announcement rather than reaching some fleets and
+  not others. Two guard terms — `publish` and `push the tag` — are the natural
+  way to describe cutting a release, so the announcement text avoids both on
+  purpose and a test holds it there.
+
+  In `release.sh` it runs **after** the tag, never before: the announcement names
+  a release page that does not exist until the tag is out, and a release that
+  died at the push must not have been announced. It cannot fail the release —
+  by then the tag is out and cannot be taken back — but its exit code is printed
+  rather than swallowed, because "announced" and "reached nobody" must not look
+  alike. `--no-announce` skips it.
+
 ## [0.6.1] - 2026-11-13
 
 ### Fixed

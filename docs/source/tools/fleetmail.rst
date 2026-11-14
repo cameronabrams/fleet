@@ -9,6 +9,7 @@ Usage
 .. code-block:: text
 
    fleetmail send TO "TEXT" --as SESSION [--kind K] [--thread T] [--attach FILE] [--go]
+   fleetmail announce VERSION [--as SESSION] [--url URL] [--note TEXT] [--go]
    fleetmail fetch [--go] [--nudge-wait SECONDS] [--retry-wait SECONDS]
    fleetmail inbox
    fleetmail ack ID [TEXT] --as SESSION [--go]
@@ -17,6 +18,54 @@ Every other channel this fleet has stops at one machine: ``SendMessage`` needs a
 socket and one uid, drops are files in one state directory, and :doc:`fleetnudge` types
 into a pane it can see. ``fleetmail`` carries the same protocol — a pointer and a
 one-line conclusion, never a payload — between fleets owned by different people.
+
+Announcing a release
+--------------------
+
+``fleetmail announce <version>`` writes one ``report`` to every other fleet in the
+mailbox's ``fleets.toml`` saying a release is out, and sends them in **one** commit
+and push. Releases call it from ``scripts/release.sh`` after the tag
+goes out; ``--no-announce`` there skips it.
+
+It exists because **a clone is invisible**. ``git clone`` registers nothing
+anywhere, GitHub keeps no list of who cloned a repository — its traffic graph is a
+count over fourteen days with no identities — and a fork's *"N commits behind"*
+banner shows only to whoever opens the fork's page. The one native mechanism that
+notifies is a person opting in to Watch → Releases. So the people actually running
+these tools learn that their copy is old by being told, or not at all, and the
+mailbox is the only channel this fleet has to them.
+
+Three things it will not guess:
+
+**Who to address in each fleet.** Addresses are ``<fleet>/<session>`` and nothing
+derives the second from the first: one fleet's coordinator is ``coord`` and
+another's is ``south-coord``. Each correspondent names its own::
+
+   [fleets.south]
+   owner   = "a role, not a personal name"
+   contact = "south-coord"          # who hears about a release
+
+A fleet without one is **named in the output and not written to**, and the run
+exits 5. Silence there would leave a fleet running an old copy while the tool
+reported an announcement made.
+
+**Who it is from.** ``--as`` defaults to the coordinator the manifest declares
+(:doc:`fleetsnap`), because an announcement is from the fleet rather than from
+whoever happened to cut the release. A manifest that predates the key, or one that
+holds null because no brief declares ``Kind: coordinator``, is not a name — both
+make ``--as`` required rather than guessed.
+
+**Where the notes are.** The release page is derived from the application
+repository's own ``origin``, so a fork that cuts its own release points at its own
+page. A remote that is not GitHub gives no link and the run says so; ``--url``
+states it outright. A *wrong* URL would be worse than none, because the reader who
+follows it and sees a familiar version number concludes they are current.
+
+The body is identical for every recipient, so the wording guard is applied once and
+a refusal stops the whole announcement rather than reaching some fleets and not
+others. Two of the guard's terms — ``publish`` and ``push the tag`` — are the
+natural way to describe cutting a release, so the announcement text avoids both on
+purpose, and a test holds it to that.
 
 The mailbox
 -----------
@@ -68,8 +117,9 @@ Then ``fleets.toml`` at the root:
 .. code-block:: toml
 
    [fleets.north]
-   owner = "a role, not a personal name"
-   since = "2026-09-21"
+   owner   = "a role, not a personal name"
+   since   = "2026-09-21"
+   contact = "coord"        # optional: who `announce` tells about a release
 
    [guard]
    refuse = ["grant-a", "grant-b"]

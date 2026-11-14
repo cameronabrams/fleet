@@ -17,6 +17,7 @@
 #   3. Commits both as "Release v<version>"
 #   4. Creates tag v<version>
 #   5. Pushes the commit and the tag to origin
+#   6. Tells the other fleets, through the mailbox (--no-announce skips it)
 #
 # The pushed tag triggers .github/workflows/release.yaml, which re-runs the suite
 # and creates a GitHub Release with the notes for that version. PUSHING THE TAG
@@ -30,10 +31,12 @@
 set -euo pipefail
 
 ASSUME_YES=0
+ANNOUNCE=1
 ARGS=()
 for arg in "$@"; do
     case "$arg" in
         --yes|-y) ASSUME_YES=1 ;;
+        --no-announce) ANNOUNCE=0 ;;
         *) ARGS+=("$arg") ;;
     esac
 done
@@ -204,3 +207,27 @@ git push origin "v$VERSION"
 echo ""
 echo "Done. release.yaml will re-run the suite and create the GitHub Release."
 echo "  https://github.com/cameronabrams/fleet/releases/tag/v$VERSION"
+
+# ── Tell the other fleets ─────────────────────────────────────────────────────
+#
+# A clone is invisible. git registers nothing when someone clones, GitHub keeps
+# no list of who did, and a fork's "N commits behind" shows only to whoever opens
+# the fork page. So the people running these tools learn that their copy is old
+# by being told, or not at all -- and the mailbox is the one channel this fleet
+# has to them.
+#
+# AFTER the tag, never before: the announcement names a release page that does
+# not exist until the tag is out, and a release that failed at the push must not
+# have been announced. NON-FATAL on purpose -- the release itself is already done
+# and irreversible by this point, and a mailbox that could not be reached is a
+# message to send again, not a release to take back. The exit code is printed
+# rather than swallowed, because "announced" and "could not reach anyone" must
+# not look alike.
+if [ "$ANNOUNCE" = "1" ] && [ -x bin/fleetmail ]; then
+    echo ""
+    bin/fleetmail announce "$VERSION" --go || {
+        rc=$?
+        echo "  (announcement exited $rc -- the release is out either way;" >&2
+        echo "   re-run: bin/fleetmail announce $VERSION --go)" >&2
+    }
+fi
