@@ -1,4 +1,4 @@
-import contextlib, io, json, os, subprocess, sys, unittest
+import contextlib, io, json, os, subprocess, sys, time, unittest
 from unittest import mock
 from tests.support import FakeConfig, load_tool
 
@@ -194,13 +194,33 @@ class Fetch(Base):
 
 class Inbox(Base):
     def test_ack_closes_the_thread(self):
+        """An ack arriving last is the end of an exchange, not a question put to
+        us. The word moved from `acked` to `answered` on 2026-11-18, when the
+        column learned about our own replies as well -- an ack is now one of two
+        ways a thread can be closed rather than the only one."""
         self.write("mail/north/1-south-coord-q.md", message(thread="t9"))
         self.write("mail/north/2-south-coord-a.md",
                    message(kind="ack", thread="t9", body="ack: read"))
         self.run_main("fetch", "--go")
         text = self.inbox_text()
-        self.assertEqual(text.count("| acked |"), 2)
+        self.assertEqual(text.count("| answered |"), 2)
         self.assertNotIn("| open |", text)
+
+    def test_it_computes_the_view_rather_than_printing_the_committed_file(self):
+        """`inbox` used to cat INBOX.md, which made it a view of whenever the
+        last `fetch --go` ran. On a fleet whose scheduled fetch runs a PINNED
+        checkout, that is a view rendered by a version of this tool that may be
+        months old -- so a fix to what `open` means would not reach the person
+        who asked for it until the deployed copy moved."""
+        self.write("mail/north/20260101T000000-q.md", message(thread="t1"))
+        self.m.write_inbox("north")                      # the file, now stale
+        self.write("mail/south/20260101T000100-r.md",
+                   message(frm="north/mailtest", to="south/coord", thread="t1"))
+        self.assertIn("| open |", self.inbox_text())     # the file still says so
+        code, out = self.run_main("inbox")
+        self.assertEqual(code, 0)
+        self.assertIn("| answered |", out)
+        self.assertNotIn("| open |", out)
 
     def test_an_unfetched_message_is_marked_not_fetched(self):
         self.write("mail/north/1-south-coord-q.md", message())
@@ -951,3 +971,295 @@ class TheReleaseScriptAnnounces(unittest.TestCase):
 
     def test_there_is_a_way_to_not_announce(self):
         self.assertIn("--no-announce", self.src)
+
+
+class AThreadIsNotInOneDirectory(Base):
+    """Mail to this fleet is under `mail/<us>/`; every reply this fleet sends is
+    under the correspondent's. So a conversation is split across two directories
+    by construction, and anything reading one of them is reading half of it.
+
+    Measured on a live mailbox 2026-11-18: 45 messages, 10 threads, and the
+    largest thread 27 messages written by three sessions on one side and two on
+    the other. The index read our half.
+    """
+
+    def sent(self, name, **kw):
+        kw.setdefault("frm", "north/mailtest")
+        kw.setdefault("to", "south/coord")
+        self.write("mail/south/%s" % name, message(**kw))
+
+    def got(self, name, **kw):
+        self.write("mail/north/%s" % name, message(**kw))
+
+    def test_both_directions_are_seen(self):
+        self.got("20260101T000000-a.md", thread="t1")
+        self.sent("20260101T000100-b.md", thread="t1")
+        self.assertEqual(len(self.m.all_messages()), 2)
+
+    def test_the_order_is_chronological_across_directories(self):
+        """The timestamp prefix is the order. Sorting within each directory and
+        concatenating would put our whole half after theirs."""
+        self.got("20260101T000000-a.md", thread="t1")
+        self.sent("20260101T000100-b.md", thread="t1")
+        self.got("20260101T000200-c.md", thread="t1")
+        got = [os.path.basename(r) for r, _, _ in self.m.all_messages()]
+        self.assertEqual(got, ["20260101T000000-a.md", "20260101T000100-b.md",
+                               "20260101T000200-c.md"])
+
+    def test_our_own_message_is_recognized_as_ours(self):
+        self.assertTrue(self.m.ours({"from": "north/mailtest"}))
+        self.assertFalse(self.m.ours({"from": "south/coord"}))
+
+    def test_a_message_that_cannot_be_read_is_not_ours(self):
+        """`ours` decides who wrote it. An unreadable message is not one of ours
+        on the strength of being unreadable, which would mark a thread answered
+        because the evidence went missing."""
+        self.assertFalse(self.m.ours(None))
+        self.assertFalse(self.m.ours({}))
+
+    def test_a_message_with_no_thread_is_its_own_conversation(self):
+        """Otherwise every threadless message in the mailbox joins one bucket
+        under the empty string, and each one's state decides all the others'."""
+        a = self.m.thread_of("mail/north/1-a.md", {"from": "south/coord"})
+        b = self.m.thread_of("mail/north/2-b.md", {"from": "south/coord"})
+        self.assertNotEqual(a, b)
+
+    def test_the_time_comes_from_the_filename_and_nowhere_else(self):
+        """The front matter carries from, to, kind and thread -- never a date."""
+        t = self.m.msg_time("mail/north/20261006T182411-x.md")
+        self.assertEqual(time.strftime("%Y-%m-%d %H:%M", t), "2026-10-06 18:24")
+
+    def test_a_name_with_no_readable_time_is_none_not_now(self):
+        for name in ("no-stamp.md", "20261332T999999-x.md", ""):
+            self.assertIsNone(self.m.msg_time(name), name)
+
+
+class TheStateColumnHasTwoPossibleOutcomes(Base):
+    """The regression this replaces, and it is family C.
+
+    The old rule asked whether an **ack had arrived in our own directory**. An
+    ack we send is addressed to them and written to THEIR directory, so our
+    replies and our acks were both invisible to it, and the column could only
+    ever say `open`. On the live mailbox that was 45 messages over six weeks,
+    every one of them `open`, including threads answered within the hour -- and
+    it buried the single question that really was unanswered among twenty-three
+    that were not.
+    """
+
+    def sent(self, name, **kw):
+        kw.setdefault("frm", "north/mailtest")
+        kw.setdefault("to", "south/coord")
+        self.write("mail/south/%s" % name, message(**kw))
+
+    def got(self, name, **kw):
+        self.write("mail/north/%s" % name, message(**kw))
+
+    def data_rows(self):
+        """The table's rows without its header. The separator line begins `|-`
+        and so is already out; the header is the one row left to drop."""
+        return [l for l in self.inbox_text().splitlines()
+                if l.startswith("| ")][1:]
+
+    def test_a_thread_we_replied_to_is_answered(self):
+        """The whole defect, in three lines. Before the fix this read `open`."""
+        self.got("20260101T000000-q.md", thread="t1")
+        self.sent("20260101T000100-r.md", thread="t1")
+        self.m.write_inbox("north")
+        self.assertIn("| answered |", self.inbox_text())
+        self.assertNotIn("| open |", self.inbox_text())
+
+    def test_a_thread_they_wrote_last_in_is_open(self):
+        self.got("20260101T000000-q.md", thread="t1")
+        self.sent("20260101T000100-r.md", thread="t1")
+        self.got("20260101T000200-q2.md", thread="t1")
+        self.m.write_inbox("north")
+        self.assertIn("| open |", self.inbox_text())
+        self.assertNotIn("| answered |", self.inbox_text())
+
+    def test_our_reply_counts_even_though_it_is_not_an_ack(self):
+        """A reply is a better answer than an ack and was the one the old rule
+        could not see at all: only `kind: ack` closed a thread, and only one
+        that had arrived here."""
+        self.got("20260101T000000-q.md", thread="t1")
+        self.sent("20260101T000100-r.md", thread="t1", kind="report")
+        self.m.write_inbox("north")
+        self.assertIn("| answered |", self.inbox_text())
+
+    def test_a_thread_with_no_reply_at_all_stays_open(self):
+        self.got("20260101T000000-q.md", thread="t1")
+        self.m.write_inbox("north")
+        self.assertIn("| open |", self.inbox_text())
+
+    def test_their_ack_still_closes_it(self):
+        self.got("20260101T000000-q.md", thread="t1")
+        self.got("20260101T000100-a.md", thread="t1", kind="ack", body="ack: read")
+        self.m.write_inbox("north")
+        self.assertNotIn("| open |", self.inbox_text())
+
+    def test_a_newest_message_that_cannot_be_parsed_leaves_it_open(self):
+        """A message nobody can read is not one anybody can say was handled."""
+        self.got("20260101T000000-q.md", thread="t1")
+        self.sent("20260101T000100-r.md", thread="t1")
+        self.write("mail/north/20260101T000200-junk.md", "no front matter here")
+        self.m.write_inbox("north")
+        self.assertIn("| open |", self.inbox_text())
+
+    def test_open_threads_sort_first(self):
+        self.got("20260101T000000-old.md", thread="t1")
+        self.sent("20260101T000100-r.md", thread="t1")
+        self.got("20260101T000200-new.md", thread="t2")
+        self.m.write_inbox("north")
+        rows = self.data_rows()
+        self.assertTrue(rows[0].startswith("| open |"), rows)
+
+    def test_only_our_own_mail_is_listed(self):
+        """Both directories are READ, so a reply can be seen; only messages
+        addressed to this fleet are listed. An index that listed our sent mail
+        would be a different document."""
+        self.got("20260101T000000-q.md", thread="t1")
+        self.sent("20260101T000100-r.md", thread="t1")
+        self.m.write_inbox("north")
+        rows = self.data_rows()
+        self.assertEqual(len(rows), 1, rows)
+        self.assertIn("20260101T000000-q.md", rows[0])
+
+    def test_the_delivery_column_still_says_what_happened_here(self):
+        """The other column is about this machine and is untouched by any of
+        this: a thread can be answered and a message still never have reached
+        the session it was addressed to."""
+        self.got("20260101T000000-q.md", thread="t1")
+        self.sent("20260101T000100-r.md", thread="t1")
+        self.m.write_inbox("north")
+        self.assertIn("not fetched", self.inbox_text())
+
+    def test_the_header_says_what_open_means(self):
+        """A reader seeing a column of `open` has to know whether it is about
+        them. The file is committed to a shared repository, so the sentence
+        travels with it."""
+        self.m.write_inbox("north")
+        self.assertIn("the next move is ours", self.inbox_text())
+
+
+class ReadingAThread(Base):
+    """`fleetmail inbox` is an index; this is the conversation."""
+
+    def sent(self, name, **kw):
+        kw.setdefault("frm", "north/mailtest")
+        kw.setdefault("to", "south/coord")
+        self.write("mail/south/%s" % name, message(**kw))
+
+    def got(self, name, **kw):
+        self.write("mail/north/%s" % name, message(**kw))
+
+    def conversation(self):
+        self.got("20260101T000000-q.md", thread="t1", body="their question")
+        self.sent("20260101T000100-r.md", thread="t1", body="our answer")
+        self.got("20260101T000200-f.md", thread="t1", body="their follow-up")
+
+    def read(self, *argv):
+        return self.run_main("read", *argv)
+
+    def test_both_halves_are_in_the_output_in_order(self):
+        self.conversation()
+        code, out = self.read("t1")
+        self.assertEqual(code, 0)
+        self.assertLess(out.index("their question"), out.index("our answer"))
+        self.assertLess(out.index("our answer"), out.index("their follow-up"))
+
+    def test_our_own_messages_are_marked(self):
+        self.conversation()
+        _, out = self.read("t1")
+        ours = [l for l in out.splitlines() if "north/mailtest" in l and "->" in l]
+        self.assertEqual(len(ours), 1, out)
+
+    def test_the_header_says_how_many_and_whether_it_is_open(self):
+        self.conversation()
+        _, out = self.read("t1")
+        self.assertIn("3 messages, open", out)
+
+    def test_an_open_thread_ends_with_the_reply_command(self):
+        """After the thread rather than before it: the decision is made at the
+        bottom, by a reader who has just finished reading."""
+        self.conversation()
+        _, out = self.read("t1")
+        self.assertIn("they wrote last", out)
+        self.assertIn("--thread t1", out)
+        self.assertLess(out.index("their follow-up"), out.index("they wrote last"))
+
+    def test_an_answered_thread_says_so_instead(self):
+        self.got("20260101T000000-q.md", thread="t1")
+        self.sent("20260101T000100-r.md", thread="t1")
+        _, out = self.read("t1")
+        self.assertIn("we wrote last", out)
+        self.assertNotIn("fleetmail send", out)
+
+    def test_it_resolves_a_message_by_filename_prefix(self):
+        """The handle `ack` already takes, so a reader who just acked something
+        can read it with what they have already typed."""
+        self.conversation()
+        code, out = self.read("20260101T000100")
+        self.assertEqual(code, 0)
+        self.assertIn("their question", out)
+
+    def test_it_resolves_part_of_a_thread_name(self):
+        self.got("20260101T000000-q.md", thread="2026-01-01-a-long-dated-thread-name")
+        code, out = self.read("long-dated")
+        self.assertEqual(code, 0)
+
+    def test_an_ambiguous_name_is_refused_with_the_candidates(self):
+        """Resolving to the newest would print a guess as a conversation, and
+        the reader would have no way to see it happened."""
+        self.got("20260101T000000-a.md", thread="sweep-one")
+        self.got("20260101T000100-b.md", thread="sweep-two")
+        code, out = self.read("sweep")
+        self.assertEqual(code, 2)
+        self.assertIn("sweep-one", out)
+        self.assertIn("sweep-two", out)
+
+    def test_a_name_that_matches_nothing_is_refused(self):
+        self.conversation()
+        code, out = self.read("nothing-like-this")
+        self.assertEqual(code, 2)
+        self.assertIn("nothing in the mailbox matches", out)
+
+    def test_brief_is_one_line_per_message(self):
+        self.got("20260101T000000-q.md", thread="t1",
+                 body="a first line\nand a second line that --brief must not print")
+        _, out = self.read("t1", "--brief")
+        self.assertIn("a first line", out)
+        self.assertNotIn("must not print", out)
+
+    def test_the_whole_body_is_printed_without_brief(self):
+        self.got("20260101T000000-q.md", thread="t1",
+                 body="a first line\nand a second line")
+        _, out = self.read("t1")
+        self.assertIn("and a second line", out)
+
+    def test_an_attachment_is_named(self):
+        self.write("mail/south/20260101T000100-r.md",
+                   "---\nfrom: north/mailtest\nto: south/coord\nkind: report\n"
+                   "thread: t1\nattaches: mail/south/attach/20260101-notes.md\n---\nsee file\n")
+        code, out = self.read("t1")
+        self.assertEqual(code, 0)
+        self.assertIn("attach/20260101-notes.md", out)
+
+    def test_an_unreadable_message_is_shown_as_one_not_skipped(self):
+        """Skipping it would make the conversation look complete."""
+        self.got("20260101T000000-q.md", thread="t1")
+        self.write("mail/north/20260101T000100-junk.md", "no front matter")
+        code, out = self.read("20260101T000100")
+        self.assertEqual(code, 0)
+        self.assertIn("UNREADABLE", out)
+
+    def test_a_filename_with_no_timestamp_does_not_stop_the_read(self):
+        self.write("mail/north/plain-name.md", message(thread="t1"))
+        code, out = self.read("t1")
+        self.assertEqual(code, 0)
+
+    def test_it_says_which_clone_it_read_and_that_fetch_updates_it(self):
+        """It reads the clone where it stands. A thread that ends mid-question
+        may end there or merely end here, and the reader cannot tell which."""
+        self.conversation()
+        _, out = self.read("t1")
+        self.assertIn(self.m.MAIL["clone"], out)
+        self.assertIn("fleetmail fetch", out)

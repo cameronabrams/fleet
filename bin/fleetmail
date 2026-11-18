@@ -5,6 +5,7 @@
   fleetmail announce VERSION [--as SESSION] [--url URL] [--note TEXT] [--go]
   fleetmail fetch [--go]          deliver new mail addressed to this fleet
   fleetmail inbox                 what is open, and what could not be delivered
+  fleetmail read THREAD [--brief] one conversation, in order, both directions
   fleetmail timer                 the systemd --user units that fetch on a schedule
   fleetmail ack ID --as SESSION [--go]
 
@@ -50,7 +51,7 @@ Exit codes: 0 fine (or a plan with no blocks), 2 refused, 4 the mailbox could no
 be reached, 5 delivered as files but at least one session could not be nudged --
 and, from `announce`, that at least one correspondent could not be addressed.
 """
-import argparse, glob, hashlib, json, os, re, shutil, subprocess, sys, time, tomllib
+import argparse, glob, hashlib, json, os, re, shutil, subprocess, sys, textwrap, time, tomllib
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import mailstat
@@ -276,35 +277,129 @@ def delivery_state(seen, rel):
 def inbox_path(fleet):
     return os.path.join(MAIL["clone"], "mail", fleet, "INBOX.md")
 
-def write_inbox(fleet):
-    """Rebuild this fleet's INBOX.md from the messages in the mailbox: open threads
-    first. A human reads this file; the tools read the files themselves."""
-    rows, acked, seen = [], set(), delivered()
-    for path in sorted(glob.glob(os.path.join(MAIL["clone"], "mail", fleet, "*.md"))):
+# The send time lives in the FILENAME and nowhere else: the front matter carries
+# from, to, kind and thread, and never a date. So this is the one derivation of
+# it rather than a second -- and a name that does not match is `None`, because a
+# message whose time cannot be read is not a message that arrived just now.
+MSG_TIME = re.compile(r"^(\d{8}T\d{6})-")
+
+def msg_time(name):
+    m = MSG_TIME.match(os.path.basename(name))
+    if not m:
+        return None
+    try:
+        return time.strptime(m.group(1), "%Y%m%dT%H%M%S")
+    except ValueError:
+        return None
+
+def all_messages():
+    """[(relative path, head, body)] for every message in the mailbox, oldest
+    first, in BOTH directions.
+
+    A thread is not in one directory. Mail to this fleet is under `mail/<us>/`
+    and every reply this fleet sent is under the correspondent's -- so the
+    pseudo-PIP2 thread is 27 messages split across two of them, written by three
+    sessions here and two there. Anything that reads one directory is reading
+    half a conversation, and until 2026-11-18 the inbox index did exactly that.
+
+    Ordered by basename, which is the timestamp prefix, so the order is
+    chronological across directories without parsing anything.
+    """
+    out = []
+    for path in sorted(glob.glob(os.path.join(MAIL["clone"], "mail", "*", "*.md")),
+                       key=lambda p: os.path.basename(p)):
         if os.path.basename(path) == "INBOX.md":
             continue
         head, body = parse(path)
+        out.append((os.path.relpath(path, MAIL["clone"]), head, body))
+    return out
+
+def ours(head):
+    """Whether this fleet sent it. False for a message this cannot read: an
+    unreadable message is not one of ours on the strength of being unreadable."""
+    return str((head or {}).get("from", "")).split("/")[0] == MAIL["fleet"]
+
+def thread_of(rel, head):
+    """The thread key, or the message's own name when it declares none -- so a
+    threadless message is its own conversation rather than joining every other
+    threadless one under the empty string."""
+    return (head or {}).get("thread") or "file:" + os.path.basename(rel)
+
+def by_thread(msgs):
+    out = {}
+    for rel, head, body in msgs:
+        out.setdefault(thread_of(rel, head), []).append((rel, head, body))
+    return out
+
+def thread_state(msgs):
+    """"open" or "answered" for one thread's messages, oldest first.
+
+    OPEN MEANS THEY WROTE LAST. The newest message came from another fleet and
+    is not an ack, so the next move is ours.
+
+    The rule it replaces asked whether an **ack had arrived in our own
+    directory**, and that could only ever be false: an ack we send is addressed
+    to them and is written to THEIR directory, so our own replies and our own
+    acks were both invisible to it. Every one of 45 messages over six weeks read
+    `open`, including threads answered the same hour -- a column with one
+    possible outcome, which is family C of `docs/checks-that-reassure.md`, and it
+    hid the one question that really was unanswered among twenty-three that were
+    not.
+
+    An ack arriving last closes a thread rather than opening one: it says the
+    other side read what we sent, which is the end of the exchange and not a
+    question put to us. A thread whose newest message cannot be parsed is open,
+    because a message this cannot read is one nobody can say was handled.
+    """
+    for rel, head, body in reversed(msgs):
         if head is None:
-            rows.append((os.path.basename(path), "?", "?", "", body,
-                         delivery_state(seen, os.path.relpath(path, MAIL["clone"]))))
+            return "open"
+        return "answered" if ours(head) or head.get("kind") == "ack" else "open"
+    return "open"
+
+def inbox_lines(fleet):
+    """This fleet's inbox as markdown, open threads first.
+
+    Computed, never read back from the file it is also written to. `inbox` used
+    to print `INBOX.md` off the disk, which made it a view of whenever the last
+    `fetch --go` ran -- and on a fleet whose scheduled fetch runs a PINNED
+    checkout, that is a view rendered by a version of this tool that may be
+    months old. The committed file stays the shared artifact; what a human is
+    shown is worked out now.
+    """
+    msgs = all_messages()
+    states = {t: thread_state(ms) for t, ms in by_thread(msgs).items()}
+    seen, rows = delivered(), []
+    mine = os.path.join("mail", fleet)
+    for rel, head, body in msgs:
+        if os.path.dirname(rel) != mine:
             continue
-        if head.get("kind") == "ack" and head.get("thread"):
-            acked.add(head["thread"])
-        rows.append((os.path.basename(path), head.get("from", "?"), head.get("kind", "?"),
-                     head.get("thread", ""), body.splitlines()[0] if body else "",
-                     delivery_state(seen, os.path.relpath(path, MAIL["clone"]))))
+        state = states.get(thread_of(rel, head), "open")
+        if head is None:
+            rows.append((state, os.path.basename(rel), "?", "?", "", body,
+                         delivery_state(seen, rel)))
+            continue
+        rows.append((state, os.path.basename(rel), head.get("from", "?"),
+                     head.get("kind", "?"), head.get("thread", ""),
+                     body.splitlines()[0] if body else "",
+                     delivery_state(seen, rel)))
     lines = [f"# Inbox — {fleet}\n",
-             "Rebuilt by `fleetmail fetch`. Open first. **delivery** is what happened on "
-             "this machine: a message that never reached its session says so here, not only "
-             "in a log.\n",
+             "Rebuilt by `fleetmail fetch`. Open first -- **open** means the newest message "
+             "in that thread came from another fleet and was not an ack, so the next move is "
+             "ours. **delivery** is what happened on this machine: a message that never "
+             "reached its session says so here, not only in a log.\n",
              "| state | delivery | message | from | kind | thread | first line |",
              "|---|---|---|---|---|---|---|"]
-    for name, frm, kind, thread, first, deliv in sorted(rows, key=lambda r: (r[3] in acked, r[0])):
-        state = "acked" if thread and thread in acked else "open"
+    for state, name, frm, kind, thread, first, deliv in sorted(
+            rows, key=lambda r: (r[0] == "answered", r[1])):
         lines.append(f"| {state} | {deliv} | `{name}` | {frm} | {kind} | {thread} | {first[:80]} |")
+    return lines
+
+def write_inbox(fleet):
+    """Write that to INBOX.md, which is committed and read by a human."""
     os.makedirs(os.path.dirname(inbox_path(fleet)), exist_ok=True)
     with open(inbox_path(fleet), "w") as f:
-        f.write("\n".join(lines) + "\n")
+        f.write("\n".join(inbox_lines(fleet)) + "\n")
     return inbox_path(fleet)
 
 def nudge(session, msg_id, line, mail_from, go, wait=1800):
@@ -735,13 +830,14 @@ def do_timer(a):
 def do_inbox(a):
     need_mail()
     seen = delivered()
+    if not clone_ready():
+        print(f"\n  no mailbox clone at {MAIL['clone']} -- run fleetmail fetch\n")
+        sys.exit(4)
     path = inbox_path(MAIL["fleet"])
-    print(f"\n  {path}")
-    if os.path.exists(path):
-        with open(path) as f:
-            print("".join("  " + l for l in f))
-    else:
-        print("  (no inbox yet; run fleetmail fetch)")
+    print(f"\n  {path} (shown as computed now; the file is rewritten by fetch)")
+    for line in inbox_lines(MAIL["fleet"]):
+        print("  " + line)
+    print()
     # One definition of "needs a human", shared with the board: this screen and
     # that line disagreeing about what is stuck would be worse than either being
     # wrong, because the board is what sends a reader here.
@@ -752,6 +848,83 @@ def do_inbox(a):
             print(f"    {r['key']}: {r['what'].upper()}"
                   + (f" -- {r['why']}" if r["why"] else ""))
     print()
+
+def resolve_thread(target, threads, msgs):
+    """(key, messages) for the thread `target` names, or (None, reason).
+
+    Three ways to name one, in order of how specific they are: the thread
+    exactly, a message in it by filename prefix -- the same handle `ack` takes,
+    so a reader who just acked something can read it with what they already
+    typed -- and finally a unique substring of a thread name, since the names
+    are long and dated and nobody types them in full.
+
+    An ambiguous name is REFUSED with the candidates rather than resolved to the
+    newest. Picking one would be a guess printed as a conversation, and the
+    reader would have no way to see it happened.
+    """
+    if target in threads:
+        return target, threads[target]
+    hit = [t for t, ms in threads.items()
+           if any(os.path.basename(rel).startswith(target) for rel, _, _ in ms)]
+    if len(hit) == 1:
+        return hit[0], threads[hit[0]]
+    if not hit:
+        low = target.lower()
+        hit = [t for t in threads if low in t.lower()]
+    if len(hit) == 1:
+        return hit[0], threads[hit[0]]
+    if not hit:
+        return None, f"nothing in the mailbox matches {target!r}"
+    return None, ("%d threads match %r:\n    " % (len(hit), target)
+                  + "\n    ".join(sorted(hit)))
+
+def do_read(a):
+    need_mail()
+    if not clone_ready():
+        print(f"\n  no mailbox clone at {MAIL['clone']} -- run fleetmail fetch\n")
+        sys.exit(4)
+    msgs = all_messages()
+    key, found = resolve_thread(a.target, by_thread(msgs), msgs)
+    if key is None:
+        print(f"\n  REFUSED: {found}\n")
+        sys.exit(2)
+    state = thread_state(found)
+    who = sorted({(h or {}).get("from", "?") for _, h, _ in found})
+    width = min(shutil.get_terminal_size((80, 24)).columns, 100)
+    print(f"\n  thread {key}  ({len(found)} message{'' if len(found) == 1 else 's'}, {state})")
+    print("  between " + ", ".join(who))
+    # The clone is read where it stands. `fetch` is what pulls, and saying so
+    # beats a reader wondering whether a thread that ends mid-question ends there
+    # or merely ends here.
+    print(f"  {MAIL['clone']} as it stands; `fleetmail fetch` to bring it up to date\n")
+    for rel, head, body in found:
+        t = msg_time(rel)
+        when = time.strftime("%m-%d %H:%M", t) if t else "  ?  ?"
+        if head is None:
+            print(f"  {when}  {rel} -- UNREADABLE: {body}\n")
+            continue
+        mark = "->" if ours(head) else "  "
+        print(f"  {when}  {mark} {head.get('from', '?')}  [{head.get('kind', '?')}]"
+              f"  to {head.get('to', '?')}")
+        if a.brief:
+            first = (body.splitlines() or [""])[0]
+            print("        " + first[:width - 8] + ("…" if len(first) > width - 8 else ""))
+        else:
+            for para in (body or "(empty)").split("\n"):
+                print(textwrap.fill(para, width=width, initial_indent="      ",
+                                    subsequent_indent="      ") if para.strip() else "")
+        if head.get("attaches"):
+            print(f"      + {head['attaches']}")
+        print()
+    # The last word on what to do, after the thread rather than before it: a
+    # reader who has just read to the bottom is where the decision is made.
+    if state == "open":
+        last = found[-1][1] or {}
+        print(f"  they wrote last. Reply:  fleetmail send {last.get('from', '<them>')} "
+              f'"..." --as <you> --thread {key} --go\n')
+    else:
+        print("  we wrote last.\n")
+    sys.exit(0)
 
 def do_ack(a):
     need_mail()
@@ -793,6 +966,13 @@ def main():
     s.add_argument("--thread"); s.add_argument("--attach")
     s.add_argument("--go", action="store_true")
     s.set_defaults(fn=do_send)
+    r = sub.add_parser("read")
+    r.add_argument("target", metavar="THREAD",
+                   help="a thread, a message filename prefix, or part of a thread name")
+    r.add_argument("--brief", action="store_true",
+                   help="one line per message instead of the whole body")
+    r.set_defaults(fn=do_read)
+
     n = sub.add_parser("announce")
     n.add_argument("version", metavar="VERSION")
     n.add_argument("--as", dest="as_session", metavar="SESSION",

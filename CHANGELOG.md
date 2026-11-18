@@ -30,6 +30,56 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Added
+
+- **`fleetmail read THREAD [--brief]`** — one conversation, in order, both
+  directions. `fleetmail inbox` is an index; this is the thing it indexes.
+
+  A thread is not in one directory. Mail to this fleet lands under `mail/<us>/`
+  and every reply this fleet sends lands under the correspondent's, so a
+  conversation is split across two of them by construction — on a live mailbox
+  the largest thread is 27 messages written by three sessions on one side and two
+  on the other, and nothing could show it in order. `read` collects both
+  directions, orders them by the timestamp in each filename (the only place a
+  send time is recorded: the front matter carries `from`, `to`, `kind` and
+  `thread`, never a date), and marks this fleet's own messages with `->`.
+
+  It takes a thread name, a message's filename prefix — the same handle `ack`
+  takes — or a unique part of a thread name. An ambiguous name is refused with
+  the candidates rather than resolved to the newest, because picking one would
+  print a guess as a conversation with nothing to show it happened. It reads the
+  clone where it stands and says so. An open thread ends with the command that
+  answers it, printed after the messages rather than before them.
+
+### Fixed
+
+- **The inbox `state` column had one possible outcome.** It asked whether an ack
+  had arrived in *our own directory* — and an ack this fleet sends is addressed
+  to the other party and written to *theirs*, so our replies and our acks were
+  both invisible to it. On a live mailbox that was 45 messages over six weeks,
+  every one of them `open`, including threads answered within the hour.
+
+  Family **C** in `docs/checks-that-reassure.md`, and the cost was not cosmetic:
+  it hid the one question that really was unanswered among twenty-three that were
+  not. `open` now means **they wrote last** — the newest message in the thread
+  came from another fleet and was not an ack, so the next move is ours. An ack
+  arriving last closes a thread; a thread whose newest message cannot be parsed
+  is open, because a message nobody can read is not one anybody can say was
+  handled. The word on the row moved from `acked` to `answered` to match, since
+  an ack is now one of two ways a thread closes rather than the only one.
+
+  `write_inbox` therefore reads the whole mailbox rather than one directory. The
+  **delivery** column is untouched: it is about this machine, and a thread can be
+  answered while a message in it never reached its session.
+
+- **`fleetmail inbox` computes its view instead of printing the committed file.**
+  It used to `cat` `INBOX.md`, which made it a view of whenever the last
+  `fetch --go` ran — and on a fleet whose scheduled fetch runs a *pinned*
+  checkout, that is a view rendered by a version of this tool that may be months
+  old. The fix above would not have reached the person who asked for it until the
+  deployed copy moved. The committed file remains the shared artifact `fetch`
+  writes; what a human is shown is worked out now, from one definition both use.
+
 ## [0.7.1] - 2026-11-18
 
 ### Added

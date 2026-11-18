@@ -12,6 +12,7 @@ Usage
    fleetmail announce VERSION [--as SESSION] [--url URL] [--note TEXT] [--go]
    fleetmail fetch [--go] [--nudge-wait SECONDS] [--retry-wait SECONDS]
    fleetmail inbox
+   fleetmail read THREAD [--brief]
    fleetmail ack ID [TEXT] --as SESSION [--go]
 
 Every other channel this fleet has stops at one machine: ``SendMessage`` needs a unix
@@ -182,6 +183,58 @@ delivers once.
 ``INBOX.md`` carries a **delivery** column, because a message that reached the machine
 but never reached its session must be visible where a human looks, not only in a log.
 ``fleetmail inbox`` prints it plus anything quarantined or undelivered.
+
+Reading a thread
+----------------
+
+``fleetmail inbox`` is an index. ``fleetmail read`` is the conversation::
+
+   fleetmail read THREAD [--brief]
+
+**A thread is not in one directory.** Mail to this fleet is under ``mail/<us>/``
+and every reply this fleet sends is under the correspondent's, so a conversation
+is split across two of them by construction. On one live mailbox the largest
+thread was 27 messages written by three sessions on this side and two on the
+other. ``read`` collects both directions, orders them by the timestamp in each
+filename — which is the only place a send time is recorded, since the front
+matter carries ``from``, ``to``, ``kind`` and ``thread`` and never a date — and
+marks this fleet's own messages with ``->``.
+
+It takes the thread name, a message's filename prefix (the same handle ``ack``
+takes, so a reader who has just acked something can read it with what they
+already typed), or a unique part of a thread name. An **ambiguous** name is
+refused with the candidates listed rather than resolved to the newest: picking
+one would print a guess as a conversation, and the reader would have no way to
+see it happened.
+
+It reads the clone where it stands and says so — ``fetch`` is what pulls, and a
+thread that ends mid-question may end there or merely end here. An open thread
+ends with the command that answers it, printed **after** the messages rather
+than before them, because that is where a reader who has just finished reading
+is.
+
+``open`` means they wrote last
+------------------------------
+
+The newest message in the thread came from another fleet and was not an ack, so
+the next move is ours.
+
+The rule this replaced asked whether an **ack had arrived in our own
+directory** — and that could only ever be false. An ack this fleet sends is
+addressed to the other party and written to *their* directory, so our own
+replies and our own acks were both invisible to it. On a live mailbox that was
+45 messages over six weeks, **every one of them** marked ``open``, including
+threads answered within the hour. A column with one possible outcome is family
+**C** in :doc:`../checks-that-reassure`, and the cost was not cosmetic: it hid
+the single question that really was unanswered among twenty-three that were not.
+
+An ack arriving last **closes** a thread rather than opening one — it says the
+other side read what we sent. A thread whose newest message cannot be parsed is
+open, because a message nobody can read is not one anybody can say was handled.
+
+The **delivery** column is untouched by all of this. It is about this machine,
+and a thread can be answered while a message in it never reached the session it
+was addressed to.
 
 The board carries the same two facts
 ------------------------------------
