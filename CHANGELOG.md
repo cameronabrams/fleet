@@ -30,6 +30,8 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-18
+
 ### Added
 
 - **`fleetboard` carries cross-fleet mail**, as one line beside the backup and the
