@@ -30,6 +30,8 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-18
+
 ### Added
 
 - **`fleetmail read THREAD [--brief]`** — one conversation, in order, both
