@@ -17,6 +17,7 @@ Submodules
    fleet.history
    fleet.identity
    fleet.kernels
+   fleet.mailstat
    fleet.nudgelog
    fleet.panes
    fleet.pending

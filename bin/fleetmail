@@ -53,13 +53,17 @@ and, from `announce`, that at least one correspondent could not be addressed.
 import argparse, glob, hashlib, json, os, re, shutil, subprocess, sys, time, tomllib
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
+from fleet import mailstat
 from fleet import version_flag
 
 CFG = fc.load()
 MAIL = fc.mail(CFG)
 STATE = fc.state_dir(CFG)
 DROPS = os.path.join(STATE, "drops")
-DELIVERED = os.path.join(STATE, "mail-delivered.json")
+# One definition of where the record lives and how it is read, shared with the
+# board that reports on it: two derivations of one path is how a reader comes to
+# be looking at a file nobody writes.
+DELIVERED = mailstat.delivered_path(STATE)
 BIN = os.path.dirname(os.path.realpath(__file__))
 KINDS = ("question", "report", "ack")
 ADDR = re.compile(r"[a-z0-9][a-z0-9_-]*/[A-Za-z0-9][A-Za-z0-9_-]*")
@@ -210,11 +214,16 @@ def message_problems(head, body, known, terms=None):
     return out
 
 def delivered():
-    try:
-        with open(DELIVERED) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
+    """What became of each message fetched so far.
+
+    An unreadable record reads as `{}` here, as it always has: this tool's own
+    uses of it are additive, and refusing to run because the record is damaged
+    would stop mail rather than deliver it. The BOARD does not share that
+    reading -- `mailstat.read_delivered` keeps unreadable apart from empty,
+    because for a reader the difference is "nothing is stuck" against "this
+    cannot tell you whether anything is stuck".
+    """
+    return mailstat.read_delivered(STATE)[0] or {}
 
 def _write_delivered(d):
     os.makedirs(STATE, exist_ok=True)
@@ -594,7 +603,12 @@ def do_fetch(a):
         if bad:
             print(f"  QUARANTINED {rel}: " + "; ".join(bad))
             if a.go:
-                record(rel, outcome="quarantined", reason="; ".join(bad))
+                # Only when the message said. A quarantine includes the case where
+                # the `from` line is the thing that was wrong, and recording a
+                # claimed sender as a fact is exactly what this tool exists not to
+                # do; `sender` absent is read as unknown, never as nobody.
+                record(rel, outcome="quarantined", reason="; ".join(bad),
+                       **({"sender": head["from"]} if head.get("from") else {}))
             problems += 1
             continue
         session = head["to"].split("/", 1)[1]
@@ -613,7 +627,12 @@ def do_fetch(a):
             f.write(HEADER.format(frm=head["from"]) + "\n"
                     + "".join(f"{k}: {v}\n" for k, v in head.items()) + "\n" + body + "\n")
         sent, why = nudge(session, os.path.basename(path)[:40], line, head["from"], True, a.nudge_wait)
-        record(rel, outcome="delivered", drop=drop, nudged=sent, detail=why)
+        # `sender` and `session` are written down rather than left to be read back
+        # out of the filename this tool also built: a board that needs to name who
+        # was not told would otherwise re-derive from a slug, and two derivations
+        # of one fact is the family this repository keeps finding.
+        record(rel, outcome="delivered", drop=drop, nudged=sent, detail=why,
+               sender=head["from"], session=session)
         print(f"    {'nudged' if sent else 'NOT NUDGED'}: {why}")
         problems += not sent
     if a.go:
@@ -723,13 +742,15 @@ def do_inbox(a):
             print("".join("  " + l for l in f))
     else:
         print("  (no inbox yet; run fleetmail fetch)")
-    stuck = {k: v for k, v in seen.items()
-             if v.get("outcome") == "quarantined"
-             or (v.get("nudged") is False and not v.get("acked"))}
+    # One definition of "needs a human", shared with the board: this screen and
+    # that line disagreeing about what is stuck would be worse than either being
+    # wrong, because the board is what sends a reader here.
+    stuck = mailstat.needs_human(seen)
     if stuck:
         print("  needs a human:")
-        for k, v in sorted(stuck.items()):
-            print(f"    {k}: {v.get('reason') or v.get('detail')}")
+        for r in stuck:
+            print(f"    {r['key']}: {r['what'].upper()}"
+                  + (f" -- {r['why']}" if r["why"] else ""))
     print()
 
 def do_ack(a):

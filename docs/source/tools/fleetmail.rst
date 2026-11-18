@@ -183,6 +183,28 @@ delivers once.
 but never reached its session must be visible where a human looks, not only in a log.
 ``fleetmail inbox`` prints it plus anything quarantined or undelivered.
 
+The board carries the same two facts
+------------------------------------
+
+``needs a human`` is a thing somebody has to come and ask for, and the message it
+is about is one nobody has read. So :doc:`fleetboard` draws the same state as one
+line, from :mod:`fleet.mailstat`, which both tools read — one definition of what
+"stuck" means, since the board's line is what sends a reader here.
+
+It pairs that with whether the **timer** is still running, and the pairing is not
+decoration. The delivery record describes only mail that was fetched, so a fetcher
+that stopped produces a record with nothing wrong in it. ``fetch`` writes no trace
+at all when it finds no new mail, which is why the second fact is asked of systemd
+rather than of this tool.
+
+Two fields exist in the record for that line: ``sender`` and ``session``, written
+at delivery so the board can name who was not told without cutting a name back out
+of the filename this tool also built. They are absent from every record written
+before 2026-11-18 and are rendered as *unknown* there, never guessed. A quarantined
+message records a ``sender`` only when the message said who it was from — a
+quarantine includes the case where the ``from`` line *is* what was wrong, and
+writing down a claimed sender as a fact is what this tool exists not to do.
+
 A failed nudge is retried
 -------------------------
 

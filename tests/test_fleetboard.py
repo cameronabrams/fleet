@@ -11,6 +11,7 @@ two places on arrival.
 """
 import contextlib, datetime, io, json, os, textwrap, time, unittest
 from unittest import mock
+from fleet import mailstat
 from tests.support import APP, BASE_TOML, FakeConfig, load_tool
 
 
@@ -1756,6 +1757,36 @@ stale_after_h = 26
         self.assertEqual(state, "failed")
         self.assertEqual(data["error"], self.NOISY)
 
+    def test_a_session_name_on_the_mail_line_is_one_row(self):
+        """It arrives in the `to` field of a message another person's fleet
+        wrote. The address is checked before delivery, so a name with a newline
+        in it should not be in the record -- but "should not be there" is what
+        every other field on this board was assumed to be too, and the rule is
+        that the board decides the shape of what it prints."""
+        got = self.b.stuck_clause([{"what": "not delivered", "why": "",
+                                    "session": "beta\nEVIL", "sender": None}])
+        self.assertNotIn("\n", got)
+        self.assertIn("beta EVIL", got)
+
+    def test_a_sender_on_the_mail_line_is_one_row(self):
+        got = self.b.mail_line("ok", {"fetch": "ok", "fetch_info": {"age_s": 60},
+                                      "stuck": [], "received": 1,
+                                      "last_at": time.time() - 60, "last_age_s": 60,
+                                      "last_from": "south/coord\nand more"})
+        self.assertNotIn("\n", got)
+
+    def test_an_escape_sequence_in_a_mail_reason_does_not_survive(self):
+        """The board's own red must not be a thing another fleet can switch
+        off, and this is the one source on the board whose text was written by
+        somebody else's machine."""
+        got = self.b.mail_line("unknown", {"why": "\x1b[32m" + "x" * 500})
+        self.assertNotIn("\x1b", got)
+        self.assertLessEqual(len(self.plain(got)), 100)
+
+    def test_an_unreadable_mail_source_with_no_reason_still_says_something(self):
+        got = self.b.mail_line("unknown", {"why": "   "})
+        self.assertIn("no reason given", got)
+
 
 class AnAlarmNothingCanClearIsHowATrueOneGetsMissed(unittest.TestCase):
     """The header demanded a reboot of a machine that had just had one.
@@ -1897,3 +1928,239 @@ class AnAlarmNothingCanClearIsHowATrueOneGetsMissed(unittest.TestCase):
         head = self.head(self.draw(self.doc(reboot_needed=False), rebooted=True))
         self.assertNotIn("rebooted since the check", head)
         self.assertNotIn("REBOOT NEEDED", head)
+
+
+class MailIsASourceLikeAnyOther(unittest.TestCase):
+    """Cross-fleet mail on the board, and the half of it that is not optional.
+
+    Requested 2026-11-18. The board already carries the two sources whose failure
+    mode is silence -- a nightly backup that stopped, a check that stopped -- and
+    inbound mail is a third: a message from another fleet is written to a file and
+    then nudged into a pane, and when that nudge does not land the news exists on
+    this disk and its reader does not know.
+
+    The delivery record alone cannot say so, because it describes only mail that
+    was FETCHED. A fetcher that died leaves a perfectly clean record, so a line
+    reading that record alone would go quiet exactly when it stopped being true.
+    Both halves are on the line, always; `fleet/mailstat.py` holds the reasoning
+    and `tests/test_mailstat.py` tests the reader underneath this.
+    """
+    TOML = BASE_TOML + '''
+[mail]
+fleet = "testfleet"
+repo = "git@example.invalid:someone/mailbox.git"
+poll_minutes = 15
+'''
+
+    def setUp(self):
+        self.cfg = FakeConfig(toml=self.TOML)
+        self.b = load_tool("fleetboard")
+        self.b.C = dict.fromkeys(self.b.C, "")
+        self.b.C.update({"red": "<RED>", "dim": "<DIM>", "r": "<->"})
+        self.width(160)
+        # The default probe is replaced for EVERY test in this class, including
+        # the ones that do not care: a test that reached the real `systemctl`
+        # would report on this machine's own fleetmail timer, and pass or fail on
+        # what that happened to be doing at the time.
+        self.units = {"timer": {"LoadState": "loaded", "ActiveState": "active",
+                                "LastTriggerUSec": "@%d" % int(time.time() - 300)},
+                      "service": {"ExecMainStatus": "0",
+                                  "ExecMainExitTimestamp": "@%d" % int(time.time() - 290)}}
+        def probe(name, props, timeout=10):
+            return self.units["timer" if name.endswith(".timer") else "service"]
+        p = mock.patch.object(mailstat, "_systemctl", probe)
+        p.start()
+        self.addCleanup(p.stop)
+        self.addCleanup(self.cfg.close)
+
+    def width(self, n):
+        patch = mock.patch.dict(os.environ, {"COLUMNS": str(n), "LINES": "24"})
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def record(self, **recs):
+        with open(mailstat.delivered_path(self.cfg.state), "w") as f:
+            json.dump(recs, f)
+
+    def fine(self):
+        self.record(**{"mail/testfleet/m.md": {
+            "outcome": "delivered", "nudged": True, "sender": "south/coord",
+            "at": datetime.datetime.now().astimezone().isoformat()}})
+
+    def line(self):
+        return self.b.mail_line(*self.b.mail())
+
+    # -- the quiet case is still a line ---------------------------------------
+
+    def test_a_working_mailbox_still_prints(self):
+        """A stanza that appears only on a bad day cannot be told apart from one
+        that is not running. The same reasoning as the backup line and the kernel
+        field, and both of those were changed after a reader went looking for a
+        warning and could not tell which case the silence was."""
+        self.fine()
+        got = self.line()
+        self.assertIsNotNone(got)
+        self.assertIn("fetched", got)
+        self.assertIn("<DIM>", got)
+        self.assertNotIn("<RED>", got)
+
+    def test_the_quiet_line_names_who_wrote_last(self):
+        self.fine()
+        self.assertIn("last from south/coord", self.line())
+
+    def test_an_empty_mailbox_says_so_rather_than_nothing(self):
+        """No file at all is the ordinary state of a new correspondent. It must
+        not look like the state where the file cannot be read."""
+        got = self.line()
+        self.assertIn("nothing received yet", got)
+        self.assertIn("fetched", got)
+
+    def test_a_record_with_no_sender_is_not_given_one(self):
+        """Every record written before the producer stored the field. The name is
+        in the filename, and taking it back out of there would be a second
+        derivation of a fact the record already either has or does not."""
+        self.record(**{"mail/testfleet/m.md": {
+            "outcome": "delivered", "nudged": True,
+            "at": datetime.datetime.now().astimezone().isoformat()}})
+        got = self.line()
+        self.assertIn("last arrived", got)
+        self.assertNotIn("from", got)
+
+    # -- the half that is not optional ----------------------------------------
+
+    def test_a_dead_timer_is_not_a_quiet_mailbox(self):
+        """The defect this line exists to make impossible. The record is clean
+        because nothing has been fetched -- family A: the check cannot tell
+        itself from its target."""
+        self.fine()
+        self.units["timer"]["LastTriggerUSec"] = "@%d" % int(time.time() - 30 * 3600)
+        got = self.line()
+        self.assertIn("NO FETCH FOR", got)
+        self.assertIn("<RED>", got)
+
+    def test_the_outage_is_given_a_length_not_left_to_arithmetic(self):
+        self.fine()
+        self.units["timer"]["LastTriggerUSec"] = "@%d" % int(time.time() - 4 * 3600 - 600)
+        self.assertIn("NO FETCH FOR 4h 10m", self.line())
+
+    def test_no_timer_at_all_names_the_tool_that_makes_one(self):
+        self.units["timer"] = {"LoadState": "not-found", "ActiveState": "inactive"}
+        got = self.line()
+        self.assertIn("NO FETCH TIMER", got)
+        self.assertIn("fleetmail timer", got)
+        self.assertIn("<RED>", got)
+
+    def test_a_stopped_timer_is_not_a_missing_one(self):
+        self.units["timer"]["ActiveState"] = "inactive"
+        self.assertIn("NOT ACTIVE", self.line())
+
+    def test_a_failed_fetch_says_what_the_code_means(self):
+        """`exit 4` on a board is a number somebody has to go and look up, and
+        the one that matters most reads as success to anyone who assumes only 1
+        is failure."""
+        self.fine()
+        self.units["service"]["ExecMainStatus"] = "4"
+        got = self.line()
+        self.assertIn("THE LAST FETCH FAILED", got)
+        self.assertIn("the mailbox could not be reached", got)
+        self.assertIn("<RED>", got)
+
+    def test_a_timer_that_has_never_run_is_not_one_that_just_ran(self):
+        self.units["timer"]["LastTriggerUSec"] = ""
+        self.assertIn("has not run yet", self.line())
+
+    def test_a_probe_that_cannot_be_asked_is_unknown_not_fine(self):
+        with mock.patch.object(mailstat, "_systemctl", lambda *a, **k: None):
+            got = self.line()
+        self.assertIn("UNKNOWN", got)
+        self.assertIn("<RED>", got)
+
+    # -- mail that reached nobody ---------------------------------------------
+
+    def test_an_undelivered_message_names_the_session_that_was_not_told(self):
+        """A count says something is wrong; a name says who has not heard, which
+        is the action the line is asking for."""
+        self.record(**{"mail/testfleet/m.md": {
+            "outcome": "delivered", "nudged": False, "session": "beta",
+            "detail": "pane busy"}})
+        got = self.line()
+        self.assertIn("1 not delivered to beta", got)
+        self.assertIn("fleetmail inbox", got)
+        self.assertIn("<RED>", got)
+
+    def test_a_quarantined_message_is_counted_too(self):
+        self.record(**{"a.md": {"outcome": "quarantined", "reason": "unlisted fleet"},
+                       "b.md": {"outcome": "delivered", "nudged": False,
+                                "session": "beta"}})
+        got = self.line()
+        self.assertIn("1 not delivered to beta", got)
+        self.assertIn("1 quarantined", got)
+
+    def test_stuck_mail_does_not_take_the_fetch_clause_with_it(self):
+        """Both halves travel. A reader looking at an undelivered message still
+        needs to know whether anything is bringing more in -- and here it is
+        not, which is very likely why it is stuck."""
+        self.record(**{"a.md": {"outcome": "delivered", "nudged": False,
+                                "session": "beta"}})
+        self.units["timer"]["LastTriggerUSec"] = "@%d" % int(time.time() - 30 * 3600)
+        got = self.line()
+        self.assertIn("not delivered", got)
+        self.assertIn("NO FETCH FOR", got)
+
+    def test_an_unreadable_record_is_unknown_with_no_count_beside_it(self):
+        """A fetch age printed next to UNKNOWN reads as reassurance about the
+        question that could not be answered."""
+        with open(mailstat.delivered_path(self.cfg.state), "w") as f:
+            f.write("{not json")
+        got = self.line()
+        self.assertIn("mail: UNKNOWN", got)
+        self.assertNotIn("fetched", got)
+        self.assertIn("not readable JSON", got)
+
+    # -- configuration --------------------------------------------------------
+
+    def test_no_mailbox_configured_draws_no_line(self):
+        """Silence by choice, like the backup: a fleet with no correspondents
+        needs no section, and an empty line about mail it does not exchange is
+        a row off the bottom of a short pane for nothing."""
+        cfg = FakeConfig(toml=BASE_TOML)
+        self.addCleanup(cfg.close)
+        b = load_tool("fleetboard")
+        self.assertEqual(b.mail(), (None, None))
+        self.assertIsNone(b.mail_line(*b.mail()))
+
+    def test_a_broken_mail_section_is_unknown_not_silence(self):
+        """Unconfigured and unreadable are different sentences. Only the first
+        is a reason to say nothing."""
+        with open(os.path.join(self.cfg.config, "fleet.toml"), "w") as f:
+            f.write(textwrap.dedent(BASE_TOML).format(state=self.cfg.state)
+                    + '\n[mail]\nfleet = "NOT A FLEET NAME"\nrepo = "x"\n')
+        state, data = self.b.mail()
+        self.assertEqual(state, "unknown")
+        self.assertIn("UNKNOWN", self.b.mail_line(state, data))
+
+    def test_the_configuration_is_re_read_on_every_draw(self):
+        """`--watch` outlives the fifteen-minute timer it reports on, and a
+        mailbox configured after the board started must appear."""
+        cfg = FakeConfig(toml=BASE_TOML)
+        self.addCleanup(cfg.close)
+        b = load_tool("fleetboard")
+        self.assertEqual(b.mail(), (None, None))
+        with open(os.path.join(cfg.config, "fleet.toml"), "w") as f:
+            f.write(textwrap.dedent(self.TOML).format(state=cfg.state))
+        state, _ = b.mail()
+        self.assertIsNotNone(state)
+
+    def test_the_line_is_above_the_session_table(self):
+        """What can scroll off a short pane should be the thing that does not
+        change. This one changes every fifteen minutes."""
+        self.fine()
+        out = io.StringIO()
+        with mock.patch.object(self.b, "panes", lambda: {}), \
+             mock.patch.object(self.b, "agents", lambda: {}), \
+             mock.patch.object(self.b, "load_cache", lambda: None), \
+             contextlib.redirect_stdout(out):
+            self.b.draw()
+        text = out.getvalue()
+        self.assertIn("mail:", text)
+        self.assertLess(text.index("mail:"), text.index("session"), text)

@@ -50,6 +50,9 @@ Sources, and what each costs:
    * - ``/proc`` + ``readlink``
      - 0 ms
      - which binary each session runs, and which one is installed
+   * - mail record + ``systemctl``
+     - 25 ms
+     - cross-fleet mail that reached nobody, and whether anything still fetches
 
 The two slow ones are cached under ``<state>/cache/board.json`` and shown **with
 their age, never as current**: a value on this screen is evidence as of a time.
@@ -250,6 +253,52 @@ unparsable file in it is counted beside the readable ones. A directory that is
 entirely unreadable news must not read as nothing pending — which it did until a
 test was written for exactly that case, because the first one keyed on the record
 count and a readable record was sitting beside the broken one.
+
+Mail from another fleet
+-----------------------
+
+The same failure one fleet over, and it draws on the same rule. A message from a
+correspondent is fetched into a file and then **nudged** into the recipient's
+pane; when that nudge does not land, the news is on this disk and its reader does
+not know. Beside it sits the one line that says whether anything is still
+bringing mail in::
+
+   mail: last from south/coord 3h ago; fetched 7m ago
+   mail: 1 not delivered to beta, 1 quarantined; fetched 7m ago -- fleetmail inbox
+   mail: last from south/coord 3h ago; NO FETCH FOR 1d 4h
+   mail: nothing received yet; NO FETCH TIMER -- fleetmail timer
+
+**Both halves are always on the line, and that is the point of the line.** The
+delivery record under ``<state>/mail-delivered.json`` describes only mail that
+was *fetched*, so a fetcher that died leaves a perfectly clean record behind it —
+nothing quarantined, nothing undelivered, because nothing arrived. A line that
+read the record alone would fall silent at the moment it stopped being true.
+That is family **A** in :doc:`../checks-that-reassure`: the check cannot
+distinguish itself from its target.
+
+So the second half is asked of **systemd** rather than of :doc:`fleetmail`, which
+writes no trace at all when a fetch finds no new mail. The timer records its last
+trigger whatever the fetch found, and asking it also means the line still reports
+on a *deployed* copy of ``fleetmail`` older than the board — which is the normal
+arrangement, since the timer runs a pinned checkout rather than the working tree.
+Two ``systemctl --user show`` calls, about 25 ms.
+
+Staleness is checked **before** the exit code. A timer that stopped triggering
+leaves its last exit code sitting there unchanged, so a fetcher dead for a day
+would otherwise report the cheerful status of whatever it last did. The window is
+three polls and never less than half an hour: one missed tick is a suspend or a
+slow boot, three in a row is a fetcher that is not coming back, and a line that is
+usually red is one nobody reads on the day it is true.
+
+An exit code is translated rather than printed bare. ``4`` is *the mailbox could
+not be reached* — which reads as success to anyone who assumes only ``1`` is
+failure, and that is the one reading this line must not allow.
+
+The quiet case prints too, for the reason the backup line does. And a delivery
+record that cannot be read draws ``mail: UNKNOWN`` **with no fetch age beside
+it**: an age there would read as reassurance about the question that could not be
+answered. A fleet with no ``[mail]`` section draws no line at all — silence by
+choice, the one absence here that is not a failure.
 
 A document the machine has moved past
 -------------------------------------

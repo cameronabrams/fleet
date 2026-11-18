@@ -30,6 +30,64 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Added
+
+- **`fleetboard` carries cross-fleet mail**, as one line beside the backup and the
+  update count:
+
+      mail: last from south/coord 3h ago; fetched 7m ago
+      mail: 1 not delivered to beta, 1 quarantined; fetched 7m ago -- fleetmail inbox
+      mail: last from south/coord 3h ago; NO FETCH FOR 1d 4h
+      mail: nothing received yet; NO FETCH TIMER -- fleetmail timer
+
+  It is the same failure the undelivered-results line answers, one fleet over. A
+  message from a correspondent is written to a file and then nudged into a pane; a
+  nudge that does not land leaves the news on this disk and its reader not knowing.
+  `fleetmail inbox` has always been able to say so, to whoever went and asked.
+
+  **Both halves are always on the line, and that is the whole design.** The
+  delivery record describes only mail that was *fetched*, so a fetcher that died
+  leaves a record with nothing wrong in it — nothing quarantined, nothing
+  undelivered, because nothing arrived. A line reading that record alone would go
+  quiet at the moment it stopped being true: family A in
+  `docs/checks-that-reassure.md`, where the check cannot distinguish itself from
+  its target. So the second half is asked of **systemd**, which records the timer's
+  last trigger whatever the fetch found — `fleetmail fetch` itself writes no trace
+  at all when there is no new mail. Asking the unit rather than the tool also means
+  the line still reports on a *deployed* copy of `fleetmail` older than the board,
+  which is the normal arrangement.
+
+  Staleness is checked **before** the exit code: a timer that stopped triggering
+  leaves its last exit code behind unchanged, so a fetcher dead for a day would
+  otherwise report the cheerful status of whatever it last did. The window is three
+  polls, never under half an hour. An exit code is translated rather than printed
+  bare — `4` is *the mailbox could not be reached*, which reads as success to
+  anyone who assumes only `1` is failure.
+
+  Costs two `systemctl --user show` calls, about 25 ms. Nothing on this path pulls
+  the mailbox, opens a socket, or parses a message.
+
+- **`fleet.mailstat`**, which holds that reading, and is now the single definition
+  of where the delivery record lives, how it is read, and what "needs a human"
+  means. `fleetmail inbox` and the board had been two answers to the last of those,
+  and the board's line is what sends a reader to the tool.
+
+- **`fleetmail` records a message's `sender` and `session`** at delivery, so the
+  board can name who was not told rather than cutting a name back out of the
+  filename the same tool built. Absent from every record written before this, and
+  rendered as unknown there — a quarantined message records a `sender` only when the
+  message said who it was from, since a quarantine includes the case where the
+  `from` line is what was wrong.
+
+### Fixed
+
+- `fleet.mailstat.fetch` resolves its systemd probe at call time rather than as a
+  default argument. A default binds at import, so a test patching the module
+  attribute would have left it pointing at the original and run `systemctl` against
+  the real machine — passing or failing on what that machine's own timer happened
+  to be doing, with every test around it still green. Found while writing those
+  tests; `TheProbeIsReachableByATest` is the guard.
+
 ## [0.7.0] - 2026-11-16
 
 ### Added

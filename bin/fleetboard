@@ -14,6 +14,8 @@ and this is not a way back to it. Sources:
   tmux            9 ms   panes, windows, silence flag (monitor-silence)
   claude agents 177 ms   name, status, pid, cwd -- the authority on names
   /proc + readlink 0 ms  which binary each session runs, and which is installed
+  mail state + systemd  25 ms  cross-fleet mail that reached nobody, and whether
+                         anything is still fetching it
   fleetwatch    3.6 s    cluster work and watcher liveness  (--full)
   fleetcontext  2.2 s    context size per session           (--full)
 
@@ -30,6 +32,7 @@ import datetime, json, os, re, shutil, subprocess, sys, time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import kernels
+from fleet import mailstat
 from fleet import pending
 from fleet import version_flag
 from fleet import versions
@@ -497,6 +500,121 @@ def updates():
     return read_updates(cfg["status"], cfg["stale_hours"])
 
 
+def mail():
+    """(state, data) for cross-fleet mail, or (None, None) when no `[mail]` is
+    configured -- silence by choice, like the backup.
+
+    Re-read on every call for the reason `updates` and `parked` are: a `--watch`
+    board outlives the fifteen-minute timer that is the thing being reported on,
+    and a mail line frozen at the moment the board started would say a fetcher is
+    alive for as long as the pane is left up.
+    """
+    try:
+        m = fc.mail(fc.load())
+    except Exception as e:
+        return "unknown", {"why": "the [mail] configuration could not be read (%s)" % e}
+    if not m:
+        return None, None
+    return mailstat.read(m, STATE)
+
+
+def fetch_clause(f_state, f):
+    """The half of the mail line that says whether anything is still fetching,
+    and (clause, is_alarm).
+
+    It is on the line even when the other half is an alarm, and the other half is
+    on the line even when this one is. They are not alternatives: a clean
+    delivery record is exactly what a dead fetcher produces, so a line that
+    showed only the record would go quiet at the moment the fetching stopped, and
+    one that showed only the timer would report a healthy fetcher beside mail
+    sitting undelivered on this disk.
+    """
+    if f_state == "ok":
+        return "fetched %s ago" % age(time.time() - f["age_s"]), False
+    if f_state == "stale":
+        return ("NO FETCH FOR %s" % short_duration(f["age_s"])), True
+    if f_state == "never":
+        return "the fetch timer has not run yet", True
+    if f_state == "failed":
+        when = " %s ago" % age(f["ran"]) if f.get("ran") else ""
+        return ("THE LAST FETCH FAILED%s (exit %d: %s)"
+                % (when, f["code"], oneline(f.get("meaning"), lo=24)), True)
+    if f_state == "off":
+        return "the fetch timer is installed and NOT ACTIVE", True
+    if f_state == "none":
+        # The remedy clause that follows names `fleetmail timer`, which is the
+        # whole of what a reader does about this. Spelling out that mail then
+        # arrives only by hand put the line over 110 characters, and a row that
+        # wraps on a narrow pane is a row read as noise.
+        return "NO FETCH TIMER", True
+    why = oneline(f.get("why"), lo=24) or "no reason given"
+    return "the fetch is UNKNOWN -- %s" % why, True
+
+
+def stuck_clause(stuck):
+    """`1 not delivered to beta, 1 quarantined`, or "" when nothing is stuck.
+
+    The session is NAMED, because that is the whole action the line asks for: a
+    count tells a reader something is wrong and a name tells them who has not
+    heard. `?` for a record written before the producer stored it -- never a
+    guess taken back out of the filename.
+    """
+    if not stuck:
+        return ""
+    out = []
+    undeliv = [r for r in stuck if r["what"] == "not delivered"]
+    if undeliv:
+        who = sorted({oneline(r.get("session"), lo=12) or "?" for r in undeliv})
+        out.append("%d not delivered to %s" % (len(undeliv), ", ".join(who)))
+    quar = [r for r in stuck if r["what"] == "quarantined"]
+    if quar:
+        out.append("%d quarantined" % len(quar))
+    return ", ".join(out)
+
+
+def mail_line(m_state, m_data):
+    """One line about cross-fleet mail, or None when no mailbox is configured.
+
+    Printed when it is FINE as well as when it is not, for the reason the backup
+    line is: a stanza that appears only on a bad day cannot be told apart from
+    one that is not running, and this is a source whose entire failure mode is
+    looking quiet.
+    """
+    if m_state is None:
+        return None
+    if m_state == "unknown" and "stuck" not in (m_data or {}):
+        # The delivery record itself could not be read. Nothing else on this line
+        # would be about the question a reader is asking, and a fetch age beside
+        # it would read as reassurance.
+        head = "  mail: UNKNOWN -- "
+        why = oneline((m_data or {}).get("why"), head) or "no reason given"
+        return f"  {C['red']}mail: UNKNOWN -- {why}{C['r']}"
+    f = m_data.get("fetch_info") or {}
+    tail, tail_bad = fetch_clause(m_data.get("fetch"), f)
+    stuck = stuck_clause(m_data.get("stuck"))
+    if stuck:
+        head, remedy = stuck, "fleetmail inbox"
+    elif m_data.get("last_at") is not None:
+        # Named when the record says, and not named at all when it does not --
+        # rather than a placeholder sender, which on a line whose job is to say
+        # mail is flowing would be the one field a reader takes on trust.
+        frm = oneline(m_data.get("last_from"), lo=20)
+        when = age(time.time() - m_data["last_age_s"])
+        head = ("last from %s %s ago" % (frm, when) if frm
+                else "last arrived %s ago" % when)
+        remedy = ""
+    else:
+        # Nothing has ever arrived. Said plainly rather than left off: an empty
+        # mailbox and a mailbox this cannot read must not look the same, and the
+        # fetch clause after it is what says which one this is.
+        head, remedy = "nothing received yet", ""
+    if not remedy and m_data.get("fetch") == "none":
+        remedy = "fleetmail timer"
+    color = C['red'] if (stuck or tail_bad) else C['dim']
+    end = f"{C['dim']} -- {remedy}{C['r']}" if remedy else ""
+    return f"  {color}mail: {head}; {tail}{C['r']}{end}"
+
+
 def parked():
     """name -> {cwd, since} for sessions DECLARED parked, or None if unreadable.
 
@@ -855,6 +973,12 @@ def draw(full=False, auto=False, show_parked=False):
     # Above the updates count: an undelivered result is news that a session is
     # missing right now, where a package count is a chore that keeps.
     line = pending_line()
+    if line:
+        status.append(line)
+    # Below the undelivered results and above the updates count, on the same
+    # rule: mail that reached nobody is a session missing news right now, where a
+    # package count is a chore that keeps. It is the same failure one fleet over.
+    line = mail_line(*mail())
     if line:
         status.append(line)
     line = updates_line(u_state, u_data)
