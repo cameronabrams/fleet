@@ -155,9 +155,14 @@ Report sections
 ``local work whose process has exited``
    a ``--local`` registration whose process is gone — the normal end of a local
    job, and not a claim that it succeeded
-``finished``
-   the registered process is gone and ``sacct`` shows only terminal states — the
-   normal end of a watcher; clear it with ``fleetregister --clear``
+``swept``
+   the registered process is gone and ``sacct`` says the job ``COMPLETED``. The
+   registration has been **removed**; this names what went, and there is nothing
+   to do
+``ended, and not cleanly``
+   the registered process is gone and ``sacct`` shows terminal states that are
+   not a plain ``COMPLETED``. The owner decides what it means; clear it with
+   ``fleetregister --clear``
 ``WorkDir not in [owners]``
    add a row to configuration
 ``held``
@@ -329,9 +334,15 @@ Top-level keys:
        in the ``!!`` block — see *Why an unaccountable dead registration is not
        an alarm*.
    * - ``finished_watchers``
-     - registrations whose process exited *because* the job ended — the normal end
-       of a watcher, reported separately so that a campaign ending does not train
-       everyone to ignore the dead list
+     - registrations whose process exited *because* the job ended, reported
+       separately so that a campaign ending does not train everyone to ignore the
+       dead list. **Since 2026-11-19 a plain ``COMPLETED`` is not here** — it has
+       been swept; see ``swept_watchers``. What is left is the rows with a state
+       somebody has to read.
+   * - ``swept_watchers``
+     - registrations removed by this run: the watcher had exited and sacct
+       called the job ``COMPLETED``. Each row is the registration as it was, so a
+       caller can say what went. Present and empty on a run that swept nothing.
    * - ``delivery``
      - undelivered-nudge rows; ``silent`` is the one that means a session was never
        told and no push went out
@@ -361,6 +372,39 @@ reachability. The display says ``no [cluster] configured in fleet.toml -- no
 cluster work to watch.`` A registered watcher on such a machine stays in
 ``dead_watchers``, never ``finished_watchers``: there is no sacct to prove its
 job ended. Several clusters with none named is still an error.
+
+A settled registration is swept, not reported
+`````````````````````````````````````````````
+
+Every run removes one thing and only that one: the registration of a watcher that
+has exited over a job sacct calls ``COMPLETED``. Such a row has no decision
+left in it. It was kept anyway until 2026-11-19, listed with the command that
+removes it — so a condition nobody had to think about travelled to a screen, and a
+human was eventually asked to relay ``fleetregister --clear`` to somebody. The
+cost was never the keystroke. It was that the line looked exactly like the ones
+that do need a person, and :doc:`fleetboard` painted it the same color.
+
+**Only an unmixed ``COMPLETED`` is swept.** ``_states`` is a joined *set*, so a job
+whose tasks ended differently reads ``COMPLETED,TIMEOUT`` and stays. Every other
+terminal state — ``TIMEOUT``, ``FAILED``, ``CANCELLED``, ``OUT_OF_MEMORY``,
+``NODE_FAIL`` — is news for the owner, and the registration is what keeps it on the
+board until somebody has seen it. Sweeping on *terminal* rather than on the one good
+state would erase precisely the rows this report exists to raise, and would do it
+silently.
+
+It is not behind a flag, because a flag needs somebody to run it and "somebody has
+to run the cleanup" is the condition being removed. It is not in a timer, because
+the proof it needs — that sacct called the job ``COMPLETED`` — is computed by
+this run and nowhere else. It cannot fire on a failed cluster query:
+``finished_watchers`` is empty unless the scheduler answered, so an unreachable
+cluster sweeps nothing. Liveness is not re-decided: ``registered()`` has already
+falsified the pid against its starttime, the same pair ``fleetregister --clear``
+tests, and a watcher re-armed for the same job registers under its own pid and so
+its own file.
+
+What goes is **said**, not done quietly. A tool that deletes without saying so
+teaches a reader that files go missing on their own, and the next real loss then
+reads as housekeeping.
 
 Why some keys begin with an underscore
 ``````````````````````````````````````

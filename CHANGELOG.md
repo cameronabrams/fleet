@@ -30,6 +30,66 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Changed
+
+- **A `fleetboard` warning is painted by who must act, not by how bad it
+  sounds.** Red with a `!` means nobody but the person reading it; a named
+  session in front of the sentence means the line is addressed to that session,
+  and carries the command that settles it; a dim `?` is a source that could not
+  answer.
+
+  Eight conditions printed one identical red `!`, and exactly **one** of them —
+  a second client attached to the tmux server — was the reader's to act on. The
+  rest were bookkeeping with a known one-line remedy and no owner, so the only
+  reader became the owner by default: read the board, relay the command to a
+  session. A screen that cannot say who a line is for addresses every line to
+  whoever is looking.
+
+  This is `docs/checks-that-reassure.md` pointed the other way. That document is
+  about a check that fails toward calm; this is a check that is loud whatever
+  happens, and the cost is the same either way — **a line that is usually red is
+  one nobody reads on the day it is true.** The rule was already written down
+  three times in this repository, for the mail window, the backup line and the
+  update check. It had never been applied to the one place that prints `!`.
+
+  A note from a cache written before notes carried an audience is painted loud.
+  `--watch` reads a cache up to ten minutes old and a board can be upgraded
+  under a running one, so the absent field is unknown — and an unknown here means
+  the loud reading. Everything printed goes through `oneline` now, the session
+  name included: both halves come out of another tool's JSON, and the board's
+  rule for foreign text does not stop applying because the foreigner is ours.
+
+- **`fleetwatch --json`: a job that ended `COMPLETED` is no longer in
+  `finished_watchers`.** It has been swept, and the row is in the new
+  `swept_watchers` instead. A caller that treated `finished_watchers` as "every
+  watcher that exited normally" now sees only the ones with a state somebody has
+  to read. `swept_watchers` is present and empty on a run that swept nothing.
+
+### Added
+
+- **`fleetwatch` sweeps a settled registration rather than reporting it.** Every
+  run removes one thing and only that one: the registration of a watcher that
+  has exited over a job sacct calls `COMPLETED`. Such a row has no decision left
+  in it. It was kept anyway, listed with the command that removes it — so a
+  condition nobody had to think about travelled to a screen, and a human was
+  eventually asked to relay `fleetregister --clear` to somebody.
+
+  **Only an unmixed `COMPLETED` is swept.** `_states` is a joined set, so a job
+  whose tasks ended differently reads `COMPLETED,TIMEOUT` and stays. Every other
+  terminal state — `TIMEOUT`, `FAILED`, `CANCELLED`, `OUT_OF_MEMORY`,
+  `NODE_FAIL` — is news for the owner, and the registration is what keeps it on
+  the board until somebody has seen it. Sweeping on *terminal* rather than on the
+  one good state would erase precisely the rows the report exists to raise, and
+  would do it silently.
+
+  Not behind a flag, because a flag needs somebody to run it and "somebody has to
+  run the cleanup" is the condition being removed. Not in a timer, because the
+  proof it needs is computed by this run and nowhere else. It cannot fire on a
+  failed cluster query: `finished_watchers` is empty unless the scheduler
+  answered. What goes is said, not done quietly — a tool that deletes without
+  saying so teaches a reader that files go missing on their own.
+
+
 ## [0.8.0] - 2026-11-18
 
 ### Added

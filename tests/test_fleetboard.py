@@ -45,7 +45,9 @@ class SourceFailureIsNeverAPass(unittest.TestCase):
         with self.watch_json({"cluster_ok": False, "jobs": []}):
             jobs, notes = self.b.jobs_and_notes()
         self.assertIsNone(jobs, "a failed cluster query must be UNKNOWN, not []")
-        self.assertTrue(any("UNKNOWN" in n or "unknown" in n for n in notes), notes)
+        self.assertTrue(any("UNKNOWN" in n["text"] for n in notes), notes)
+        self.assertEqual([n["level"] for n in notes], [self.b.UNKNOWN],
+                         "an outage nobody here can end is an unknown, not a job")
 
     def test_live_work_with_no_watcher_is_still_reported(self):
         with self.watch_json({"cluster_ok": True,
@@ -53,7 +55,9 @@ class SourceFailureIsNeverAPass(unittest.TestCase):
                                         "watched_by": []}]}):
             jobs, notes = self.b.jobs_and_notes()
         self.assertEqual(jobs, [{"job": "1", "tasks": 4, "owner": "a", "watched": False}])
-        self.assertIn("live work with no watcher", notes)
+        self.assertEqual(notes, [{"text": "live work with no watcher",
+                                  "level": self.b.FLEET, "who": "a"}],
+                         "the owner arms the watcher, so the note names the owner")
 
     def test_a_job_that_ended_badly_is_surfaced(self):
         """It is over, so it holds no watcher and appears in no live row. The
@@ -64,7 +68,8 @@ class SourceFailureIsNeverAPass(unittest.TestCase):
                               "finished_watchers": [{"session": "s", "job": "9",
                                                      "_states": "FAILED"}]}):
             _, notes = self.b.jobs_and_notes()
-        self.assertTrue(any("ended FAILED" in n for n in notes), notes)
+        self.assertEqual(notes, [{"text": "job 9 ended FAILED",
+                                  "level": self.b.FLEET, "who": "s"}], notes)
 
     def test_a_completed_job_is_not_an_alarm(self):
         """Crying about every finished campaign trains everyone to ignore it."""
@@ -1104,8 +1109,23 @@ class AFailedClusterQueryCarriesItsLength(unittest.TestCase):
         self.cfg.close()
 
     def notes(self, payload):
+        """Just the sentences. The audience of this one note is fixed and is
+        asserted on its own below, so every length case need not repeat it."""
         with mock.patch.object(self.b, "run_json", lambda *a, **k: payload):
-            return self.b.jobs_and_notes()[1]
+            return [n["text"] for n in self.b.jobs_and_notes()[1]]
+
+    def levels(self, payload):
+        with mock.patch.object(self.b, "run_json", lambda *a, **k: payload):
+            return [n["level"] for n in self.b.jobs_and_notes()[1]]
+
+    def test_an_outage_is_an_unknown_and_not_an_alarm(self):
+        """Nobody at this keyboard brings a cluster back, and the sentence
+        already says what it is: the work column is unknown. Painting it in the
+        same red as a thing to go and do is how the red stops meaning
+        anything."""
+        self.assertEqual(self.levels({"cluster_ok": False,
+                                      "cluster_down_for_s": 4800}),
+                         [self.b.UNKNOWN])
 
     def test_the_note_says_how_long(self):
         n = self.notes({"cluster_ok": False, "cluster_down_for_s": 4800})
@@ -1245,7 +1265,9 @@ class NoClusterConfigured(unittest.TestCase):
             jobs, notes = self.b.jobs_and_notes()
         self.assertIn("fleetwatch", self.calls)
         self.assertEqual(jobs, [], "no cluster declared: no work, not None")
-        self.assertIn("a registered watcher is dead", notes)
+        self.assertEqual([(n["text"], n["level"], n["who"]) for n in notes],
+                         [("a registered watcher is dead -- its job may be "
+                           "running unwatched", self.b.FLEET, "alpha")])
 
     def test_the_work_column_is_blank_and_the_stamp_says_why(self):
         import re
@@ -1743,6 +1765,26 @@ stale_after_h = 26
         self.assertTrue(line.endswith("<->"), repr(line[-12:]))
         self.assertNotIn("\x1b", line)
 
+    def test_a_warnings_text_is_one_row(self):
+        """A note is built by the board out of another tool's JSON. Being one of
+        ours is not evidence about shape: `fleetwatch` reads registration files
+        that anything with the state directory can write."""
+        line = self.b.note_line({"text": self.NOISY, "level": self.b.FLEET,
+                                 "who": "alpha"})
+        self.assertEqual(line.count("\n"), 0, "the board grew a row:\n" + line)
+        self.assertLessEqual(len(self.plain(line)), 100, line)
+
+    def test_a_warnings_session_name_is_one_row(self):
+        line = self.b.note_line({"text": "job 9 ended TIMEOUT",
+                                 "level": self.b.FLEET, "who": "alpha\nEVIL"})
+        self.assertEqual(line.count("\n"), 0, "the board grew a row:\n" + line)
+        self.assertIn("alpha EVIL", line)
+
+    def test_a_warning_cannot_switch_off_the_boards_own_color(self):
+        line = self.b.note_line({"text": "bad \x1b[0m\x1b[32m", "level": self.b.MINE})
+        self.assertTrue(line.endswith("<->"), repr(line[-12:]))
+        self.assertNotIn("\x1b", line)
+
     # -- and not before the draw ----------------------------------------------
 
     def test_the_reader_keeps_what_the_file_actually_said(self):
@@ -2164,3 +2206,130 @@ poll_minutes = 15
         text = out.getvalue()
         self.assertIn("mail:", text)
         self.assertLess(text.index("mail:"), text.index("session"), text)
+
+
+class AWarningIsPaintedByWhoseItIs(unittest.TestCase):
+    """The complaint that produced this: "I fail to see the value of the
+    bang-red warnings -- they just cause me anxiety. When they appear I just ask
+    the coordinator to clear them -- why do I have to do that?"
+
+    That is a measurement, not a mood. If the remedy for a line is to relay a
+    command to somebody else, the line was never addressed to the person reading
+    it. Eight conditions printed one identical red `!`, and exactly one of them
+    -- a second client on the tmux server -- was the reader's to act on; the rest
+    were bookkeeping with a known command and no owner, so the only reader
+    became the owner by default.
+
+    So the paint follows the AUDIENCE and nothing else. Not how alarming the
+    sentence sounds, and not how bad the underlying event is: a job that ended
+    FAILED is worse news than a second terminal, and it is still the owning
+    session's to decide about. This is the rule already written three times in
+    this repository, pointed the other way -- a line that is usually red is one
+    nobody reads on the day it is true."""
+
+    def setUp(self):
+        self.cfg = FakeConfig(toml=BASE_TOML, briefs=("alpha",))
+        self.b = load_tool("fleetboard")
+        self.b.C = dict.fromkeys(self.b.C, "")
+        self.b.C.update({"red": "<RED>", "yel": "<YEL>", "dim": "<DIM>", "r": "<->"})
+        self.addCleanup(self.cfg.close)
+
+    def test_the_readers_own_line_keeps_the_bang_and_the_red(self):
+        """What is left wearing it: a second client attached to this tmux
+        server. No session can close someone else's terminal and no command here
+        should try."""
+        line = self.b.note_line(self.b.note("more than one client is attached "
+                                            "to the tmux server", self.b.MINE))
+        self.assertIn("<RED>", line)
+        self.assertIn("! more than one client", line)
+
+    def test_a_sessions_line_names_the_session_and_drops_the_bang(self):
+        line = self.b.note_line(self.b.note("job 9 ended TIMEOUT", self.b.FLEET,
+                                            who="alpha"))
+        self.assertIn("<YEL>", line)
+        self.assertNotIn("<RED>", line)
+        self.assertNotIn("!", line)
+        self.assertIn("alpha: job 9 ended TIMEOUT", line)
+
+    def test_an_unknown_is_dim_and_marked_with_the_boards_own_question_mark(self):
+        """`?` is this board's word for a source that could not answer, used
+        everywhere else on the screen. An outage nobody at this keyboard can end
+        is that, not a thing to go and do."""
+        line = self.b.note_line(self.b.note("cluster query failed for 2h -- live "
+                                            "work is UNKNOWN, not none",
+                                            self.b.UNKNOWN))
+        self.assertIn("<DIM>", line)
+        self.assertNotIn("<RED>", line)
+        self.assertIn("? cluster query failed", line)
+
+    def test_a_fleet_note_with_no_owner_has_no_empty_label(self):
+        """A lost nudge belongs to whichever session was not told, and sometimes
+        that is none of them. `: ` with nothing in front of it reads as a session
+        whose name failed to render."""
+        line = self.b.note_line(self.b.note("a nudge never arrived", self.b.FLEET))
+        self.assertNotIn(": a nudge", line)
+        self.assertIn("<YEL>a nudge never arrived", line)
+
+    def test_a_note_from_an_older_cache_is_painted_loud(self):
+        """Caches outlive the code that wrote them -- `--watch` reads one up to
+        ten minutes old, and a board can be upgraded under a running one. A note
+        with no audience is a note from before audiences, and the absent field is
+        UNKNOWN: a board must not quieten a warning on the strength of a field
+        that was not there to say it could be quietened."""
+        line = self.b.note_line("a job died")
+        self.assertIn("<RED>", line)
+        self.assertIn("! a job died", line)
+
+    def test_every_note_in_the_cache_goes_through_the_same_paint(self):
+        cache = {"at": time.time(), "notes": [
+            self.b.note("mine", self.b.MINE),
+            self.b.note("theirs", self.b.FLEET, who="alpha"),
+            self.b.note("nobody", self.b.UNKNOWN)]}
+        out = "\n".join(self.b.cache_lines(cache, True, False))
+        self.assertIn("<RED>! mine", out)
+        self.assertIn("<YEL>alpha: theirs", out)
+        self.assertIn("<DIM>? nobody", out)
+
+    def test_an_undelivered_result_is_the_sessions_and_still_names_the_tool(self):
+        """Naming the actor without naming the act leaves the reader where they
+        were. The session is who it is for; `fleetnudge --pending` is what
+        clears it."""
+        from fleet import pending
+        pending.write(self.cfg.state, "alpha", "123456", "the result", "why", 4)
+        line = self.b.pending_line()
+        self.assertIn("<YEL>alpha: 1 undelivered result", line)
+        self.assertNotIn("<RED>", line)
+        self.assertIn("fleetnudge --pending", line)
+
+    def test_an_unreadable_pending_directory_is_an_unknown(self):
+        from fleet import pending
+        d = pending.pending_dir(self.cfg.state)
+        os.makedirs(d)
+        os.chmod(d, 0)
+        try:
+            line = self.b.pending_line()
+        finally:
+            os.chmod(d, 0o700)
+        if os.geteuid() == 0:
+            self.skipTest("root reads an unreadable directory")
+        self.assertIn("<DIM>? ", line)
+        self.assertIn("UNKNOWN", line)
+
+    def test_one_session_with_three_stale_rows_is_named_once(self):
+        """Three rows for one session are one session's problem. Listing it
+        three times reads as three, and a reader counts names."""
+        rows = [{"session": "beta"}, {"session": "alpha"}, {"session": "beta"}]
+        self.assertEqual(self.b._sessions(rows), "alpha, beta")
+
+    def test_a_row_with_no_session_contributes_no_empty_name(self):
+        self.assertEqual(self.b._sessions([{"session": None}, {"session": "a"}]), "a")
+
+    def test_a_note_that_is_not_text_at_all_still_draws_a_board(self):
+        """The cache is JSON in a shared state directory. A note that is null or
+        a number must not raise out of the draw: a board that cannot draw is the
+        one outcome worse than a board that draws something ugly."""
+        for junk in (None, 7, ["a", "b"], {"no_text_key": 1}):
+            with self.subTest(junk):
+                line = self.b.note_line(junk)
+                self.assertEqual(line.count("\n"), 0)
+                self.assertIn("<RED>", line)

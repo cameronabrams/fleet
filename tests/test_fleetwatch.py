@@ -1000,3 +1000,107 @@ class AWatchOnLocalWorkIsNotClusterWork(Base):
         self.assertIn("fleetregister --local", out, "the local reading")
         self.assertIn("fleetregister --clear", out, "and the way to end it")
         self.assertNotIn("All live work is watched", out)
+
+
+class ASettledRegistrationIsSweptRatherThanReported(Base):
+    """The condition this removes is not a bug in the report -- the report was
+    right. It is that the report had no owner, so it reached the only reader
+    there is. A registration whose watcher has exited over a job sacct calls
+    COMPLETED has nothing in it for anyone to decide: it was kept, listed with
+    the command that removes it, and a human was eventually asked to relay that
+    command to a session. The cost is not the keystroke. It is that the line
+    looked exactly like the ones that do need a person."""
+
+    def reg(self, tmp, session, job, states, pid=1):
+        f = os.path.join(tmp, "%s-%s-%s.json" % (session, job, pid))
+        with open(f, "w") as fh:
+            json.dump({"session": session, "job": job, "pid": pid}, fh)
+        return {"session": session, "job": job, "pid": pid,
+                "_file": f, "_states": states}
+
+    @contextlib.contextmanager
+    def dir(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        try:
+            yield d
+        finally:
+            import shutil; shutil.rmtree(d, ignore_errors=True)
+
+    def test_a_completed_job_takes_its_registration_with_it(self):
+        with self.dir() as d:
+            r = self.reg(d, "alpha", "1", "COMPLETED")
+            swept, kept = self.w.sweep_finished([r], watchdir=d)
+            self.assertEqual([x["job"] for x in swept], ["1"])
+            self.assertEqual(kept, [])
+            self.assertFalse(os.path.exists(r["_file"]))
+
+    def test_a_job_that_ended_any_other_way_is_kept_and_still_reported(self):
+        """Sweeping on "terminal" rather than on the one good state would erase
+        precisely the rows the report exists to raise, and would do it
+        silently."""
+        for st in ("TIMEOUT", "FAILED", "CANCELLED", "OUT_OF_MEMORY", "NODE_FAIL"):
+            with self.subTest(st), self.dir() as d:
+                r = self.reg(d, "alpha", "1", st)
+                swept, kept = self.w.sweep_finished([r], watchdir=d)
+                self.assertEqual(swept, [], st)
+                self.assertEqual([x["job"] for x in kept], ["1"], st)
+                self.assertTrue(os.path.exists(r["_file"]), st)
+
+    def test_a_mixed_job_is_not_a_completed_one(self):
+        """`_states` is a joined SET. A job whose tasks ended differently reads
+        `COMPLETED,TIMEOUT`, and the half that failed is the half that matters --
+        a prefix or substring test on COMPLETED would throw it away."""
+        with self.dir() as d:
+            r = self.reg(d, "alpha", "1", "COMPLETED,TIMEOUT")
+            swept, kept = self.w.sweep_finished([r], watchdir=d)
+            self.assertEqual(swept, [])
+            self.assertTrue(os.path.exists(r["_file"]))
+
+    def test_a_file_outside_the_watcher_directory_is_never_unlinked(self):
+        """`_file` arrives from a reader of JSON on disk. It cannot be wrong
+        today, and an unlink driven by it is still the one place where confining
+        the path costs one comparison."""
+        with self.dir() as d, self.dir() as other:
+            r = self.reg(other, "alpha", "1", "COMPLETED")
+            swept, kept = self.w.sweep_finished([r], watchdir=d)
+            self.assertEqual(swept, [])
+            self.assertEqual(kept, [r])
+            self.assertTrue(os.path.exists(r["_file"]))
+
+    def test_a_row_with_no_file_is_kept_rather_than_counted_as_swept(self):
+        with self.dir() as d:
+            r = {"session": "alpha", "job": "1", "_states": "COMPLETED"}
+            swept, kept = self.w.sweep_finished([r], watchdir=d)
+            self.assertEqual((swept, kept), ([], [r]))
+
+    def test_a_removal_that_failed_is_not_reported_as_a_removal(self):
+        """A sweep that could not sweep leaves the row where it was, with the
+        reason attached. Reporting it as swept would be a claim about the
+        filesystem this did not get to make -- and the registration would then
+        be invisible to every later run while still sitting on disk."""
+        with self.dir() as d:
+            r = self.reg(d, "alpha", "1", "COMPLETED")
+            with mock.patch.object(os, "remove",
+                                   side_effect=OSError(13, "Permission denied")):
+                swept, kept = self.w.sweep_finished([r], watchdir=d)
+            self.assertEqual(swept, [])
+            self.assertEqual(kept, [r])
+            self.assertIn("Permission denied", kept[0]["_why"])
+            self.assertTrue(os.path.exists(r["_file"]))
+
+    def test_the_good_and_the_bad_are_sorted_in_one_pass(self):
+        with self.dir() as d:
+            rows = [self.reg(d, "alpha", "1", "COMPLETED", pid=11),
+                    self.reg(d, "beta", "2", "TIMEOUT", pid=12),
+                    self.reg(d, "gamma", "3", "COMPLETED", pid=13)]
+            swept, kept = self.w.sweep_finished(rows, watchdir=d)
+            self.assertEqual([x["session"] for x in swept], ["alpha", "gamma"])
+            self.assertEqual([x["session"] for x in kept], ["beta"])
+            self.assertTrue(os.path.exists(rows[1]["_file"]))
+
+    def test_an_empty_list_sweeps_nothing_and_says_so(self):
+        """The shape a failed cluster query produces: `finished` is empty unless
+        the scheduler answered, so an unreachable cluster must sweep nothing."""
+        with self.dir() as d:
+            self.assertEqual(self.w.sweep_finished([], watchdir=d), ([], []))

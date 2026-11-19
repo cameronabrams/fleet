@@ -23,6 +23,12 @@ The two slow ones are cached and shown with their AGE, never as current: a value
 on this screen is evidence as of a time. **Absence is rendered as `?`, never as a
 pass** -- a board that shows green because a source failed is worse than no board.
 
+**A warning is painted by WHO must act**, not by how bad it sounds: red `!` for
+the reader, a named session for a line addressed to that session, dim `?` for a
+source that could not answer. See `MINE`/`FLEET`/`UNKNOWN` below -- all three
+were one red `!` until 2026-11-19, and only one of the eight conditions was ever
+the reader's.
+
 Written outside this repository and moved in on 2026-10-04. It reads this app's
 state layout and two of its tools, and that coupling had no test across it: when
 `fleetsnap` changed its housekeeping on 2026-10-03 the board went blind, and only
@@ -207,8 +213,49 @@ def cluster_configured():
     except Exception:
         return None
 
+# WHO MUST ACT, which is the only thing that decides how a warning is painted.
+# Not how alarming it sounds, and not how bad the underlying event is.
+#
+#   MINE     nobody but the human at this screen can do it
+#   FLEET    a session or an agent does it, and the line names which
+#   UNKNOWN  nothing can be done; a source could not answer and says so
+#
+# Until 2026-11-19 all three were one red `!`. Eight conditions printed
+# identically, and exactly one of them -- a second tmux client -- was the
+# reader's to act on. The rest were bookkeeping with a one-command remedy and no
+# owner, so the human became the owner by default: he read the board, and asked
+# the coordinator to run the command. A screen that cannot say who a line is for
+# addresses every line to whoever is looking.
+#
+# This is the same rule as `docs/checks-that-reassure.md`, pointed the other way.
+# That document is about a check that fails toward calm; this is about a check
+# that is loud whatever happens, and the cost is the same either way -- a line
+# that is usually red is one nobody reads on the day it is true. It is already
+# written down three times in this repository, for the mail window
+# (`fleet/mailstat.py`) and for the backup line below. It had never been applied
+# to the one place that prints the word `!`.
+MINE, FLEET, UNKNOWN = "mine", "fleet", "unknown"
+
+def note(text, level=None, who=None):
+    """One warning, carrying its audience rather than leaving it to be guessed.
+
+    `who` is a session name and is printed; `level` is how it is painted. They
+    are stored separately because a FLEET note may have no single owner -- a lost
+    nudge belongs to whichever session was not told, and sometimes that is
+    several or none.
+    """
+    return {"text": text, "level": level or MINE, "who": who}
+
+
+def _sessions(rows, key="session"):
+    """`alpha, beta` from a list of foreign records, or "" -- the actor a note
+    names. Sorted and de-duplicated: three stale rows for one session are one
+    session's problem, and listing it three times reads as three."""
+    return ", ".join(sorted({str(r.get(key)) for r in rows if r.get(key)}))
+
+
 def jobs_and_notes():
-    """(jobs or None, [notes]) from `fleetwatch --json`.
+    """(jobs or None, [note]) from `fleetwatch --json`.
 
     `None` means *not known*, and the caller renders it `?`. That distinction is
     the whole reason this reads JSON. The display table has no row for a failed
@@ -216,6 +263,11 @@ def jobs_and_notes():
     used to read this by column found no rows and reported an EMPTY job list,
     which the board drew as a blank work column for every session. An unreachable
     cluster rendered as a calm fleet. `cluster_ok` is a field; a banner is not.
+
+    Every note is classified HERE, where the record that produced it is in hand.
+    A classifier that read the finished sentence back and decided from its words
+    would be two derivations of one fact, which is the family this repository
+    keeps finding.
     """
     d = run_json([os.path.join(BIN, "fleetwatch"), "--json"])
     if d is None:
@@ -227,31 +279,56 @@ def jobs_and_notes():
         # blip, a two-day maintenance window, and a cluster nobody ever reached.
         # `None` is not zero -- a fleet with no recorded good read says so rather
         # than claiming an outage that began when its state file did.
+        #
+        # UNKNOWN, not an alarm. Nobody at this keyboard brings a cluster back,
+        # and the sentence already says what it is: the work column is unknown.
+        # Printing it in the same red as a thing to go and do is how the red
+        # stops meaning anything.
         down = d.get("cluster_down_for_s")
         how_long = (" for %s" % short_duration(down)) if down else ""
-        return None, ["cluster query failed%s -- live work is UNKNOWN, not none"
-                      % how_long]
+        return None, [note("cluster query failed%s -- live work is UNKNOWN, not none"
+                           % how_long, UNKNOWN)]
     jobs = [{"job": j.get("job"), "tasks": j.get("tasks") or 0,
              "owner": j.get("owner"),
              "watched": bool(j.get("watched_by"))} for j in d.get("jobs") or []]
-    if any(not j["watched"] for j in jobs):
-        notes.append("live work with no watcher")
+    unwatched = [j for j in jobs if not j["watched"]]
+    if unwatched:
+        # Named by OWNER, which is what `[owners]` in fleet.toml is for. An
+        # unowned job comes back `UNATTRIBUTED` from fleetwatch, and that word
+        # standing where a session name goes is itself the thing to fix.
+        notes.append(note("live work with no watcher", FLEET,
+                          who=_sessions(unwatched, "owner")))
     if d.get("dead_watchers"):
-        notes.append("a registered watcher is dead")
+        notes.append(note("a registered watcher is dead -- its job may be running "
+                          "unwatched", FLEET, who=_sessions(d["dead_watchers"])))
     if d.get("stale_watchers"):
-        notes.append("a watcher points at a job that is no longer live")
+        notes.append(note("a watcher points at a job that is no longer live", FLEET,
+                          who=_sessions(d["stale_watchers"])))
     if (d.get("delivery") or {}).get("silent"):
-        notes.append("a nudge never arrived and no push went out")
+        notes.append(note("a nudge never arrived and no push went out "
+                          "-- fleetnudge --pending", FLEET,
+                          who=_sessions(d["delivery"]["silent"])))
     if len((d.get("clients") or {}).get("attached") or []) > 1:
-        notes.append("more than one client is attached to the tmux server")
+        # The one condition on this board that is nobody else's. It is a second
+        # terminal attached to this tmux server, which resizes every pane to the
+        # smallest client; no session can close it and no command here should.
+        notes.append(note("more than one client is attached to the tmux server",
+                          MINE))
     # A job that ENDED badly is the thing a board exists to surface: it is over,
     # so it holds no watcher and appears in no live row. `_states` is computed by
     # fleetwatch and prefixed to keep it out of the registration file's own key
     # namespace -- it is part of the --json contract, not a private field.
+    #
+    # `-- not cleared` is gone from the sentence. It described the registration
+    # file rather than the job, and it was the half a reader could act on, so it
+    # was the half that got acted on: the file was deleted and the question of
+    # what a TIMEOUT meant went with it. What is left is the news, addressed to
+    # the session that owns the campaign and decides whether to resubmit.
     for r in d.get("finished_watchers") or []:
         st = r.get("_states") or ""
         if st and st != "COMPLETED":
-            notes.append(f"{r.get('session')} job {r.get('job')} ended {st} -- not cleared")
+            notes.append(note("job %s ended %s" % (r.get("job"), st), FLEET,
+                              who=str(r.get("session") or "")))
     return jobs, notes
 
 def context():
@@ -784,21 +861,62 @@ def pending_line():
     """
     recs, bad = pending.read_all(STATE)
     if recs is None:
-        return (f"  {C['red']}undelivered results: UNKNOWN -- "
-                f"{pending.pending_dir(STATE)} could not be read{C['r']}")
+        # UNKNOWN, and therefore dim: a directory this cannot read is a question
+        # nobody at this screen answers by reading the screen. It is still said,
+        # because the one reading it must not be allowed to look like zero.
+        return note_line(note(f"undelivered results: UNKNOWN -- "
+                              f"{pending.pending_dir(STATE)} could not be read",
+                              UNKNOWN))
     if not recs and not bad:
         return None
     who = ", ".join(sorted({r.get("session") or "?" for r in recs}))
     parts = []
     if recs:
-        parts.append(f"{len(recs)} undelivered result(s) for {who}")
+        parts.append(f"{len(recs)} undelivered result(s)")
     if bad:
         parts.append(f"{bad} unreadable")
-    return (f"  {C['red']}! {'; '.join(parts)} -- "
-            f"fleetnudge --pending{C['r']}")
+    # Addressed to the session that is missing the news, not to the human who
+    # would otherwise relay `fleetnudge --pending` on its behalf. The command
+    # stays on the line: naming the actor without naming the act leaves the
+    # reader exactly where they were.
+    return note_line(note(f"{'; '.join(parts)} -- fleetnudge --pending",
+                          FLEET, who=who or None))
+
+def note_line(n):
+    """One warning, painted by WHOSE it is. See `MINE`/`FLEET`/`UNKNOWN` above.
+
+    A plain string is a note from a cache written before notes carried an
+    audience, and it is painted `MINE` -- which is how it was painted when it was
+    written. A board must never quieten a warning on the strength of a field that
+    was not there to say it could be quietened; the absent field is unknown, and
+    an unknown here means the loud reading.
+
+    ANYTHING ELSE is painted the same way, as its own text. The cache is JSON in
+    a shared state directory, and a note that is null or a number would otherwise
+    raise here and take the whole draw with it -- a board that cannot draw is the
+    one outcome worse than a board that draws something ugly.
+
+    Everything printed goes through `oneline` first, including the session name.
+    Both halves come out of another tool's JSON, and the board's rule for foreign
+    text does not stop applying because the foreigner is one of ours.
+    """
+    if not isinstance(n, dict):
+        n = note(n if isinstance(n, str) else repr(n))
+    level = n.get("level") or MINE
+    who = oneline(n.get("who") or "")
+    if level == UNKNOWN:
+        head = "  ? "
+        return f"  {C['dim']}? {oneline(n.get('text') or '', head=head)}{C['r']}"
+    if level == FLEET:
+        lead = f"{who}: " if who else ""
+        head = "  " + lead
+        return f"  {C['yel']}{lead}{oneline(n.get('text') or '', head=head)}{C['r']}"
+    head = "  ! "
+    return f"  {C['red']}! {oneline(n.get('text') or '', head=head)}{C['r']}"
+
 
 def cache_lines(cache, full, auto):
-    """The cluster/context provenance stamp, and the `!` warnings it carries.
+    """The cluster/context provenance stamp, and the warnings it carries.
 
     The warnings stay WITH the stamp rather than being hoisted above it: each one
     is true as of that moment and no later, and a red line with no age beside it
@@ -816,8 +934,8 @@ def cache_lines(cache, full, auto):
     if not full and not auto:
         stamp += "; fleetboard --full to refresh"
     out = ["  " + stamp + C['r']]
-    for note in cache.get("notes", []):
-        out.append(f"  {C['red']}! {note}{C['r']}")
+    for n in cache.get("notes", []):
+        out.append(note_line(n))
     return out
 
 
@@ -961,7 +1079,8 @@ def draw(full=False, auto=False, show_parked=False):
     # The ordering rule, which is the part worth keeping: ANYTHING THAT SCROLLS
     # OFF SHOULD BE THE THING THAT DOES NOT CHANGE. Fourteen lines saying a
     # session has been parked for a fortnight will say the same tomorrow; the
-    # updates count, the cluster stamp and every `!` are the rows a glance is for.
+    # updates count, the cluster stamp and every warning are the rows a glance is
+    # for.
     #
     # Same family as the permanent red line already in the catalog, one step
     # earlier: there a true alarm is read past, here it never reaches the reader.

@@ -234,13 +234,58 @@ fleet-ending fact at exactly the moment the other half of the check broke. Only
 an *unknown* source withholds it, because there the document could not be
 interpreted at all.
 
+Who a warning is for
+--------------------
+
+Three kinds of line, and the paint follows **who must act** — not how alarming
+the sentence sounds, and not how bad the underlying event is:
+
+.. code-block:: text
+
+   ! more than one client is attached to the tmux server
+   alpha: job 1234567 ended TIMEOUT
+   ? cluster query failed for 2h -- live work is UNKNOWN, not none
+
+Red with a ``!`` means *nobody but you*. A named session in front of it means
+the line is addressed to that session, and the sentence carries the command that
+settles it. A dim ``?`` is the board's own word for a source that could not
+answer, used here as it is used everywhere else on the screen: an outage nobody
+at this keyboard ends is an unknown, not a thing to go and do.
+
+Until 2026-11-19 all three were one red ``!``. Eight conditions printed
+identically, and exactly **one** of them — a second client on the tmux server —
+was the reader's to act on. The rest were bookkeeping with a known one-line
+remedy and no owner, so the only reader became the owner by default: he read the
+board and asked the coordinator to run the command. A screen that cannot say who
+a line is for addresses every line to whoever is looking.
+
+That is :doc:`../checks-that-reassure` pointed the other way. The document is
+about a check that fails toward calm; this is about a check that is loud whatever
+happens, and the cost is the same either way — **a line that is usually red is
+one nobody reads on the day it is true.** The rule was already written down three
+times in this repository, for the mail window (:doc:`fleetmail`), for the backup
+line below, and for the update check. It had never been applied to the one place
+that prints the word ``!``.
+
+A fourth kind was removed rather than repainted. A registration whose watcher has
+exited over a job ``sacct`` calls ``COMPLETED`` has no decision left in it at all,
+and :doc:`fleetwatch` now sweeps it instead of listing it with the command that
+removes it. The best thing to do with a warning nobody has to think about is not
+to print it in a quieter color.
+
+**A note from an older cache is painted loud.** ``--watch`` reads a cache up to
+ten minutes old and a board can be upgraded under a running one, so a note may
+arrive with no audience on it. The absent field is unknown, and an unknown here
+means the loud reading: a board must not quieten a warning on the strength of a
+field that was not there to say it could be quietened.
+
 Results that never reached a session
 ------------------------------------
 
 Above the updates count, because an undelivered result is news a session is
 missing *now* where a package count is a chore that keeps::
 
-   ! 1 undelivered result(s) for alpha -- fleetnudge --pending
+   alpha: 1 undelivered result(s) -- fleetnudge --pending
 
 ``fleetnudge`` writes the undelivered content to ``<state>/pending/`` when both of
 its channels are shut; see :doc:`fleetnudge`. The line exists because the defect
@@ -484,14 +529,14 @@ What scrolls off is what does not change
 ----------------------------------------
 
 Everything time-sensitive sits **directly under the header**: pending updates, the
-cluster/context stamp, every ``!`` warning, and any pane belonging to another
+cluster/context stamp, every warning, and any pane belonging to another
 fleet. The live roster follows, and the parked count last.
 
 It was the other way round until 2026-10-21, and the cost was measured rather than
 imagined. The board was 36 lines. Eight of the fleet's seventeen panes are under 40
 rows. Of those 36 lines, **fourteen were the parked list** — durable, declared in a
 file, identical tomorrow — and **three were the footer** carrying the updates
-count, the cluster stamp and every red warning. The largest block was sessions that
+count, the cluster stamp and every warning. The largest block was sessions that
 are not running; the smallest was everything a glance is for. And it got worse with
 use: the parked block grows each time a session is parked, pushing the footer
 further down.

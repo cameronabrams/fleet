@@ -31,6 +31,12 @@ job here reads as WATCHED, which is the reassuring direction.
   fleetwatch <session>  only that session's work -- what a ledger should point AT
                         instead of hand-syncing job ids and task counts
   fleetwatch --json     machine-readable
+
+Every run SWEEPS one thing and only that one: the registration of a watcher that
+has exited over a job sacct calls COMPLETED. Such a row has no decision left in
+it, and leaving it on disk meant a human was eventually asked to relay a
+`fleetregister --clear` for a condition nobody had to think about. Anything that
+ended any other way is kept and reported, because that one does need reading.
 """
 import datetime, json, os, re, subprocess, sys, glob
 from zoneinfo import ZoneInfo
@@ -306,6 +312,60 @@ def split_stale(live, by_job, jobs, kinds=None):
     for bucket in (stale, partway, other):
         bucket.sort(key=lambda r: (r["session"], r["job"]))
     return stale, partway, other
+
+def sweep_finished(finished, watchdir=None):
+    """(swept, kept) -- registrations deleted because nobody has a decision left
+    to make about them, and the rows that are still news.
+
+    A registration is a CLAIM that something is being watched. Once the watcher
+    has exited and sacct says its job reached COMPLETED, that claim has no reader
+    left: the work is over, it ended the way it was meant to, and there is
+    nothing for anyone to do. Until 2026-11-19 the file stayed anyway and the
+    report went on listing it with the command to remove it -- so a settled,
+    judgment-free condition was carried to a screen and a human was asked to
+    relay `fleetregister --clear` to somebody. That is the one kind of warning
+    that should never reach a reader at all, and the cost of it reaching them is
+    not the keystroke: it is that it looks exactly like the ones that matter.
+
+    **Only an unmixed COMPLETED is swept.** `_states` is a joined SET, so a job
+    whose tasks ended differently reads `COMPLETED,TIMEOUT` and stays. Every
+    other terminal state -- TIMEOUT, FAILED, CANCELLED, OUT_OF_MEMORY, NODE_FAIL
+    -- is news for the owner, and the registration is what keeps it on the board
+    until somebody has seen it. Sweeping on "terminal" rather than on the one
+    good state would erase precisely the rows this report exists to raise, and
+    would do it silently, which is this repository's oldest defect wearing a new
+    hat: a cleanup that cannot distinguish the thing it tidies from the thing it
+    is there to find.
+
+    Liveness is NOT re-decided here. `registered()` has already falsified the pid
+    against its starttime -- the same pair `fleetregister --clear` tests -- and
+    nothing comes back from that: a watcher re-armed for the same job registers
+    under its own pid, and so under its own file.
+    """
+    watchdir = WATCHDIR if watchdir is None else watchdir
+    swept, kept = [], []
+    for r in finished:
+        f = r.get("_file")
+        # The directory is checked rather than assumed. `_file` is set by the
+        # reader that globbed it, so this cannot fail today -- but it is an
+        # unlink driven by a path that came out of a JSON file on disk, and
+        # confining it to the directory this tool owns costs one comparison.
+        if (r.get("_states") != "COMPLETED" or not f
+                or os.path.dirname(os.path.abspath(f)) != os.path.abspath(watchdir)):
+            kept.append(r)
+            continue
+        try:
+            os.remove(f)
+        except OSError as e:
+            # A sweep that could not sweep leaves the row where it was, with the
+            # reason attached. Reporting it as swept would be a claim about the
+            # filesystem this did not get to make.
+            r["_why"] = "registration could not be removed (%s)" % (e.strerror or e)
+            kept.append(r)
+            continue
+        swept.append(r)
+    return swept, kept
+
 
 def watchers():
     """session name -> set of job ids its live child processes reference."""
@@ -802,6 +862,14 @@ def main():
     else:
         for r in dead_reg:
             r["_why"] = "cluster query failed -- cannot tell dead from finished"
+    # Housekeeping on this tool's OWN directory, and the only write it makes.
+    # It is here rather than behind a flag because a flag would need somebody to
+    # run it, and "somebody has to run the cleanup" is the condition being
+    # removed. It is here rather than in a timer because the proof it needs --
+    # that sacct called the job COMPLETED -- is computed above and nowhere else.
+    # It cannot fire on a failed cluster query: `finished` is empty unless the
+    # scheduler answered, so an unreachable cluster sweeps nothing.
+    swept, finished = sweep_finished(finished)
     inferred = watchers()          # ADVISORY ONLY -- see fleetregister
     holes = nudge_holes(only)      # local; independent of the cluster query
     attached, attach_err = clients()
@@ -839,6 +907,7 @@ def main():
                           "watchers_partway": partway,
                           "watchers_offcluster": offcluster,
                           "dead_watchers": dead_reg, "finished_watchers": finished,
+                          "swept_watchers": swept,
                           "ended_local": ended,
                           "unclassified_watchers": unclassified_dead,
                           "delivery": holes,
@@ -968,9 +1037,22 @@ def main():
                   (r.get("session"), r.get("job"), r.get("pid"),
                    r.get("session"), r.get("job")))
 
+    if swept:
+        # Said, not done quietly. A tool that deletes without saying so teaches a
+        # reader that files go missing on their own, and the next real loss then
+        # reads as housekeeping.
+        print("\n   swept (job COMPLETED and its watcher gone -- registration removed,")
+        print("   nothing for anyone to do):")
+        for r in swept:
+            print("   %s / %s" % (r.get("session"), r.get("job")))
+
     if finished:
-        print("\n   finished (watcher exited, and sacct shows its job ended -- the normal end")
-        print("   of a watcher, not a failure). Clear when the owner has read the result:")
+        # What is LEFT after the sweep, which is no longer "the normal end of a
+        # watcher": a job that ended COMPLETED has already gone. These are the
+        # ones with a state somebody has to read -- or, rarely, a COMPLETED row
+        # whose file could not be removed, which carries its own `_why`.
+        print("\n   ended, and not cleanly (watcher exited; sacct gives the state below).")
+        print("   The owner decides what it means; clear when they have read it:")
         for r in finished:
             print("   %s / %s  %s   -> fleetregister --clear %s %s" %
                   (r.get("session"), r.get("job"), r["_states"], r.get("session"), r.get("job")))
