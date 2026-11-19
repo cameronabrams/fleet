@@ -30,6 +30,8 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-19
+
 ### Changed
 
 - **A `fleetboard` warning is painted by who must act, not by how bad it
