@@ -98,6 +98,56 @@ is nothing on that server at all, and a command that fails is a worse answer tha
 silence. A manifest spanning several sessions prints nothing, for the reason the
 restore itself refuses: no single name is the answer.
 
+And it leaves the coordinator's pane active
+-------------------------------------------
+
+An attach opens the tmux session's **current window**, and within it the
+**active pane**. After a rebuild those are simply the last window created and
+the last pane split off it — an arbitrary session, from which the human walks to
+the coordinator by hand every time. So the last thing a ``--go`` run changes is
+the view::
+
+   $ tmux select-window -t @2
+   $ tmux select-pane -t %7
+   lead's pane (%7) is active: an attach lands in it
+
+Both commands are needed and they are not the same one: ``select-pane`` moves
+the active pane *within* a window, so selecting the pane alone lands in the
+right window only by the luck of the coordinator living in the window built
+last.
+
+Who the coordinator is comes from the manifest, in the same three states the
+report line reads (see below) — a missing key, a null, and a name. Only a name
+selects anything; the other two leave the view where it is and say which it was.
+The guess this replaces would have been the literal string ``coord``, a check on
+what a session is *called* standing in for a check on what it *is*, which is why
+``fleetsnap`` stopped doing it.
+
+The pane is found by asking tmux **after** the build rather than by remembering
+what was created, because the coordinator is often a session this run did not
+create: the commonest reason to reattach is a terminal that died while the fleet
+stayed up, and then every pane was filtered out as already running and nothing
+was built at all. That run places the active pane too.
+
+Three things make it refuse rather than guess, and each prints a ``!!`` line:
+a pane carrying another fleet's ``@fleet`` is not ours; a pane of ours in another
+tmux session is not anywhere ``attach -t <sess>`` can land; and two panes carrying
+the label are a coin toss, the same answer the window-name collision gets. The
+selection is then **read back** — ``run`` never looks at an exit status, and the
+one claim this block makes is that an attach lands in the coordinator, so the
+line has to be a readout rather than a hope.
+
+It does **not** move the view while a client is attached, and says so instead.
+``select-window`` moves every attached client's view there and then, and the
+restore most likely to run with somebody attached is the partial one — a session
+died, the human is working in another window, and a tool he did not start throws
+him across the fleet mid-sentence. A session that is already attached has no
+attach coming, which is the whole thing this placement is for. An unreadable
+client count leaves the view alone too: the question is whether anyone is
+looking, and guessing *no* is the answer that yanks somebody.
+
+On a plan it says what it will do and asks tmux nothing.
+
 A manifest that spans two tmux sessions is refused
 --------------------------------------------------
 

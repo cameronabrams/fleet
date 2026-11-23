@@ -71,8 +71,13 @@ class RestoreLandsWhereTheManifestSays(unittest.TestCase):
                          "size": "80x24"},
                 "resume_uuid": "u-" + label,
                 "resume_uuid_source": "verified: test", "durable_files": []})
+        # ALPHA, and the choice is the test. It is the first pane of the window
+        # built FIRST, so it is neither the last pane created (the split that
+        # follows it in window 2 takes the active pane) nor in the last window
+        # created (window 3 follows). Either half of the selection being missing
+        # leaves the view somewhere else.
         man = {"captured": "now", "installed_claude": "x",
-               "coordinator": "coord", "sessions": sessions}
+               "coordinator": "alpha", "sessions": sessions}
         with open(os.path.join(self.cfg.state, "manifest.json"), "w") as f:
             json.dump(man, f)
         self.man = man
@@ -121,6 +126,66 @@ class RestoreLandsWhereTheManifestSays(unittest.TestCase):
                              os.path.realpath(s["cwd"]),
                              "%s landed in the wrong directory" % s["label"])
         self.assertIn("verified:", r.stdout)
+
+    def panes(self):
+        """{label: (window_id, pane_id)} for every labeled pane on the server."""
+        out = self.tmux("list-panes", "-a", "-F",
+                        "#{@agent}\t#{window_id}\t#{pane_id}").stdout
+        got = {}
+        for line in out.splitlines():
+            f = line.split("\t")
+            if len(f) == 3 and f[0]:
+                got[f[0]] = (f[1], f[2])
+        return got
+
+    def test_attaching_lands_in_the_coordinator(self):
+        """The window AND the pane, which are two different selections.
+
+        A restore leaves the view wherever the build left it -- the last window
+        created, and within it the last pane split off. Attaching then opens on an
+        arbitrary session and the human walks to the coordinator by hand, every
+        time. The manifest already says who that is.
+
+        `alpha` is the fixture's coordinator because it is neither of the two
+        things the build would leave selected on its own: `beta`'s split takes the
+        active pane in alpha's window, and `gamma`'s window is created after it.
+        So this fails if either `select-window` or `select-pane` is missing.
+        """
+        r = subprocess.run([TOOL, "--go", "--socket", SOCKET, "--stagger", "0"],
+                           capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        where = self.panes()
+        self.assertIn("alpha", where, r.stdout)
+
+        # What an attach opens on: the session's current window, and the active
+        # pane in it. Asked of tmux, not of the tool's own report.
+        got = self.tmux("display", "-p", "-t", "0",
+                        "#{window_id}\t#{pane_id}").stdout.strip().split("\t")
+        self.assertEqual(got[0], where["alpha"][0],
+                         "the current window is not the coordinator's\n" + r.stdout)
+        self.assertEqual(got[1], where["alpha"][1],
+                         "the active pane is not the coordinator's\n" + r.stdout)
+        self.assertNotEqual(where["alpha"][0], where["gamma"][0],
+                            "the fixture no longer puts the coordinator outside "
+                            "the last window built, so this proves nothing")
+        self.assertIn("alpha's pane", r.stdout)
+
+    def test_a_coordinator_with_no_pane_is_said_so_not_passed_over(self):
+        """The manifest names a session; no pane carries that label. That is a
+        finding -- the label is how every tool in the fleet finds a session -- and
+        a restore that quietly left the view elsewhere would report a clean
+        rebuild while the one thing this change promises did not happen."""
+        man = os.path.join(self.cfg.state, "manifest.json")
+        with open(man) as f:
+            m = json.load(f)
+        m["coordinator"] = "nobody-by-that-name"
+        with open(man, "w") as f:
+            json.dump(m, f)
+        r = subprocess.run([TOOL, "--go", "--socket", SOCKET, "--stagger", "0"],
+                           capture_output=True, text=True, env=self.env())
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertIn("could not make nobody-by-that-name's pane active", r.stdout)
+        self.assertIn("no pane in 0 carries the @agent label", r.stdout)
 
     def test_each_session_is_resumed_with_its_own_transcript(self):
         subprocess.run([TOOL, "--go", "--socket", SOCKET, "--stagger", "0"],
@@ -338,7 +403,7 @@ class PartialRestoreIntoAnExistingWindow(unittest.TestCase):
                 "resume_uuid_source": "verified: test", "durable_files": []})
         with open(os.path.join(self.cfg.state, "manifest.json"), "w") as f:
             json.dump({"captured": "now", "installed_claude": "x",
-                       "coordinator": "coord", "sessions": sessions}, f)
+                       "coordinator": "alpha", "sessions": sessions}, f)
 
     def tearDown(self):
         self.tmux("kill-server")

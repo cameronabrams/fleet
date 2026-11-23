@@ -8,6 +8,11 @@ UUID.
 It deliberately does NOT restart any compute. Local jobs died with the power cycle
 and whether to rerun them is a judgment call, not a recovery step.
 
+It ends by making the COORDINATOR's pane the active one, so that attaching opens
+on the session that routes the fleet rather than on whichever pane was built
+last. Who that is comes from the manifest, which takes it from the one place it
+is written down: the session's own brief.
+
   fleetrestore              plan the whole fleet (default; changes nothing)
   fleetrestore NAME...      plan only these sessions
   fleetrestore --go         build it
@@ -227,6 +232,138 @@ def attach_line_if_up(sess):
         return ""
     return attach_line(sess) if up else ""
 
+def coordinator_target(m):
+    """(label, why there is none) -- the session an attach should land in.
+
+    The manifest's `coordinator` key, read in the same three states the report
+    line reads it in and for the same reason. A missing key is an OLD manifest, a
+    null is a snapshot that looked and found nobody, and only a name is an answer.
+    Absence refuses to select rather than guessing: the previous spelling of that
+    guess was the literal string `coord`, a check on what a session is CALLED
+    standing in for a check on what it IS, and fleetsnap removed it for that.
+    """
+    if "coordinator" not in m:
+        return None, "this manifest predates the `coordinator` key; re-run fleetsnap"
+    if not m["coordinator"]:
+        return None, "no single session's brief declares `Kind: coordinator`"
+    return m["coordinator"], None
+
+
+def coordinator_pane(sess, label):
+    """((window_id, pane_id), None) for the pane carrying `label` in `sess`,
+    or (None, why not).
+
+    Asked of tmux AFTER the build rather than remembered from it, because the
+    coordinator is frequently not a session this run created. The commonest
+    reason to reattach is a terminal that died while the fleet stayed up, and
+    then every pane was filtered out as already running and this tool built
+    nothing at all. One query covers that case and the rebuilt one together.
+
+    Both labels are checked, as in every tool that ACTS on a pane: another
+    fleet's coordinator carries the same role as ours. So is the tmux session --
+    a pane of ours somewhere else is not anywhere `attach -t sess` can land, and
+    selecting it would move a window nobody asked about while leaving the attach
+    exactly where it was.
+    """
+    r = tmux_run(["list-panes", "-a", "-F",
+                  LABELS + "\t#{session_name}\t#{window_id}\t#{pane_id}"],
+                 capture_output=True, text=True)
+    if r.returncode != 0:
+        return None, "could not list panes: " + (r.stderr.strip() or "tmux failed")
+    found = [(f[3], f[4]) for f in
+             (row.split("\t") for row in r.stdout.splitlines())
+             if len(f) == LABEL_FIELDS + 3 and agent_label(f[0]) == label
+             and belongs(f[1], OURS) and f[2] == sess]
+    if not found:
+        return None, f"no pane in {sess} carries the @agent label {label!r}"
+    if len(found) > 1:
+        return None, (f"{len(found)} panes in {sess} carry the @agent label "
+                      f"{label!r}; choosing one would be a coin toss")
+    return found[0], None
+
+
+def select_coordinator(m, sess, go):
+    """Leave the tmux session with the coordinator's pane active, and return the
+    one line saying what happened. Never raises and never exits.
+
+    A restore ends by printing how to attach, and an attach opens whatever window
+    and pane tmux was last pointed at -- after a rebuild, simply the last one
+    built, which is an arbitrary session. The human then walks to the coordinator
+    by hand every single time. That is bookkeeping with a one-command remedy and
+    no owner, which is the shape that ends up being the human's by default.
+
+    BOTH commands are needed and they are not the same one. `select-pane` moves
+    the active pane WITHIN a window; the window an attach opens is the session's
+    current one. Selecting the pane alone lands in the right window only by luck
+    -- the luck of the coordinator happening to live in the window built last.
+
+    Done after `verify`, so a restore that could not place a pane has already
+    said so, and this never moves the view off a failure nobody has read yet.
+    And never while a client is attached: see below.
+    """
+    who, why = coordinator_target(m)
+    if not who:
+        return f"  the active pane is left where it is -- {why}\n"
+    if not go:
+        return (f"  will make {who}'s pane active, so an attach lands in it "
+                f"rather than in whichever pane was built last\n")
+    # NOT while somebody is watching. Selecting a window moves every attached
+    # client's view there and then, and the restore that most often runs with a
+    # client attached is the partial one -- a session died, the human is working
+    # in another window, and a tool he did not run throws him across the fleet
+    # mid-sentence. The whole point of this is the ATTACH, and a session that is
+    # already attached has no attach coming.
+    #
+    # An unreadable count does not move anything either. The question being asked
+    # is "is anyone looking at this", and guessing no is the answer that yanks
+    # somebody.
+    clients = (run(["tmux", "display", "-p", "-t", sess, "#{session_attached}"],
+                   go, capture=True) or "").strip()
+    if clients != "0":
+        return ("  the active pane is left where it is -- %s\n"
+                % ("a client is already attached to %s, and moving its view is "
+                   "not this tool's business" % sess if clients.isdigit()
+                   else "tmux would not say whether a client is attached to %s"
+                        % sess))
+    got, why = coordinator_pane(sess, who)
+    if not got:
+        return f"  !! could not make {who}'s pane active -- {why}\n"
+    wid, pid = got
+    run(["tmux", "select-window", "-t", wid], go)
+    run(["tmux", "select-pane", "-t", pid], go)
+    # Asked, not assumed. `run` never looks at an exit status, so a select that
+    # quietly did nothing would leave the single claim this block makes -- that an
+    # attach lands in the coordinator -- printed as true in the line below. One
+    # more query is what makes that line a readout instead of a hope.
+    now = (run(["tmux", "display", "-p", "-t", sess, "#{pane_id}"],
+               go, capture=True) or "").strip()
+    if now != pid:
+        return (f"  !! asked tmux to make {who}'s pane ({pid}) active; the active "
+                f"pane is {now or 'unreadable'}\n")
+    return f"  {who}'s pane ({pid}) is active: an attach lands in it\n"
+
+
+def nothing_to_restore(m, where, go):
+    """End a run that has nothing to build.
+
+    Three filters can empty the session list -- everything parked or retired,
+    everything already running, every pane unnamed -- and all three ended with the
+    same line. They share this one so they cannot drift apart.
+
+    The coordinator is selected here too, not only after a build. The middle case
+    is a fleet that is perfectly healthy with the terminal that was attached to it
+    gone, which is exactly the moment somebody is about to attach again; a tool
+    that places the active pane only when it happened to create panes would miss
+    the commonest attach of all.
+    """
+    print("  nothing to restore.")
+    if not attach_line_if_up(where):
+        print()
+        return
+    print(select_coordinator(m, where, go), end="")
+    print(attach_line(where), end="")
+
+
 PANE_CWD_WAIT = 5.0
 
 def pane_cwd_settled(target, want, go, wait=PANE_CWD_WAIT):
@@ -353,14 +490,14 @@ def main():
             f"{x['label']} is {held[x['resume_uuid']][1]}" for x in gone))
         m["sessions"] = [x for x in m["sessions"] if x.get("resume_uuid") not in held]
         if not m["sessions"]:
-            print("  nothing to restore." + (attach_line_if_up(where) or "\n"))
+            nothing_to_restore(m, where, a.go)
             return
     already = [x["label"] for x in m["sessions"] if x["label"] in live]
     if already:
         print(f"\n  already running, will be skipped: {', '.join(already)}")
         m["sessions"] = [x for x in m["sessions"] if x["label"] not in live]
         if not m["sessions"]:
-            print("  nothing to restore." + (attach_line_if_up(where) or "\n"))
+            nothing_to_restore(m, where, a.go)
             return
     # Which binary every session will come up on. Resolved ONCE, before anything
     # is built, so a run cannot start some sessions on one release and the rest on
@@ -402,7 +539,7 @@ def main():
         print()
         m["sessions"] = [s for s in m["sessions"] if s.get("label")]
         if not m["sessions"]:
-            print("  nothing to restore." + (attach_line_if_up(where) or "\n"))
+            nothing_to_restore(m, where, a.go)
             return
 
     # The tmux session every pane goes into. Bound HERE, from the manifest, rather
@@ -657,6 +794,9 @@ def main():
             kind="restore")
         if problem:
             print(f"  outcome not logged: {problem}")
+    # The active pane, LAST of the things this run changes: wherever the build
+    # left the view, an attach should open on the session that routes the fleet.
+    print(select_coordinator(m, sess, a.go), end="")
     print(f"\n  After restore: run `fleetsnap` to re-capture, and ask each session to "
           f"confirm it re-armed what its state files require.")
     # LAST, and deliberately. It is the only line needed in the next thirty

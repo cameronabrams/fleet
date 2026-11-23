@@ -30,6 +30,27 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Changed
+
+- **`fleetrestore --go` ends by making the coordinator's pane the active one**,
+  so attaching opens on the session that routes the fleet rather than on
+  whichever pane happened to be built last. Both selections are made —
+  `select-window` decides which window an attach opens, `select-pane` which pane
+  inside it — and the result is read back, because `run` never looks at an exit
+  status and the line claiming an attach lands in the coordinator has to be a
+  readout. Who the coordinator is comes from the manifest, in the three states
+  the report line already distinguishes; a missing key or a null leaves the view
+  alone and says which it was. A pane carrying another fleet's `@fleet`, a pane
+  in another tmux session, and two panes carrying the label are each refused with
+  a `!!` line rather than guessed. This is the first thing `fleetrestore` changes
+  about a tmux server on a run that builds nothing: the "every session is already
+  running" path places the active pane too, since a terminal dying without taking
+  the server with it is the commonest reason to reattach. It does nothing while a client is
+  attached — a session already attached has no attach coming, and moving a
+  window would throw whoever is in it across the fleet — and nothing when tmux
+  will not say whether one is.
+
+
 ## [0.9.0] - 2026-11-19
 
 ### Changed

@@ -501,6 +501,193 @@ class APaneIsAskedWhereItIsUntilItCanAnswer(unittest.TestCase):
         self.assertEqual(self.settled([None], wait=0.2), "")
 
 
+class AnAttachLandsInTheCoordinator(unittest.TestCase):
+    """The view a restore leaves behind had no owner, so it was the human's.
+
+    A rebuild ends pointed at whatever it made last, and attaching therefore opens
+    on an arbitrary session. Walking from there to the coordinator is one command,
+    every time, which is the shape of thing that quietly becomes a standing chore.
+    The manifest already records who the coordinator is -- from the session's own
+    brief, not from what it is called -- so the tool can end where the human was
+    going to go anyway.
+
+    Two selections, not one: `select-window` decides which window an attach opens,
+    `select-pane` decides which pane inside it is active."""
+
+    def setUp(self):
+        self.cfg = FakeConfig(toml=BASE_TOML)
+        self.r = load_tool("fleetrestore")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def listing(self, rows, rc=0, stderr=""):
+        """Patch the tmux query with `rows` of (agent, fleet, session, win, pane)."""
+        out = "\n".join("\t".join(r) for r in rows)
+        return mock.patch.object(
+            self.r, "tmux_run",
+            return_value=subprocess.CompletedProcess([], rc, out, stderr))
+
+    def recorder(self, active="%2", clients="0"):
+        """(calls, run) -- a stand-in for `run` that records and answers queries.
+
+        Two different queries go through `run`, so one canned answer would make
+        the tests agree with each other rather than with tmux."""
+        calls = []
+        def run(cmd, go, capture=False):
+            calls.append(cmd)
+            if not capture:
+                return None
+            return clients if "session_attached" in cmd[-1] else active
+        return calls, run
+
+    def test_the_three_states_of_the_manifest_key_are_told_apart(self):
+        """The same three the report line distinguishes: an old manifest with no
+        key, a snapshot that looked and found nobody, and a name. Only the third
+        selects anything, because the guess this replaced -- the literal string
+        `coord` -- is what fleetsnap removed for checking what a session is called
+        instead of what it is."""
+        who, why = self.r.coordinator_target({})
+        self.assertIsNone(who)
+        self.assertIn("fleetsnap", why)
+
+        who, why = self.r.coordinator_target({"coordinator": None})
+        self.assertIsNone(who)
+        self.assertIn("brief", why)
+        self.assertNotIn("fleetsnap", why, "a snapshot that looked is not an old one")
+
+        self.assertEqual(self.r.coordinator_target({"coordinator": "lead"}),
+                         ("lead", None))
+
+    def test_the_pane_is_found_by_both_labels_and_the_tmux_session(self):
+        rows = [("alpha", "testfleet", "mainfleet", "@1", "%1"),
+                ("lead", "testfleet", "mainfleet", "@2", "%7"),
+                ("gamma", "testfleet", "mainfleet", "@3", "%9")]
+        with self.listing(rows):
+            self.assertEqual(self.r.coordinator_pane("mainfleet", "lead"),
+                             (("@2", "%7"), None))
+
+    def test_another_fleets_coordinator_is_not_ours(self):
+        """`@agent` alone is not identity. Two fleets on one machine each have a
+        session that routes, and the tools went strict on `@fleet` for exactly
+        that: selecting someone else's pane moves a window nobody asked about and
+        leaves our own attach where it was."""
+        rows = [("lead", "somebody-elses-fleet", "mainfleet", "@2", "%7")]
+        with self.listing(rows):
+            got, why = self.r.coordinator_pane("mainfleet", "lead")
+        self.assertIsNone(got)
+        self.assertIn("no pane", why)
+
+    def test_a_pane_in_another_tmux_session_is_not_where_an_attach_lands(self):
+        """`list-panes -a` crosses tmux sessions. A pane of ours somewhere else is
+        not reachable by `attach -t <sess>`, so selecting it would move a window
+        nobody asked about and still land the human in the wrong place."""
+        rows = [("lead", "testfleet", "another-server-session", "@2", "%7")]
+        with self.listing(rows):
+            got, why = self.r.coordinator_pane("mainfleet", "lead")
+        self.assertIsNone(got)
+        self.assertIn("mainfleet", why)
+
+    def test_two_panes_with_that_label_is_refused_not_guessed(self):
+        """The same answer the window-name collision gets: both candidates look
+        equally right from here, and picking one would put the human in front of
+        the wrong session while reporting success."""
+        rows = [("lead", "testfleet", "mainfleet", "@2", "%7"),
+                ("lead", "testfleet", "mainfleet", "@5", "%8")]
+        with self.listing(rows):
+            got, why = self.r.coordinator_pane("mainfleet", "lead")
+        self.assertIsNone(got)
+        self.assertIn("coin toss", why)
+
+    def test_a_tmux_that_cannot_be_asked_is_not_an_empty_answer(self):
+        with self.listing([], rc=1, stderr="no server running"):
+            got, why = self.r.coordinator_pane("mainfleet", "lead")
+        self.assertIsNone(got)
+        self.assertIn("no server running", why)
+
+    def test_a_plan_says_what_it_will_do_and_touches_no_pane(self):
+        calls, run = self.recorder()
+        with mock.patch.object(self.r, "run", run), \
+                mock.patch.object(self.r, "tmux_run") as asked:
+            line = self.r.select_coordinator({"coordinator": "lead"}, "mainfleet",
+                                             False)
+        self.assertIn("lead", line)
+        self.assertEqual(calls, [], "a plan selected a pane")
+        asked.assert_not_called()
+
+    def test_going_selects_the_window_and_then_the_pane(self):
+        rows = [("lead", "testfleet", "mainfleet", "@2", "%7")]
+        calls, run = self.recorder(active="%7")
+        with self.listing(rows), mock.patch.object(self.r, "run", run):
+            line = self.r.select_coordinator({"coordinator": "lead"}, "mainfleet",
+                                             True)
+        self.assertIn(["tmux", "select-window", "-t", "@2"], calls,
+                      "the pane was selected but not the window it is in: an "
+                      "attach opens the session's CURRENT window")
+        self.assertIn(["tmux", "select-pane", "-t", "%7"], calls)
+        self.assertIn("%7", line)
+        self.assertNotIn("!!", line)
+
+    def test_a_selection_that_did_not_take_is_not_reported_as_one(self):
+        """`run` never looks at an exit status, so the two commands above can do
+        nothing at all and say nothing about it. The line they produce makes one
+        claim -- that an attach lands in the coordinator -- and it has to be a
+        readout rather than a hope."""
+        rows = [("lead", "testfleet", "mainfleet", "@2", "%7")]
+        calls, run = self.recorder(active="%1")      # tmux stayed where it was
+        with self.listing(rows), mock.patch.object(self.r, "run", run):
+            line = self.r.select_coordinator({"coordinator": "lead"}, "mainfleet",
+                                             True)
+        self.assertIn("!!", line)
+        self.assertIn("%1", line)
+
+    def test_an_unreadable_active_pane_is_not_a_match(self):
+        rows = [("lead", "testfleet", "mainfleet", "@2", "%7")]
+        calls, run = self.recorder(active="")
+        with self.listing(rows), mock.patch.object(self.r, "run", run):
+            line = self.r.select_coordinator({"coordinator": "lead"}, "mainfleet",
+                                             True)
+        self.assertIn("!!", line)
+        self.assertIn("unreadable", line)
+
+    def test_a_client_that_is_attached_is_not_thrown_across_the_fleet(self):
+        """`select-window` moves every attached client's view there and then.
+
+        The restore most likely to run with somebody attached is the PARTIAL one:
+        a session died, the human is working in another window, and a tool he did
+        not start moves him mid-sentence. A session that is already attached has
+        no attach coming, which is the whole thing this placement is for."""
+        rows = [("lead", "testfleet", "mainfleet", "@2", "%7")]
+        calls, run = self.recorder(active="%7", clients="1")
+        with self.listing(rows), mock.patch.object(self.r, "run", run):
+            line = self.r.select_coordinator({"coordinator": "lead"}, "mainfleet",
+                                             True)
+        self.assertNotIn(["tmux", "select-window", "-t", "@2"], calls)
+        self.assertNotIn(["tmux", "select-pane", "-t", "%7"], calls)
+        self.assertIn("left where it is", line)
+        self.assertIn("attached", line)
+
+    def test_an_unreadable_client_count_also_leaves_it_alone(self):
+        """The question is "is anyone looking at this", and guessing no is the
+        answer that yanks somebody."""
+        rows = [("lead", "testfleet", "mainfleet", "@2", "%7")]
+        calls, run = self.recorder(active="%7", clients="")
+        with self.listing(rows), mock.patch.object(self.r, "run", run):
+            line = self.r.select_coordinator({"coordinator": "lead"}, "mainfleet",
+                                             True)
+        self.assertNotIn(["tmux", "select-pane", "-t", "%7"], calls)
+        self.assertIn("would not say", line)
+
+    def test_no_coordinator_leaves_the_view_alone_and_says_why(self):
+        calls, run = self.recorder()
+        with mock.patch.object(self.r, "run", run):
+            line = self.r.select_coordinator({"coordinator": None}, "mainfleet",
+                                             True)
+        self.assertEqual(calls, [])
+        self.assertIn("left where it is", line)
+        self.assertIn("brief", line)
+
+
 class ItSaysHowToGetBackIn(unittest.TestCase):
     """The tool ended by saying what to do next and never how to get there.
 
@@ -676,6 +863,47 @@ class ARunWithNothingToRestoreStillSaysHowToGetIn(ItSaysHowToGetBackIn):
         json.dump(man, open(os.path.join(self.cfg.state, "manifest.json"), "w"))
         out = self.run_tool("--socket", "attachtest").stdout
         self.assertIn("tmux -L attachtest attach -t mainfleet", out)
+
+    def tm(self, *args):
+        env = dict(os.environ, TMUX_TMPDIR=self.tmux)
+        env.pop("TMUX", None)
+        return subprocess.run(["tmux", "-L", "attachtest", *args], env=env,
+                              capture_output=True, text=True, timeout=10)
+
+    @unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
+    def test_a_fleet_that_is_already_up_still_gets_its_active_pane_placed(self):
+        """The early return is not a lesser path: it is the COMMONEST attach.
+
+        A terminal dying without taking the tmux server with it leaves every
+        session running, so every one is filtered out and this tool builds
+        nothing -- and that is exactly the person about to reattach. A placement
+        that happened only when panes were created would miss them all.
+        """
+        self.serve("mainfleet")
+        self.tm("set", "-p", "-t", "mainfleet", "@agent", "alpha")
+        self.tm("set", "-p", "-t", "mainfleet", "@fleet", "testfleet")
+        before = self.tm("display", "-p", "-t", "mainfleet", "#{pane_id}").stdout.strip()
+        # A second window, created after the coordinator's, so tmux's current
+        # window is not already the right one.
+        self.tm("new-window", "-t", "mainfleet:")
+        self.park_everything()
+        out = self.run_tool("--socket", "attachtest", "--go").stdout
+        self.assertIn("alpha's pane", out)
+        after = self.tm("display", "-p", "-t", "mainfleet", "#{pane_id}").stdout.strip()
+        self.assertEqual(after, before,
+                         "an attach would not land in the coordinator\n" + out)
+
+    @unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
+    def test_a_plan_on_that_path_says_it_without_moving_anything(self):
+        self.serve("mainfleet")
+        self.tm("new-window", "-t", "mainfleet:")
+        was = self.tm("display", "-p", "-t", "mainfleet", "#{pane_id}").stdout.strip()
+        self.park_everything()
+        out = self.run_tool("--socket", "attachtest").stdout
+        self.assertIn("will make alpha's pane active", out)
+        self.assertEqual(
+            self.tm("display", "-p", "-t", "mainfleet", "#{pane_id}").stdout.strip(),
+            was, "the plan moved the view")
 
     @unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
     def test_a_two_session_manifest_offers_neither_name(self):
