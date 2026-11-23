@@ -30,6 +30,8 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-23
+
 ### Fixed
 
 - **A window holding panes that are not sessions came back at the default split,
