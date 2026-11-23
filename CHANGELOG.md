@@ -30,6 +30,28 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Changed
+
+- **The target is no longer called "the newest soaked release" anywhere a human
+  reads.** Nothing exercises a release while it sits on disk, and the word
+  claimed it did — which is what invited tuning the wait as if the duration
+  bought evidence. The eligibility table and the per-session reasons were
+  renamed on 2026-10-16 and `fleetupgrade`'s two headers followed on 2026-11-23;
+  the claim survived in six more lines, two of which print at spawn and restore
+  time. Now consistent across `fleetroll` (usage and `--to`'s help),
+  `fleetspawn`, `fleetrestore`, `fleetboard`'s header and `fleetupgrade`'s
+  remaining refusal and fallback text: *past the on-disk window*, and *nothing
+  has been on disk long enough yet* for the absence. The gate keeps its name —
+  `--soak`, `soak_hours`, `versions.soaked()` — and so do the comments that
+  explain the mechanism; what went is the claim. `fleetupgrade --json`'s
+  `why_not` strings change with it; nothing matches on them, and `fleetroll`
+  quotes that field rather than reading it.
+- `fleetboard` says `? target (none old enough)` where it said
+  `? target (nothing soaked)`, and that branch — the one that fires when no
+  release has been on disk long enough — now has a test. It had none, in the
+  header whose whole purpose is that a gate which cannot open stays visible.
+
+
 ## [0.11.0] - 2026-11-23
 
 ### Fixed

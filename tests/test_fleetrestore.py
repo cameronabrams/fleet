@@ -366,7 +366,25 @@ class TheRestoreLaunchesTheSoakedTarget(Plan):
         with mock.patch.object(mod.versions, "target", lambda *a, **k: (None, None)):
             cmd, _launched, why = mod.claude_cmd()
         self.assertEqual(cmd, "claude")
-        self.assertIn("nothing has soaked", why)
+        self.assertIn("nothing has been on disk long enough", why)
+        self.assertNotIn("soaked", why,
+                         "a release that has merely sat on disk was not "
+                         "exercised; the word invites tuning the wait as if "
+                         "it bought evidence")
+
+    def test_the_line_it_prints_names_the_release_past_the_window(self):
+        """The reason printed at the top of every restore. It used to call the
+        target "the newest soaked release", which claims the release was
+        exercised while it waited -- nothing exercises it, and the word invited
+        tuning the wait as if the duration bought evidence. The gate keeps its
+        name (`--soak`, `versions.soaked`); the claim is what went."""
+        mod = load_tool("fleetrestore")
+        with mock.patch.object(mod.versions, "target",
+                               lambda *a, **k: ("2.1.301", TOOL)):
+            _cmd, _launched, why = mod.claude_cmd()
+        self.assertIn("2.1.301", why)
+        self.assertIn("on-disk window", why)
+        self.assertNotIn("soaked", why)
 
     def test_the_binary_is_resolved_once_before_anything_is_built(self):
         """So a run cannot start some sessions on one release and the rest on

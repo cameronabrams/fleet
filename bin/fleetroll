@@ -3,7 +3,7 @@
 
   fleetroll NAME                  plan only; print every step, change nothing
   fleetroll NAME --go             perform the roll
-  fleetroll NAME --to VERSION     override the target (default: newest soaked)
+  fleetroll NAME --to VERSION     override the target (newest past the window)
   fleetroll NAME --socket NAME    a throwaway tmux server, for trying it safely
 
 Exit: 0 rolled - 2 refused at preflight - 3 did not exit - 4 did not come back
@@ -211,7 +211,8 @@ def preflight(name, pane, pid, elig, target, to_override):
                    "eligibility is UNKNOWN -- refusing rather than assuming")
         return out
     if not target:
-        out.append("no target: nothing has soaked, and --to was not given")
+        out.append("no target: nothing has been on disk long enough yet, "
+                   "and --to was not given")
     # A session cannot roll itself: typing /exit into our own pane kills the
     # process that is mid-roll, and nothing would be left to relaunch it. The
     # pid test is the honest one -- a name can be changed, process ancestry
@@ -363,7 +364,8 @@ def main():
     ap = argparse.ArgumentParser(prog="fleetroll", add_help=True)
     ap.add_argument("name")
     ap.add_argument("--to", metavar="VERSION",
-                    help="roll to this version instead of the newest soaked")
+                    help="roll to this version instead of the newest release "
+                         "past the on-disk window")
     ap.add_argument("--socket", metavar="NAME",
                     help="a tmux server other than the default, for trying this "
                          "safely on a throwaway one")

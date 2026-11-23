@@ -297,7 +297,7 @@ class RestoreLandsWhereTheManifestSays(unittest.TestCase):
                            capture_output=True, text=True, env=self.env())
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("bare `claude`", r.stdout)
-        self.assertIn("nothing has soaked", r.stdout)
+        self.assertIn("nothing has been on disk long enough", r.stdout)
         self.assertIn("--name alpha --resume u-alpha", r.stdout)
 
     def test_pruning_the_target_falls_back_to_the_release_behind_it(self):
@@ -315,7 +315,8 @@ class RestoreLandsWhereTheManifestSays(unittest.TestCase):
         os.remove(os.path.join(os.path.dirname(older), "2.1.301"))
         r = subprocess.run([TOOL, "--go", "--socket", SOCKET, "--stagger", "0"],
                            capture_output=True, text=True, env=self.env())
-        self.assertIn("2.1.300, the newest soaked release", r.stdout)
+        self.assertIn("2.1.300, the newest release past the on-disk window",
+                      r.stdout)
 
     def test_a_plan_records_no_adoption(self):
         """A line for a restore that did not happen is the file's own lie, in the

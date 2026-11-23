@@ -245,6 +245,20 @@ class TheVersionColumn(unittest.TestCase):
         self.assertIn("2.1.301", head)
         self.assertIn("target", head)
 
+    def test_no_target_at_all_is_said_rather_than_left_out(self):
+        """The branch nothing covered. When no release has been on disk long
+        enough there IS no target, and a header that printed only `installed`
+        would read as "nothing to say about versions" -- which is how a gate
+        that could never open stayed invisible for two days. `?` is the answer,
+        with the reason beside it."""
+        out = self.board(self.AGENTS, "2.1.302", {11: "2.1.301"}, target=None)
+        head = out.splitlines()[1]
+        self.assertIn("target", head)
+        self.assertIn("?", head)
+        self.assertNotIn("soaked", head,
+                         "a release that has merely sat on disk was not exercised; "
+                         "the word invites tuning the wait as if it bought evidence")
+
     def test_a_session_behind_the_installed_binary_is_colored(self):
         out = self.board(self.AGENTS, "2.1.292", {11: "2.1.291", 22: "2.1.292"})
         stale = [l for l in out.splitlines() if l.strip().startswith("alpha")][0]

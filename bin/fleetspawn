@@ -200,12 +200,13 @@ def claude_cmd():
     """
     version, path = versions.target()
     if path and os.path.exists(path):
-        return shlex.quote(path), "pinned to %s, the newest soaked release" % version
+        return shlex.quote(path), ("pinned to %s, the newest release past the "
+                                   "on-disk window" % version)
     if version:
         return "claude", ("target %s is gone from the version store; "
                           "falling back to whatever `claude` resolves to" % version)
-    return "claude", ("nothing has soaked yet (or there is no version store); "
-                      "falling back to whatever `claude` resolves to")
+    return "claude", ("nothing has been on disk long enough yet (or there is no "
+                      "version store); falling back to whatever `claude` resolves to")
 
 
 def launch_cmd(a, brief):

@@ -686,6 +686,10 @@ class LaunchingTheSoakedTargetNotTheNewest(unittest.TestCase):
             cmd, why = self.spawn.claude_cmd()
         self.assertIn("2.1.301", cmd)
         self.assertIn("pinned", why)
+        self.assertNotIn("soaked", why,
+                         "a release that has merely sat on disk was not "
+                         "exercised; the word invites tuning the wait as if "
+                         "it bought evidence")
 
     def test_a_pruned_target_falls_back_to_bare_claude_and_says_so(self):
         """A session that refuses to start because a pinned release is missing is
@@ -701,7 +705,11 @@ class LaunchingTheSoakedTargetNotTheNewest(unittest.TestCase):
         with self.target(None):
             cmd, why = self.spawn.claude_cmd()
         self.assertEqual(cmd, "claude")
-        self.assertIn("nothing has soaked", why)
+        self.assertIn("nothing has been on disk long enough", why)
+        self.assertNotIn("soaked", why,
+                         "a release that has merely sat on disk was not "
+                         "exercised; the word invites tuning the wait as if "
+                         "it bought evidence")
 
     def test_the_launch_command_uses_it_for_a_resume_and_a_first_prompt(self):
         a = SimpleNamespace(name="alpha", resume="u-1")

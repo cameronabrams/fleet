@@ -731,8 +731,8 @@ def eligibility(ss, inst, agents_by_name, watch, pinned, hold_why,
         # existence IS the soak gate, and the newest release being young is no
         # longer a reason to refuse anybody. It is simply not the thing to roll to.
         if not inst:
-            why.append("nothing has been on disk %dh yet, so there is no soaked "
-                       "release to roll to" % soak_hours)
+            why.append("nothing has been on disk %dh yet, so there is no "
+                       "release past the window to roll to" % soak_hours)
 
         n = version_lag(s.get("version"), inst)
         if not s.get("version"):
@@ -927,7 +927,8 @@ def main():
         print(json.dumps({"installed": inst, "sessions": ss}, indent=1))
         return
     print("installed claude: %s   target (newest past the on-disk window): %s\n"
-          % (inst, versions.target()[0] or "NONE -- nothing has soaked"))
+          % (inst, versions.target()[0]
+             or "NONE -- nothing has been on disk long enough yet"))
     print("%-22s %-5s %-9s %-6s %-7s %-8s %s" % ("SESSION", "PANE", "VERSION", "STALE", "LEDGER", "COLOR", "RESUME UUID"))
     for s in ss:
         print("%-22s %-5s %-9s %-6s %-7s %-8s %s" % (
@@ -1035,13 +1036,14 @@ def main():
         return
     print("\nOrdered plan (coord last, since restarting it kills the driver):")
     if CLAUDE_TARGET:
-        print("  Each line names %s explicitly: the fleet runs the newest SOAKED"
+        print("  Each line names %s explicitly: the fleet runs the newest release"
               % CLAUDE_TARGET)
-        print("  release, which is not the newest one. Typing bare `claude` instead")
-        print("  would land the roll on %s." % inst)
+        print("  PAST THE ON-DISK WINDOW, which is not the newest one. Typing bare")
+        print("  `claude` instead would land the roll on %s." % inst)
     else:
-        print("  !! Lines say bare `claude`: no soaked release to pin to, so a")
-        print("     relaunch takes whatever the installer points at (%s)." % inst)
+        print("  !! Lines say bare `claude`: nothing is past the on-disk window to")
+        print("     pin to, so a relaunch takes whatever the installer points at")
+        print("     (%s)." % inst)
     for i, s in enumerate(stale, 1):
         if s.get("background"):
             print("  %d. %-20s pane %-4s  BACKGROUND session -- restart by hand (see above)"

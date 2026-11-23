@@ -970,7 +970,7 @@ def draw(full=False, auto=False, show_parked=False):
     if tgt and tgt != inst:
         head += f"{C['dim']}, {C['r']}{tgt}{C['dim']} target{C['r']}"
     elif not tgt:
-        head += f"{C['dim']}, {C['r']}?{C['dim']} target (nothing soaked){C['r']}"
+        head += f"{C['dim']}, {C['r']}?{C['dim']} target (none old enough){C['r']}"
     # A reboot ends every session on this machine, so it is the one fact here that
     # belongs beside the clock rather than in the footer with the aged sources: it
     # is true NOW, and it is about the fleet rather than about a package list.

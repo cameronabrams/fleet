@@ -31,6 +31,34 @@ REPLAYED = ("❯ /exit\n  ⎿  Catch you later!\n❯ /exit\n  ⎿  Bye!\n"
             "──────\n❯ half-typed\n──────\n")
 
 
+class TheTargetIsNotCalledSoaked(unittest.TestCase):
+    """A release that has merely sat on disk was not exercised while it waited.
+
+    Calling it "soaked" claims it was, and the word invited tuning the duration
+    as if the wait bought evidence -- which is why the eligibility table and the
+    per-session reasons stopped using it on 2026-10-16. The gate keeps its name:
+    `--soak`, `soak_hours`, `versions.soaked()`. What went is the CLAIM, and it
+    survived in the two lines a human reads first here -- the usage block and
+    `--to`'s help -- for five weeks after the rest was renamed.
+    """
+    def test_neither_line_a_reader_sees_first_says_it(self):
+        import subprocess
+        from tests.support import APP
+        cfg = FakeConfig()
+        try:
+            mod = load_tool("fleetroll")
+            self.assertNotIn("soaked", mod.__doc__ or "")
+            r = subprocess.run([os.path.join(APP, "bin", "fleetroll"), "--help"],
+                               capture_output=True, text=True, timeout=30)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("--to", r.stdout)
+            self.assertNotIn("soaked", r.stdout)
+            self.assertIn("on-disk window", r.stdout,
+                          "the help must still say what the default target IS")
+        finally:
+            cfg.close()
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.cfg = FakeConfig(toml=BASE_TOML + '\nalpha = "red"\n'

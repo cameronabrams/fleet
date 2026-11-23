@@ -87,8 +87,8 @@ The gates, in the order they are reported:
      - the session's uuid is the asking session's — it cannot roll itself, **or
        the asker could not be identified at all**, which refuses everyone
    * - soak
-     - **nothing** has sat on disk for ``--soak`` hours, so there is no soaked
-       release to roll to. This no longer refuses a session for the *newest*
+     - **nothing** has sat on disk for ``--soak`` hours, so there is no
+       release past the window to roll to. This no longer refuses a session for the *newest*
        release being young — see below.
    * - lag
      - fewer than ``--lag`` releases behind, or already current
@@ -107,8 +107,8 @@ The last three of those are not in the spec this was built from. Each is somethi
 the table above already warns a *human* about — and an unattended driver gets no
 warnings.
 
-The target is the newest **soaked** release, not the newest
------------------------------------------------------------
+The target is the newest release past the window, not the newest
+-----------------------------------------------------------------
 
 Releases arrive here about every 25 hours (median gap 25.2 h, measured
 2026-10-17) and the gate used to read the age of the **newest** one — so every
@@ -120,7 +120,7 @@ come.
 
 The soak's intent is *do not be the first here to run a fresh binary*. Some
 release satisfies that every day, just not the newest. So the window now picks
-the **target** — the newest release that has soaked — and eligibility compares
+the **target** — the newest release past the window — and eligibility compares
 each session against that. The gate opens daily, the intent is unchanged, and when
 releases speed up the target falls further behind instead of the mechanism
 latching shut.
@@ -138,8 +138,8 @@ Two consequences follow, and both are visible in the output:
 The relaunch lines in the plan **name the target explicitly**
 (``.../versions/2.1.301 --name ...``) rather than saying ``claude``, because a
 line typed as ``claude`` lands the roll on the newest release and not on the one
-the report just chose. When nothing has soaked, the lines say ``claude`` and the
-plan says so.
+the report just chose. When nothing has been on disk long enough, the lines say
+``claude`` and the plan says so.
 
 **Counting releases.** Lag is a patch distance within one ``major.minor``; across a
 minor or major it is reported as uncountable, which satisfies any lag. Uncountable

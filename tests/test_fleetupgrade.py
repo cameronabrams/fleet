@@ -445,7 +445,7 @@ class EveryGateIsARefusal(unittest.TestCase):
         absence of any soaked release refuses anybody.
         """
         why = self.judge(sess(), inst=None)
-        self.assertTrue(any("no soaked release" in w for w in why), why)
+        self.assertTrue(any("no release past the window" in w for w in why), why)
 
     def test_the_newest_release_being_young_refuses_nobody(self):
         """The defect itself, as a test. `age` is the newest release's age; with

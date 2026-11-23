@@ -153,7 +153,8 @@ def claude_cmd():
     """
     version, path = versions.target()
     if path and os.path.exists(path):
-        return shlex.quote(path), version, "%s, the newest soaked release" % version
+        return shlex.quote(path), version, ("%s, the newest release past the "
+                                            "on-disk window" % version)
     # Falling back: the sessions get whatever `claude` resolves to, so THAT is the
     # version they come up on -- a different answer from the pinned branch, and
     # the reason this is returned rather than worked out again at the call site.
@@ -161,8 +162,9 @@ def claude_cmd():
     if version:
         return "claude", bare, (f"bare `claude` ({bare or '?'}) -- target "
                                 f"{version} is gone from the version store")
-    return "claude", bare, (f"bare `claude` ({bare or '?'}) -- nothing has soaked "
-                            f"yet, or there is no version store on this machine")
+    return "claude", bare, (f"bare `claude` ({bare or '?'}) -- nothing has been on "
+                            f"disk long enough yet, or there is no version store "
+                            f"on this machine")
 
 
 def verify(sessions):
