@@ -30,6 +30,8 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-23
+
 ### Changed
 
 - **`fleetrestore --go` ends by making the coordinator's pane the active one**,
