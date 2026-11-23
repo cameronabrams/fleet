@@ -30,6 +30,8 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-11-23
+
 ### Changed
 
 - **The target is no longer called "the newest soaked release" anywhere a human
