@@ -18,7 +18,7 @@ is written down: the session's own brief.
   fleetrestore --go         build it
   fleetrestore --brief      write each session's recovery brief, then show the plan
 """
-import json, os, subprocess, sys, argparse, time, shlex
+import json, os, re, subprocess, sys, argparse, time, shlex
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 from fleet import config as fc
 from fleet import version_flag
@@ -364,6 +364,135 @@ def nothing_to_restore(m, where, go):
     print(attach_line(where), end="")
 
 
+def layout_panes(layout):
+    """How many panes a tmux layout string describes, or None if it cannot be read.
+
+    Two formats, because the answer has to be right on both the machine the fleet
+    runs on and the one CI runs on. tmux 3.8 serializes a layout as JSON, where a
+    pane is a node with `"t":"p"`; older tmux writes the classic
+    `<checksum>,WxH,x,y{...}` string, where a pane is the only node carrying a
+    fourth number (its id) and a container is not. Anything unrecognizable is
+    None, never 0: a count of zero would read as "the window should be empty" and
+    make every window a mismatch.
+    """
+    t = (layout or "").strip()
+    if not t:
+        return None
+    if t.startswith("{"):
+        try:
+            doc = json.loads(t)
+        except ValueError:
+            return None
+        n, stack = 0, [doc.get("L")] if isinstance(doc, dict) else []
+        while stack:
+            node = stack.pop()
+            if not isinstance(node, dict):
+                continue
+            if node.get("t") == "p":
+                n += 1
+            stack.extend(node.get("c") or [])
+        return n or None
+    return len(re.findall(r"\d+x\d+,\d+,\d+,\d+", t)) or None
+
+
+def apply_layout(key, lay, planned, who, partial, go):
+    """Put the window back at its recorded geometry, or say why it cannot be.
+
+    **`tmux select-layout` given a layout string that describes a different
+    number of panes than the window holds exits 0, prints nothing, and leaves the
+    window at the default split.** Measured 2026-11-23: a 4-pane layout applied
+    to a 2-pane window. So for any window holding a pane this tool does not
+    rebuild -- a board, a shell the human keeps beside his agents -- the recorded
+    geometry was dropped on every restore, while `fleetsnap` called the layout
+    "restorable verbatim" and nothing in the plan, the run or the report said
+    otherwise. The silence was the defect; furniture is what makes the count
+    match again.
+
+    The count is read back from tmux rather than assumed from the plan, because
+    the question is what the window HOLDS: a split that failed leaves one pane
+    fewer, and that is exactly the case where a layout would be dropped in
+    silence. A plan has no window to ask, so it uses what it is about to build.
+
+    A partial restore is not reported. It already falls back to `tiled` for a
+    reason that has nothing to do with this -- an exact layout needs every pane
+    that was in the window -- and a line printed for every window of every
+    partial restore is how a warning gets trained into noise.
+    """
+    layout = (lay or {}).get("layout")
+    if not layout or partial:
+        run(["tmux", "select-layout", "-t", key, "tiled"], go)
+        return
+    have = planned
+    if go:
+        r = tmux_run(["display", "-p", "-t", key, "#{window_panes}"],
+                     capture_output=True, text=True)
+        txt = (r.stdout or "").strip()
+        have = int(txt) if txt.isdigit() else planned
+    want = layout_panes(layout)
+    if want is None:
+        print(f"    ! {who}: could not read how many panes the recorded layout "
+              f"describes, so the count could not be checked. Applying it; if the "
+              f"window comes back at the default split, that is why.")
+    elif want != have:
+        print(f"    !! {who}: the recorded layout describes {want} panes and the "
+              f"window holds {have}. `select-layout` exits 0 and leaves the "
+              f"default split when the counts differ, so the recorded geometry "
+              f"would be dropped in silence. Tiled instead.")
+        print(f"       A pane that is not an agent is recorded as furniture by "
+              f"`fleetsnap` and rebuilt here. Re-run `fleetsnap` on a healthy "
+              f"fleet and this window will come back at its own size.")
+        run(["tmux", "select-layout", "-t", key, "tiled"], go)
+        return
+    run(["tmux", "select-layout", "-t", key, layout], go)
+
+
+def window_slots(panes, furniture):
+    """Every pane the window will hold, in the order they must be created.
+
+    Sessions and furniture interleaved by the pane index each was recorded at. A
+    layout string maps to panes by POSITION, so "sessions first, furniture
+    appended" would restore the right NUMBER of panes in the wrong places and
+    hand the geometry to the wrong ones -- today's coordinator window is agent,
+    board, agent, shell.
+
+    Creation order is pane order here: each split targets the window, tmux splits
+    its active pane, and the pane just made is the active one -- so the panes come
+    out in the order they are created. That is the same property the session-only
+    loop relied on before furniture existed.
+
+    **`argv` is the recorded command split, not the recorded string.**
+    `#{pane_start_command}` is tmux's own RENDERING of the argv it was given, and
+    it quotes any word containing a space: a pane made with `split-window
+    'sleep 300'` reads back as `"sleep 300"`, quotes included. Handing that
+    string straight back to `split-window` runs `sh -c '"sleep 300"'`, the
+    command is not found, and the pane closes within milliseconds -- measured
+    2026-11-23, and it leaves no pane behind to notice. `shlex.split` undoes
+    tmux's quoting and recovers the argv in both shapes it renders.
+
+    A string that cannot be split at all leaves `argv` None, which the caller
+    turns into a plain shell: the pane still exists, so the window still comes
+    back at its recorded size, and the caller says what did not start.
+    """
+    slots = [{"kind": "session", "session": x, "cmd": "", "argv": [],
+              "pane_index": x["tmux"]["pane_index"], "cwd": x["cwd"]}
+             for x in panes]
+    fallback = panes[0]["cwd"] if panes else None
+    for f in furniture:
+        if not isinstance(f, dict):
+            continue
+        raw = f.get("start_command") or ""
+        try:
+            argv = shlex.split(raw) if raw else []
+        except ValueError:
+            argv = None
+        slots.append({"kind": "furniture", "session": None,
+                      "cmd": raw, "argv": argv,
+                      "pane_index": f.get("pane_index", 0),
+                      "cwd": f.get("cwd") or fallback})
+    slots.sort(key=lambda x: x["pane_index"])
+    return slots
+
+
 PANE_CWD_WAIT = 5.0
 
 def pane_cwd_settled(target, want, go, wait=PANE_CWD_WAIT):
@@ -635,6 +764,11 @@ def main():
     # Read ONCE, before anything is built, so a window this run creates is never
     # mistaken for one that was already there.
     on_screen = windows_by_name(sess)
+    # Loop-invariant, and now read before the window is built rather than beside
+    # `select-layout`: whether this run rebuilds the WHOLE window decides both
+    # which layout is applied and whether the window's non-session panes are
+    # recreated at all.
+    partial = len(m["sessions"]) != full
     first = True
     for w in sorted(by_win):
         panes = sorted(by_win[w], key=lambda x: x["tmux"]["pane_index"])
@@ -655,6 +789,32 @@ def main():
                   f"rename or close all but one, then re-run.")
             continue
         joined = bool(here)
+        # The window's panes IN ORDER: sessions and the furniture recorded beside
+        # the layout. Neither on a joined window -- those panes are already there,
+        # and a second board beside the first is worse than a window at the wrong
+        # size -- nor on a partial restore, which tiles anyway.
+        lay = m.get("window_layouts", {}).get(f"{sess}:{w}", {})
+        furn = [] if (joined or partial) else (lay.get("furniture") or [])
+        slots = window_slots(panes, furn)
+        if furn:
+            # Printed on the plan AND on the run, verbatim, because this is the
+            # one thing `fleetrestore` does that is not launching `claude` from a
+            # versioned path: it executes a command string read from a file.
+            # Reading them here before `--go` is the guard.
+            print(f"    (window {wname or w}: {len(furn)} pane(s) that are not "
+                  f"sessions will be recreated, and this RUNS the recorded "
+                  f"command:)")
+            for f in slots:
+                if f["kind"] != "furniture":
+                    continue
+                if f["cmd"] and f["argv"] is None:
+                    print(f"       !! pane {f['pane_index']}: the recorded command "
+                          f"{f['cmd']!r} cannot be read as a command line. The pane "
+                          f"is created as a plain shell, so the window still comes "
+                          f"back at its recorded size and nothing is run.")
+                else:
+                    print(f"       pane {f['pane_index']}: "
+                          f"{f['cmd'] or '(the default shell)'}  in {f['cwd']}")
         if joined:
             key = here[0]
             who = ", ".join(x["label"] for x in panes)
@@ -668,14 +828,20 @@ def main():
             if exists:
                 print(f"    (tmux session '{sess}' already exists — adding a window to it)")
                 got = run(["tmux", "new-window", "-P", "-F", WIN_FMT,
-                           "-t", f"{sess}:", "-c", panes[0]["cwd"]], a.go, capture=True)
+                           "-t", f"{sess}:", "-c", slots[0]["cwd"]]
+                          + (slots[0]["argv"] or []),
+                          a.go, capture=True)
             else:
                 got = run(["tmux", "new-session", "-d", "-P", "-F", WIN_FMT,
-                           "-s", sess, "-c", panes[0]["cwd"]], a.go, capture=True)
+                           "-s", sess, "-c", slots[0]["cwd"]]
+                          + (slots[0]["argv"] or []),
+                          a.go, capture=True)
             first = False
         else:
             got = run(["tmux", "new-window", "-P", "-F", WIN_FMT,
-                       "-t", f"{sess}:", "-c", panes[0]["cwd"]], a.go, capture=True)
+                       "-t", f"{sess}:", "-c", slots[0]["cwd"]]
+                      + (slots[0]["argv"] or []),
+                      a.go, capture=True)
         if not joined:
             # tmux is the authority on where the window landed; the manifest index
             # is only a fallback for the dry run, which creates nothing to ask about.
@@ -694,11 +860,18 @@ def main():
         # A created window arrives holding one pane, so the group's first session
         # takes it; a joined window holds other people's panes, so every session
         # in the group needs one of its own.
-        pane_ids = [] if joined else [first_id.strip()]
-        for extra in panes[len(pane_ids):]:
-            pane_ids.append((run(["tmux", "split-window", "-P", "-F", "#{pane_id}",
-                                  "-t", key, "-c", extra["cwd"]],
-                                 a.go, capture=True) or "").strip())
+        ids = [] if joined else [first_id.strip()]
+        for extra in slots[len(ids):]:
+            ids.append((run(["tmux", "split-window", "-P", "-F", "#{pane_id}",
+                             "-t", key, "-c", extra["cwd"]]
+                            + (extra["argv"] or []),
+                            a.go, capture=True) or "").strip())
+        # The launch loop below walks `panes`, so it needs the ids of the SESSION
+        # slots in the same order -- not every pane this window just gained. A
+        # furniture pane that landed between two sessions would otherwise shift
+        # every session after it by one, which is the 2026-09-30 failure (every
+        # session one pane to the left) arriving by a new route.
+        pane_ids = [i for i, sl in zip(ids, slots) if sl["kind"] == "session"]
         # Name the window, then pin it. automatic-rename is ON by default, so a
         # window left unnamed gets renamed to the running command — "claude" —
         # within seconds, and the next fleetsnap records THAT as the window name.
@@ -718,12 +891,7 @@ def main():
                   f"Rename it by hand after the restore.")
         if not joined:
             run(["tmux", "set", "-w", "-t", key, "automatic-rename", "off"], a.go)
-            lay = m.get("window_layouts", {}).get(f"{sess}:{w}", {})
-            partial = len(m["sessions"]) != full
-            if lay.get("layout") and not partial:
-                run(["tmux", "select-layout", "-t", key, lay["layout"]], a.go)
-            else:
-                run(["tmux", "select-layout", "-t", key, "tiled"], a.go)   # partial fleet: exact layout would not fit
+            apply_layout(key, lay, len(slots), wname or f"window {w}", partial, a.go)
         for i, s_ in enumerate(panes):
             target = pane_ids[i] if a.go else f"{key}.<pane {i}>"
             if a.go and not target.startswith("%"):

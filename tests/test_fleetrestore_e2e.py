@@ -505,3 +505,213 @@ class PartialRestoreIntoAnExistingWindow(unittest.TestCase):
         r = self.restore()
         self.assertNotIn("joins it rather than", r.stdout)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+
+@unittest.skipUnless(have_tmux(), "tmux is not installed")
+class AWindowKeepsItsSizeWhenItHoldsMoreThanAgents(unittest.TestCase):
+    """A window holding panes that are not sessions came back at the default
+    split, and nothing said so.
+
+    `fleetsnap` records `#{window_layout}` verbatim and called it restorable
+    verbatim. A layout string describes every pane the window had, and
+    `tmux select-layout` given one that describes more panes than the window
+    holds exits 0, prints nothing, and leaves the default split. So a window of
+    two agents and two pieces of furniture -- a board, a shell -- lost its
+    hand-set sizes on every restore, silently.
+
+    This builds such a window for real, hand-sizes it, records what tmux says
+    about it, kills it, and restores from that record.
+    """
+    def setUp(self):
+        self.cfg = FakeConfig(toml=BASE_TOML)
+        self.tmp = tempfile.mkdtemp(prefix="fr-furn-", dir="/tmp")
+        self.home = os.path.join(self.tmp, "home")
+        self.bin = os.path.join(self.tmp, "bin")
+        self.sock = os.path.join(self.tmp, "sock")
+        for d in (self.home, self.bin, self.sock):
+            os.makedirs(d)
+        with open(os.path.join(self.home, ".tmux.conf"), "w") as f:
+            f.write("set -g base-index 1\nset -g pane-base-index 1\n")
+        self.log = os.path.join(self.tmp, "launches")
+        fake = os.path.join(self.bin, "claude")
+        with open(fake, "w") as f:
+            f.write(FAKE_CLAUDE)
+        os.chmod(fake, 0o755)
+        self.dirs = {}
+        for name in ("alpha", "beta", "furn"):
+            self.dirs[name] = os.path.join(self.tmp, "cwd-" + name)
+            os.makedirs(self.dirs[name])
+
+    def tearDown(self):
+        self.tmux("kill-server")
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        self.cfg.close()
+
+    def env(self):
+        e = dict(os.environ)
+        e["HOME"] = self.home
+        e["TMUX_TMPDIR"] = self.sock
+        e["PATH"] = self.bin + os.pathsep + e.get("PATH", "")
+        e["FAKE_CLAUDE_LOG"] = self.log
+        e.pop("TMUX", None)
+        return e
+
+    def tmux(self, *args):
+        return subprocess.run(["tmux", "-L", SOCKET, *args],
+                              capture_output=True, text=True, env=self.env())
+
+    FURN_CMD = "sleep 300"
+
+    def sizes(self):
+        """[(w, h)] per pane, in pane order. Read from tmux, in no layout format
+        of its own -- the question is what the panes MEASURE, and a test that
+        parsed the layout string would be checking the record against itself."""
+        out = self.tmux("list-panes", "-t", "0:1", "-F",
+                        "#{pane_width}\t#{pane_height}").stdout
+        return [tuple(l.split("\t")) for l in out.splitlines() if l]
+
+    def build_and_record(self):
+        """Make the window by hand, hand-size it, and return its manifest."""
+        self.tmux("new-session", "-d", "-s", "0", "-n", "deps",
+                  "-x", "200", "-y", "50", "-c", self.dirs["alpha"])
+        self.tmux("split-window", "-t", "0:1", "-c", self.dirs["furn"],
+                  self.FURN_CMD)
+        self.tmux("split-window", "-t", "0:1", "-c", self.dirs["beta"])
+        ids = [l for l in self.tmux("list-panes", "-t", "0:1",
+                                    "-F", "#{pane_id}").stdout.splitlines() if l]
+        self.assertEqual(len(ids), 3)
+        for pane, label in ((ids[0], "alpha"), (ids[2], "beta")):
+            self.tmux("set", "-p", "-t", pane, "@agent", label)
+            self.tmux("set", "-p", "-t", pane, "@fleet", "testfleet")
+        # Hand-sized, which is the thing that has to survive.
+        self.tmux("resize-pane", "-t", ids[1], "-y", "9")
+        # The command as TMUX renders it, which is what fleetsnap records -- not
+        # the string this test passed in. tmux quotes any word holding a space,
+        # so `sleep 300` comes back as `"sleep 300"`, and handing that straight
+        # back to split-window runs `sh -c '"sleep 300"'` and closes the pane
+        # within milliseconds. A fixture that wrote the unquoted string would
+        # test a manifest fleetsnap never writes.
+        self.recorded_cmd = self.tmux("display", "-p", "-t", ids[1],
+                                      "#{pane_start_command}").stdout.strip()
+        self.assertTrue(self.recorded_cmd,
+                        "tmux reported no start command for the furniture pane")
+        self.tmux("set", "-w", "-t", "0:1", "automatic-rename", "off")
+        layout = self.tmux("display", "-p", "-t", "0:1",
+                           "#{window_layout}").stdout.strip()
+        self.recorded = self.sizes()
+        # The fixture checks itself: if the hand-sizing did not take, every pane
+        # is the same height and the test below passes against a window that was
+        # never sized at all.
+        self.assertEqual(self.recorded[1][1], "9",
+                         "the middle pane was not hand-sized: %r" % (self.recorded,))
+        self.assertNotEqual(self.recorded[0][1], self.recorded[1][1],
+                            "an evenly split window proves nothing about layout")
+        sessions = []
+        for label, pidx in (("alpha", 1), ("beta", 3)):
+            sessions.append({
+                "label": label, "cwd": self.dirs[label],
+                "tmux": {"session": "0", "window": 1, "window_name": "deps",
+                         "pane_index": pidx, "pane_id": "%%%d" % pidx,
+                         "size": "80x24"},
+                "resume_uuid": "u-" + label,
+                "resume_uuid_source": "verified: test", "durable_files": []})
+        return {"captured": "now", "installed_claude": "x",
+                "coordinator": "alpha", "sessions": sessions,
+                "window_layouts": {"0:1": {
+                    "name": "deps", "layout": layout,
+                    "furniture": [{"pane_index": 2, "pane_id": "%22",
+                                   "cwd": self.dirs["furn"],
+                                   "start_command": self.recorded_cmd}]}}}
+
+    def write(self, man):
+        with open(os.path.join(self.cfg.state, "manifest.json"), "w") as f:
+            json.dump(man, f)
+
+    def restore(self, *args):
+        return subprocess.run([TOOL, "--socket", SOCKET, "--stagger", "0", *args],
+                              capture_output=True, text=True, env=self.env())
+
+    def test_the_furniture_comes_back_and_so_does_the_geometry(self):
+        man = self.build_and_record()
+        self.write(man)
+        self.tmux("kill-session", "-t", "0")
+        r = self.restore("--go")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+
+        labels = self.tmux("list-panes", "-t", "0:1", "-F",
+                           "#{@agent}").stdout.splitlines()
+        self.assertEqual(labels, ["alpha", "", "beta"],
+                         "the furniture is not back between its neighbors\n" + r.stdout)
+        running = self.tmux("list-panes", "-t", "0:1", "-F",
+                            "#{pane_current_command}").stdout.splitlines()
+        self.assertEqual(running[1], "sleep",
+                         "the furniture pane is not running its recorded command "
+                         "-- a command tmux quoted and we handed back quoted dies "
+                         "at once\n" + r.stdout)
+        self.assertEqual(self.sizes(), self.recorded,
+                         "the window did not come back at its recorded size\n"
+                         + r.stdout)
+
+    def test_a_window_still_on_screen_does_not_gain_a_second_board(self):
+        """The agents died; the furniture outlived them, so the window is still
+        there. Every session in the manifest is restored, so this is not a
+        partial restore -- but the window is JOINED, and its panes are already
+        in it. A second board beside the first is worse than a window at the
+        wrong size."""
+        man = self.build_and_record()
+        self.write(man)
+        ids = [l for l in self.tmux("list-panes", "-t", "0:1",
+                                    "-F", "#{pane_id}").stdout.splitlines() if l]
+        self.tmux("kill-pane", "-t", ids[0])
+        self.tmux("kill-pane", "-t", ids[2])
+        r = self.restore("--go")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        running = self.tmux("list-panes", "-t", "0:1", "-F",
+                            "#{pane_current_command}").stdout.splitlines()
+        self.assertEqual(running.count("sleep"), 1,
+                         "the board was recreated beside itself\n" + r.stdout)
+        self.assertEqual(len(running), 3, r.stdout)
+
+    def test_a_command_that_cannot_be_parsed_leaves_a_shell_and_says_so(self):
+        """Loud, and the pane is still created: the window keeps its recorded
+        size, and the line says exactly what did not start. A pane left out
+        instead would drop the geometry as well."""
+        man = self.build_and_record()
+        man["window_layouts"]["0:1"]["furniture"][0]["start_command"] = 'sleep "300'
+        self.write(man)
+        self.tmux("kill-session", "-t", "0")
+        r = self.restore("--go")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertIn("cannot be read as a command line", r.stdout)
+        self.assertEqual(len(self.sizes()), 3, "the pane was skipped\n" + r.stdout)
+        self.assertEqual(self.sizes(), self.recorded,
+                         "the geometry was lost with the command\n" + r.stdout)
+
+    def test_without_the_furniture_record_it_says_so_instead_of_pretending(self):
+        """The defect in its original form. The layout describes three panes, the
+        restore builds two, `select-layout` exits 0 and does nothing -- and the
+        run used to report a clean restore."""
+        man = self.build_and_record()
+        del man["window_layouts"]["0:1"]["furniture"]
+        self.write(man)
+        self.tmux("kill-session", "-t", "0")
+        r = self.restore("--go")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertIn("describes 3 panes", r.stdout)
+        self.assertIn("holds 2", r.stdout)
+        self.assertIn("Tiled instead", r.stdout)
+        self.assertIn("furniture", r.stdout)
+
+    def test_the_plan_prints_the_command_it_would_run_and_runs_nothing(self):
+        """A restore executing a string read from a file is the one thing this
+        tool does that is not launching `claude` from a versioned path. Reading
+        the plan is the guard, so the plan has to carry the command verbatim."""
+        man = self.build_and_record()
+        self.write(man)
+        self.tmux("kill-session", "-t", "0")
+        r = self.restore()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("RUNS the recorded command", r.stdout)
+        self.assertIn(self.FURN_CMD, r.stdout)
+        self.assertNotEqual(self.tmux("has-session", "-t", "0").returncode, 0,
+                            "the plan built something")

@@ -30,6 +30,42 @@ entries and makes you confirm the bump against this list.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A window holding panes that are not sessions came back at the default split,
+  and nothing said so.** `tmux select-layout` given a layout string that
+  describes a different number of panes than the window holds exits 0, prints
+  nothing, and leaves the window as it was — measured 2026-11-23, a 4-pane
+  layout on a 2-pane window. `fleetsnap` recorded the layout and called it
+  restorable verbatim; `fleetrestore` applied it and reported a clean restore.
+  `fleetrestore` now counts the panes the layout describes, reads back how many
+  the window holds, and tiles with a `!!` line naming both numbers rather than
+  applying a layout that will be ignored. A layout it cannot count is applied
+  and flagged rather than refused, and the count is never zero — that would read
+  as "this window should be empty" and make every window a mismatch. Partial
+  restores already tile and are not reported, so the line cannot become noise.
+
+### Added
+
+- **`fleetsnap` records the *furniture* of a fleet window** — the panes carrying
+  neither `@agent` nor `@fleet`, such as a `fleetboard --watch` or a shell kept
+  beside the agents — as `furniture` beside that window's layout: pane index,
+  directory, and `#{pane_start_command}` (empty for a plain shell, recorded as
+  empty rather than guessed; `pane_current_command` reads `python3` for a
+  running board and is not a command anything can relaunch). Scoped to windows
+  holding at least one session, the same scoping the window-name guard uses.
+  Furniture is never a session: it has no brief, no color, no ledger and never
+  enters `sessions`. The pane row gained a twelfth field, which is joined rather
+  than indexed because a command line is the one column that can hold a tab.
+- **`fleetrestore` rebuilds that furniture, in the recorded pane order**, before
+  applying the layout — so the pane count matches and a hand-sized window comes
+  back at its own size. Layout strings map to panes by position, so sessions and
+  furniture must interleave exactly as recorded. This is the first thing the tool
+  runs that is not `claude` from a versioned path: the plan prints every recorded
+  command verbatim, on a plan and on a `--go` run alike. Not done on a partial
+  restore, which tiles anyway, nor into a window already on screen.
+
+
 ## [0.10.0] - 2026-11-23
 
 ### Changed

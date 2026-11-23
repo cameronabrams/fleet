@@ -79,6 +79,59 @@ tmux reports is the running command, not a name. If the previous manifest holds 
 real name for that window, fleetsnap keeps it and says so in
 ``window_name_notes``.
 
+Furniture: the panes in a fleet window that are not sessions
+------------------------------------------------------------
+
+A window can hold panes that no agent lives in — a ``fleetboard --watch``, a
+shell the human keeps beside his agents. They carry neither ``@agent`` nor
+``@fleet``, so they are not sessions and never appear in ``sessions``: a session
+has a brief, a declared color, a re-arm ledger and a restore obligation, and
+handing those to a shell would make every membership count wrong.
+
+They are recorded anyway, beside the window's layout, because of what their
+absence does to the geometry::
+
+   "window_layouts": {
+     "0:1": {
+       "name": "deps",
+       "layout": "...",
+       "furniture": [
+         {"pane_index": 1, "pane_id": "%22", "cwd": "/home/u",
+          "start_command": "/home/u/bin/fleetboard --watch"}
+       ]
+     }
+   }
+
+**A layout string describes every pane the window had, and**
+``tmux select-layout`` **given one that describes more panes than the window
+holds exits 0, prints nothing, and leaves the default split.** Measured
+2026-11-23 on a throwaway server: a 4-pane layout applied to a 2-pane window.
+So a window of two agents and two pieces of furniture came back at the default
+split on every restore, however it had been hand-sized, and nothing in the
+snapshot, the plan, the run or the report said so. The record is what lets
+:doc:`fleetrestore` rebuild the pane count, and therefore the sizes.
+
+``start_command`` is ``#{pane_start_command}`` — the command the pane was
+created with, and **empty for a plain shell**, which is recorded as an empty
+string rather than guessed at. ``#{pane_current_command}`` is not the fallback:
+it reads ``python3`` for a running board, which is not a command anything can
+relaunch. It is the last field of the pane row and is joined rather than
+indexed, because it is the one column that can contain a tab of its own.
+
+Only windows that hold at least one fleet session are considered, the same
+scoping the window-name guard uses. A scratch window is unlabeled by design, and
+recording every pane in one is how a record gets trained into noise. An
+unlabeled pane anywhere else is still reported as somebody else's, which is what
+``list-panes -a`` crossing tmux sessions shows.
+
+A pane carrying ``@agent`` but no ``@fleet`` is **not** furniture. That is the
+ours-but-stamped-by-an-older-tool case, and it needs a human rather than a pane
+rebuilt from a recorded command.
+
+The snapshot says out loud that a restore will run these commands, because that
+is the one thing ``fleetrestore`` does that is not launching ``claude`` from a
+versioned path.
+
 Files written
 -------------
 

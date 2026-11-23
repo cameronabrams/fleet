@@ -57,12 +57,60 @@ It does not restart compute. Local jobs died with the machine; whether to rerun 
 is a judgment, not a recovery step.
 
 The bare command is the power-cycle path. Each window's recorded layout is applied
-only when every session in the manifest is being rebuilt — a named subset, or a run
-where some sessions are already live, is tiled instead, because an exact layout
-needs every pane that was in the window.
+only when every session in the manifest is being rebuilt, and only when the window
+will hold as many panes as the layout describes; otherwise it is tiled, and said
+(see below).
 
 After a restore, verify the fleet — per pane, argv against cwd against the manifest
 — not just the snapshot (:doc:`../skills/fleet-snapshot`).
+
+A window comes back at its own size, or is told it will not
+-----------------------------------------------------------
+
+Each window's recorded layout is applied only when every session in the manifest
+is being rebuilt; a named subset, or a run where some sessions are already live,
+is tiled, because an exact layout needs every pane that was in the window.
+
+On the full path the pane count is now **checked**. ``tmux select-layout`` given
+a layout string that describes a different number of panes than the window holds
+exits 0, prints nothing, and leaves the default split — measured 2026-11-23, a
+4-pane layout on a 2-pane window. So for any window holding a pane this tool does
+not rebuild, the recorded geometry was dropped on every restore while the run
+reported a clean one. The count is read back from tmux rather than taken from the
+plan, because a split that failed leaves one pane fewer and that is exactly when
+a layout vanishes quietly::
+
+   !! deps: the recorded layout describes 3 panes and the window holds 2.
+      `select-layout` exits 0 and leaves the default split when the counts
+      differ, so the recorded geometry would be dropped in silence. Tiled instead.
+
+A layout the counter cannot read is applied anyway and flagged, not refused:
+the layout may well be right, and throwing geometry away over an incomplete
+parser is the worse error. A count of zero is never returned — it would read as
+"this window should be empty" and make every window a mismatch.
+
+Furniture is rebuilt with the window
+------------------------------------
+
+A pane in a fleet window that is not a session — a board, a shell kept beside the
+agents — is recorded by :doc:`fleetsnap` as *furniture*, with its place in the
+pane order, its directory and the command it was created with. ``fleetrestore``
+recreates it, **in the recorded pane order**, before applying the layout. Layout
+strings map to panes by position, so "sessions first, furniture appended" would
+restore the right number of panes in the wrong places and hand each one the
+geometry of a different pane.
+
+This is the one thing ``fleetrestore`` does that is not launching ``claude`` from
+a versioned path: it executes a command string read from a file. **The plan
+prints every such command verbatim, and reading it is the guard**::
+
+   (window deps: 1 pane(s) that are not sessions will be recreated, and this
+    RUNS the recorded command:)
+      pane 2: /home/u/bin/fleetboard --watch  in /home/u
+
+Furniture is not recreated on a partial restore, which tiles anyway, nor into a
+window that is already on screen — those panes are already in it, and a second
+board beside the first is worse than a window at the wrong size.
 
 It ends by saying how to get back in
 ------------------------------------

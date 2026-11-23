@@ -1,4 +1,4 @@
-import json, os, tempfile, unittest
+import json, os, shutil, tempfile, unittest
 from unittest import mock
 from tests.support import APP, FakeConfig, load_tool
 from fleet import transcripts
@@ -19,13 +19,14 @@ class SnapshotDirectory(unittest.TestCase):
 
     def manifest(self, proc_cwd="/home/u/work", repo="alpha", title="title",
                  agents=None, transcript_name=None, fleet="testfleet", labels=None,
-                 tsessions=None):
-        # eleven fields: two labels, `@agent` and `@fleet`. `@fleet` is LAST
-        # because appending is what keeps the older indices where their readers
-        # expect them -- this unpack has been left behind by a moving format twice.
+                 tsessions=None, extra_rows=()):
+        # TWELVE fields: two labels, `@agent` and `@fleet`, then the pane's start
+        # command. Each new one is appended, because that is what keeps the older
+        # indices where their readers expect them -- this unpack has been left
+        # behind by a moving format twice.
         def mkrow(label, pidx, tsess="fleet"):
             return [tsess, "1", "win", str(pidx), f"%{pidx + 1}", label, title,
-                    "/home/u/somewhere-else", "100", "80x40", fleet]
+                    "/home/u/somewhere-else", "100", "80x40", fleet, ""]
         # `labels` builds a MULTI-session fixture; one row stays the default, so
         # every test written against the single-pane shape is untouched.
         # `tsessions` gives those rows DIFFERENT tmux session names -- the shape a
@@ -34,6 +35,7 @@ class SnapshotDirectory(unittest.TestCase):
         rows = ([mkrow(l, i, tsessions[i] if tsessions else "fleet")
                  for i, l in enumerate(labels)] if labels
                 else [mkrow(repo, 0)])
+        rows += [list(r) for r in extra_rows]
         proc = {"pid": 200, "version": "2.1.276", "resume_uuid": None, "started": "",
                 "argv": ["claude", "--name", "alpha"]}
         sn = self.snap
@@ -84,6 +86,94 @@ class SnapshotDirectory(unittest.TestCase):
 
     def test_pane_path_is_the_fallback(self):
         self.assertEqual(self.manifest(proc_cwd=None)["sessions"][0]["cwd"], "/home/u/somewhere-else")
+
+
+class FurnitureIsRecordedButIsNotASession(SnapshotDirectory):
+    """A pane in a fleet window that is not an agent: a board, a shell.
+
+    `window_layouts` records the layout of every window verbatim and the docstring
+    claimed it restored geometry exactly. It does not. A layout string describes
+    every pane the window had, and `tmux select-layout` given one that describes
+    more panes than the window holds exits 0, prints nothing, and leaves the
+    default split -- measured 2026-11-23 with a 4-pane layout on a 2-pane window.
+    So a window holding two agents and two pieces of furniture came back at 50/50
+    whatever it had been hand-sized to, and nothing said so.
+
+    Recording the furniture is what makes the pane count match again. It is
+    recorded BESIDE the layout and never in `sessions`: a session has a brief, a
+    color, a re-arm ledger and a restore obligation, and furniture has none of
+    those. Landing in `sessions` would hand it every one of them.
+    """
+
+    def furn(self, pidx=1, start="", cwd="/home/u", pane="%9", win="1",
+             tsess="fleet", agent="", fleet=""):
+        return [tsess, win, "win", str(pidx), pane, agent, "title", cwd,
+                "100", "80x40", fleet, start]
+
+    def test_a_pane_with_neither_label_in_a_fleet_window_is_furniture(self):
+        snap = self.manifest(extra_rows=[self.furn(
+            pidx=1, start="/home/u/bin/fleetboard --watch", cwd="/home/u")])
+        got = snap["window_layouts"]["fleet:1"]["furniture"]
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["start_command"], "/home/u/bin/fleetboard --watch")
+        self.assertEqual(got[0]["cwd"], "/home/u")
+        self.assertEqual(got[0]["pane_index"], 1)
+
+    def test_it_is_not_a_session(self):
+        """Not in `sessions`, and not in the count of them. A membership
+        obligation it cannot meet would be demanded of it every run."""
+        snap = self.manifest(extra_rows=[self.furn()])
+        self.assertEqual([x["label"] for x in snap["sessions"]], ["alpha"])
+        self.assertNotIn("furniture", str(snap["sessions"]))
+
+    def test_a_plain_shell_records_an_empty_command_not_a_guessed_one(self):
+        """`pane_start_command` is EMPTY for a pane created without one, and
+        `pane_current_command` is not the fallback: it reads `python3` for a
+        running board, which is not a command anything can relaunch."""
+        snap = self.manifest(extra_rows=[self.furn(start="")])
+        got = snap["window_layouts"]["fleet:1"]["furniture"][0]
+        self.assertEqual(got["start_command"], "")
+        self.assertIn("the default shell", self.out)
+
+    def test_a_command_holding_a_tab_survives_the_row(self):
+        """The one column that can contain the field separator, which is why it
+        is last and joined rather than indexed."""
+        snap = self.manifest(extra_rows=[self.furn(start="sh -c 'printf a\tb'")])
+        self.assertEqual(
+            snap["window_layouts"]["fleet:1"]["furniture"][0]["start_command"],
+            "sh -c 'printf a\tb'")
+
+    def test_furniture_outside_a_fleet_window_is_still_somebody_elses_pane(self):
+        """`list-panes -a` crosses tmux sessions, so this tool sees the owner's
+        own windows. Scoped the same way the window-name guard is: a scratch
+        window is unlabeled BY DESIGN, and recording every pane in one is how a
+        record gets trained into noise."""
+        snap = self.manifest(extra_rows=[self.furn(win="7", pane="%40")])
+        self.assertNotIn("fleet:7", snap["window_layouts"])
+        self.assertIn("%40", self.out)
+        self.assertIn("not this fleet's panes", self.out)
+
+    def test_an_agent_without_a_fleet_label_is_not_furniture(self):
+        """Ours, stamped by a tool too old to say so -- which needs a human, not
+        a pane rebuilt from a recorded command."""
+        snap = self.manifest(extra_rows=[self.furn(agent="beta", pane="%40")])
+        self.assertNotIn("furniture", snap["window_layouts"].get("fleet:1", {}))
+        self.assertIn("@fleet=(unlabeled)", self.out)
+
+    def test_several_pieces_are_recorded_in_pane_order(self):
+        """Layout strings map to panes by POSITION, so the order is the record."""
+        snap = self.manifest(extra_rows=[self.furn(pidx=3, pane="%23"),
+                                         self.furn(pidx=1, pane="%22")])
+        got = snap["window_layouts"]["fleet:1"]["furniture"]
+        self.assertEqual([f["pane_index"] for f in got], [1, 3])
+
+    def test_the_report_says_a_restore_will_run_these_commands(self):
+        """A restore executing a string read from a file is a new class of action
+        for a tool that until now only ever launched `claude` from a versioned
+        path. The snapshot that records the string says so."""
+        self.manifest(extra_rows=[self.furn(start="/home/u/bin/fleetboard --watch")])
+        self.assertIn("/home/u/bin/fleetboard --watch", self.out)
+        self.assertIn("RUNS these commands", self.out)
 
 
 class UnlabeledPane(SnapshotDirectory):
@@ -223,6 +313,79 @@ class Rotate(unittest.TestCase):
             self.assertIn(os.path.basename(dest), baks)
             self.assertIsNone(snap.rotate(os.path.join(cfg.state, "absent.json")))
         finally:
+            cfg.close()
+
+
+class ThePaneRowIsAskedOfRealTmux(unittest.TestCase):
+    """What the format asks tmux for, checked against tmux.
+
+    Every other test here feeds `pane_rows` a hand-written fixture, so the format
+    string itself is exercised nowhere: a column asking for the wrong thing, or
+    for the right thing in the wrong place, would pass the whole suite. The
+    arity check next door counts the fields and cannot see what is in them --
+    proved by replacing `#{pane_start_command}` with `#{pane_id}` in a throwaway
+    copy and watching the suite stay green.
+
+    Run against a tmux server of this test's own, via `TMUX_TMPDIR`, never the
+    caller's."""
+
+    @unittest.skipUnless(shutil.which("tmux"), "tmux is not installed")
+    def test_the_last_field_is_the_command_the_pane_was_created_with(self):
+        import subprocess
+        cfg = FakeConfig()
+        tmpdir = tempfile.mkdtemp(prefix="ft", dir="/tmp")
+        s = load_tool("fleetsnap")
+        old = os.environ.get("TMUX_TMPDIR")
+        os.environ["TMUX_TMPDIR"] = tmpdir
+        was_tmux = os.environ.pop("TMUX", None)
+        tm = lambda *a: subprocess.run(["tmux", "-L", "snaprows", *a],
+                                       capture_output=True, text=True, timeout=10)
+        try:
+            first = tm("new-session", "-d", "-P", "-F", "#{pane_id}",
+                       "-s", "rowtest").stdout.strip()
+            tm("split-window", "-t", "rowtest:", "sleep 300")
+            # By pane ID. `rowtest:.0` is not the first pane when
+            # `pane-base-index` is 1, which it is in the owner's own tmux.conf --
+            # the setting that put every session one pane to the left in the
+            # 2026-09-30 restore.
+            tm("set", "-p", "-t", first, "@agent", "alpha")
+            tm("set", "-p", "-t", first, "@fleet", "testfleet")
+            with mock.patch.object(s, "sh", lambda *a, **k: subprocess.run(
+                    ["tmux", "-L", "snaprows", *a[1:]], capture_output=True,
+                    text=True, **k).stdout):
+                rows = [r for r in s.pane_rows() if r[0] == "rowtest"]
+            self.assertEqual(len(rows), 2, rows)
+            # By POSITION, not by index: `pane-base-index` is 1 in the owner's
+            # own tmux.conf and 0 by default, and this test is not about that.
+            rows.sort(key=lambda r: int(r[3]))
+            plain, cmd = rows
+            self.assertEqual(len(plain), 12,
+                             "the row must carry every field the format asks for")
+            self.assertEqual(plain[5], "alpha", "@agent moved")
+            self.assertEqual(plain[10], "testfleet", "@fleet moved")
+            self.assertEqual(plain[11], "",
+                             "a pane created without a command has no start command")
+            # The command is there, and it is the START command: the trap is
+            # `pane_current_command`, which reads `sleep` here and `python3` for
+            # a running board -- neither of them a command anything can relaunch.
+            #
+            # Matched loosely because tmux RENDERS the argv it was given and
+            # quotes any word holding a space: 3.8 answers `"sleep 300"`, quotes
+            # included. That rendering is the reason `fleetrestore` splits the
+            # string instead of handing it back, and the restore end-to-end test
+            # is what proves the round trip.
+            self.assertIn("sleep 300", cmd[11])
+            self.assertNotEqual(cmd[11], "sleep",
+                                "that is pane_current_command, not the start one")
+        finally:
+            tm("kill-server")
+            if old is None:
+                os.environ.pop("TMUX_TMPDIR", None)
+            else:
+                os.environ["TMUX_TMPDIR"] = old
+            if was_tmux is not None:
+                os.environ["TMUX"] = was_tmux
+            shutil.rmtree(tmpdir, ignore_errors=True)
             cfg.close()
 
 
@@ -417,11 +580,21 @@ class FormatMatchesItsUnpack(unittest.TestCase):
                       unpack)
         self.assertIsNotNone(m, "could not find the pane-row unpack")
         names = 5 + len([n for n in m.group(1).split(",") if n.strip()])
-        self.assertEqual(fields, names,
-                         "the format asks tmux for %d fields and the unpack names %d"
-                         % (fields, names))
-        self.assertEqual(int(m.group(2)), fields,
-                         "the r[:N] slice must match the field count")
+        self.assertEqual(int(m.group(2)), names,
+                         "the r[:N] slice and the names it binds disagree")
+        # The LAST field is taken separately and JOINED, because it is a command
+        # line and is the one column that can hold a tab of its own. So the tuple
+        # is one shorter than the format by design -- and the tail has to begin
+        # exactly where the tuple stopped, or a column is read twice or not at
+        # all. Checked here rather than assumed, since "one shorter" is also what
+        # a format that grew a field and left the unpack behind looks like.
+        t = re.search(r'start = "\\t"\.join\(r\[(\d+):\]\)', unpack)
+        self.assertIsNotNone(t, "the trailing field must be joined, not sliced off")
+        self.assertEqual(int(t.group(1)), names,
+                         "the joined tail must start where the unpack stopped")
+        self.assertEqual(fields, names + 1,
+                         "the format asks tmux for %d fields; the unpack names %d "
+                         "and joins the rest into one" % (fields, names))
 
     def test_the_row_unpacks_to_the_fields_the_format_asks_for(self):
         """The defect this class exists for, in its post-retirement form: a row
@@ -430,9 +603,10 @@ class FormatMatchesItsUnpack(unittest.TestCase):
         field twice now -- the grouping, then the old name -- and each time every
         index after it moved."""
         row = ["0", "1", "win", "0", "%1", "alpha",
-               "title", "/w", "123", "80x24", "testfleet"]
+               "title", "/w", "123", "80x24", "testfleet", ""]
         (sess, win, winname, pidx, pane,
          agent, title, path, ppid, size, fleet) = row[:11]
+        self.assertEqual("\t".join(row[11:]), "", "the start command is the tail")
         self.assertEqual(self.s.agent_label(agent), "alpha")
         self.assertEqual(self.s.fleet_label(fleet), "testfleet")
         self.assertEqual((title, path, size), ("title", "/w", "80x24"),

@@ -1,4 +1,4 @@
-import json, os, shutil, subprocess, tempfile, unittest
+import contextlib, io, json, os, shutil, subprocess, tempfile, unittest
 from unittest import mock
 from tests.support import APP, BASE_TOML, FakeConfig, load_tool
 
@@ -499,6 +499,192 @@ class APaneIsAskedWhereItIsUntilItCanAnswer(unittest.TestCase):
         """`run` returns None when tmux says nothing. Empty must never equal a
         wanted path, or a pane nothing can read would launch."""
         self.assertEqual(self.settled([None], wait=0.2), "")
+
+
+JSON_LAYOUT = ('{"V":2,"L":{"t":"v","w":234,"h":57,"x":0,"y":0,"c":['
+               '{"t":"h","w":234,"h":35,"x":0,"y":0,"c":['
+               '{"t":"p","w":105,"h":35,"x":0,"y":0,"a":true,"i":1,"I":"%0"},'
+               '{"t":"p","w":128,"h":35,"x":106,"y":0,"i":2,"I":"%22"}]},'
+               '{"t":"p","w":234,"h":21,"x":0,"y":36,"i":3,"I":"%1"}]}}')
+CLASSIC_LAYOUT = "bb62,80x24,0,0{40x24,0,0,1,39x24,41,0,2}"
+
+
+class ALayoutIsOnlyExactIfThePaneCountIs(unittest.TestCase):
+    """`tmux select-layout` given a layout string describing a different number
+    of panes than the window holds EXITS 0, prints nothing, and leaves the
+    default split. Measured 2026-11-23: a 4-pane layout on a 2-pane window.
+
+    So `fleetsnap` recorded "exact geometry" and `fleetrestore` applied it and
+    reported a clean restore, for a window that came back at 50/50 -- every time,
+    for any window holding a pane that is not an agent. The silence is the defect;
+    counting the panes in the string is what ends it."""
+
+    def setUp(self):
+        self.cfg = FakeConfig(toml=BASE_TOML)
+        self.r = load_tool("fleetrestore")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def test_a_json_layout_is_counted(self):
+        """tmux 3.8 serializes a layout as JSON; a pane is a node of type `p`."""
+        self.assertEqual(self.r.layout_panes(JSON_LAYOUT), 3)
+
+    def test_a_classic_layout_is_counted(self):
+        """Older tmux -- including the one CI runs -- writes the flat string. A
+        pane is the only node carrying a fourth number; a container is not."""
+        self.assertEqual(self.r.layout_panes(CLASSIC_LAYOUT), 2)
+
+    def test_a_single_pane_classic_layout_is_one_not_none(self):
+        self.assertEqual(self.r.layout_panes("b26f,80x24,0,0,0"), 1)
+
+    def test_an_unreadable_layout_is_unknown_and_never_zero(self):
+        """Zero would read as "this window should be empty" and make every window
+        a mismatch -- the loud failure in the direction that destroys geometry
+        nobody asked it to touch."""
+        for bad in ("", None, "not-a-layout", "{", '{"V":2}', "{}"):
+            with self.subTest(layout=bad):
+                self.assertIsNone(self.r.layout_panes(bad))
+
+    def calls(self):
+        got = []
+        return got, lambda cmd, go, capture=False: got.append(cmd)
+
+    def apply(self, lay, planned, partial=False, go=False):
+        got, run = self.calls()
+        buf = io.StringIO()
+        with mock.patch.object(self.r, "run", run), \
+                contextlib.redirect_stdout(buf):
+            self.r.apply_layout("0:1", lay, planned, "deps", partial, go)
+        return got, buf.getvalue()
+
+    def test_a_matching_count_applies_the_recorded_layout(self):
+        got, out = self.apply({"layout": CLASSIC_LAYOUT}, 2)
+        self.assertEqual(got, [["tmux", "select-layout", "-t", "0:1",
+                                CLASSIC_LAYOUT]])
+        self.assertEqual(out, "")
+
+    def test_a_mismatch_is_said_out_loud_and_tiled(self):
+        got, out = self.apply({"layout": JSON_LAYOUT}, 2)
+        self.assertEqual(got, [["tmux", "select-layout", "-t", "0:1", "tiled"]])
+        self.assertIn("describes 3 panes", out)
+        self.assertIn("holds 2", out)
+        self.assertIn("furniture", out, "the report must say what fixes it")
+
+    def test_a_partial_restore_is_tiled_without_a_word(self):
+        """It already tiles for a reason that has nothing to do with this, and a
+        line per window per partial restore is how a warning becomes noise."""
+        got, out = self.apply({"layout": JSON_LAYOUT}, 2, partial=True)
+        self.assertEqual(got, [["tmux", "select-layout", "-t", "0:1", "tiled"]])
+        self.assertEqual(out, "")
+
+    def test_a_layout_that_cannot_be_counted_is_applied_and_flagged(self):
+        """Not refused: the layout may well be right, and refusing would throw
+        away geometry over a parser this file cannot prove is complete. Said out
+        loud, so a window that comes back wrong has a reason on the screen."""
+        got, out = self.apply({"layout": "not-a-layout"}, 2)
+        self.assertEqual(got, [["tmux", "select-layout", "-t", "0:1",
+                                "not-a-layout"]])
+        self.assertIn("could not read", out)
+
+    def test_no_recorded_layout_is_tiled(self):
+        got, out = self.apply({}, 2)
+        self.assertEqual(got, [["tmux", "select-layout", "-t", "0:1", "tiled"]])
+
+    def test_a_go_run_counts_the_panes_tmux_HAS_not_the_ones_planned(self):
+        """A split that failed leaves one pane fewer than the plan, and that is
+        exactly the case where a layout is dropped in silence. The plan is the
+        fallback for a dry run, which has no window to ask."""
+        got, run = self.calls()
+        buf = io.StringIO()
+        with mock.patch.object(self.r, "run", run), \
+                mock.patch.object(self.r, "tmux_run",
+                                  return_value=subprocess.CompletedProcess(
+                                      [], 0, "2\n", "")), \
+                contextlib.redirect_stdout(buf):
+            self.r.apply_layout("0:1", {"layout": JSON_LAYOUT}, 3, "deps",
+                                False, True)
+        self.assertIn("holds 2", buf.getvalue())
+        self.assertEqual(got, [["tmux", "select-layout", "-t", "0:1", "tiled"]])
+
+
+class FurnitureTakesItsOwnPlaceInThePaneOrder(unittest.TestCase):
+    """Layout strings map to panes by POSITION. "Sessions first, furniture
+    appended" would restore the right NUMBER of panes in the wrong places and
+    hand each pane the geometry of a different one -- and the window this was
+    raised for is agent, board, agent, shell."""
+
+    def setUp(self):
+        self.cfg = FakeConfig(toml=BASE_TOML)
+        self.r = load_tool("fleetrestore")
+
+    def tearDown(self):
+        self.cfg.close()
+
+    def panes(self, *idx):
+        return [{"label": "s%d" % i, "cwd": "/w/%d" % i,
+                 "tmux": {"pane_index": i}} for i in idx]
+
+    def test_they_interleave_by_the_index_each_was_recorded_at(self):
+        slots = self.r.window_slots(
+            self.panes(0, 2),
+            [{"pane_index": 1, "cwd": "/f", "start_command": "board"},
+             {"pane_index": 3, "cwd": "/f", "start_command": ""}])
+        self.assertEqual([s["kind"] for s in slots],
+                         ["session", "furniture", "session", "furniture"])
+        self.assertEqual([s["pane_index"] for s in slots], [0, 1, 2, 3])
+
+    def test_a_session_slot_carries_no_command(self):
+        """A session is launched by typing into its pane after the cwd check, not
+        by handing tmux a command line -- that is how `--resume` and `--name` get
+        verified. Furniture is the only slot that is created running something."""
+        slots = self.r.window_slots(self.panes(0), [])
+        self.assertEqual(slots[0]["cmd"], "")
+        self.assertEqual(slots[0]["session"]["label"], "s0")
+
+    def test_furniture_with_no_recorded_cwd_lands_where_the_window_does(self):
+        slots = self.r.window_slots(self.panes(0), [{"pane_index": 1}])
+        self.assertEqual(slots[1]["cwd"], "/w/0")
+
+    def test_a_record_that_is_not_a_record_is_skipped_not_crashed_on(self):
+        """An older or hand-edited manifest. This runs when nothing else is up."""
+        slots = self.r.window_slots(self.panes(0), ["nonsense", None, 7])
+        self.assertEqual(len(slots), 1)
+
+    def test_the_recorded_command_is_unquoted_before_it_is_handed_back(self):
+        """`#{pane_start_command}` is tmux's RENDERING of the argv it was given,
+        and it quotes any word holding a space. A pane made with
+        `split-window 'sleep 300'` reads back as `"sleep 300"`, quotes included;
+        handing that back runs `sh -c '"sleep 300"'`, which is not found, and the
+        pane closes within milliseconds leaving nothing to notice."""
+        slots = self.r.window_slots(
+            self.panes(0), [{"pane_index": 1, "start_command": '"sleep 300"'}])
+        self.assertEqual(slots[1]["argv"], ["sleep 300"])
+
+    def test_an_argv_rendering_survives_too(self):
+        """The other shape tmux renders: several words, none needing quotes."""
+        slots = self.r.window_slots(
+            self.panes(0), [{"pane_index": 1,
+                             "start_command": "/u/bin/fleetboard --watch"}])
+        self.assertEqual(slots[1]["argv"], ["/u/bin/fleetboard", "--watch"])
+
+    def test_a_command_that_cannot_be_split_is_none_not_the_raw_string(self):
+        """None is what makes the caller create a plain shell and say so. The raw
+        string would be handed to tmux and kill the pane on arrival -- the exact
+        silent failure this parsing exists to avoid."""
+        slots = self.r.window_slots(
+            self.panes(0), [{"pane_index": 1, "start_command": 'sleep "300'}])
+        self.assertIsNone(slots[1]["argv"])
+        self.assertEqual(slots[1]["cmd"], 'sleep "300',
+                         "the unparsable string is kept, to be printed")
+
+    def test_no_command_is_an_empty_argv_not_a_failure(self):
+        slots = self.r.window_slots(self.panes(0), [{"pane_index": 1}])
+        self.assertEqual(slots[1]["argv"], [])
+
+    def test_no_furniture_is_the_ordinary_window_unchanged(self):
+        slots = self.r.window_slots(self.panes(0, 1), [])
+        self.assertEqual([s["kind"] for s in slots], ["session", "session"])
 
 
 class AnAttachLandsInTheCoordinator(unittest.TestCase):

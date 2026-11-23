@@ -100,7 +100,18 @@ def keep_real_window_names(meta, prior, only):
 
 
 def window_layouts(meta):
-    """tmux's own layout serialization — restores geometry exactly, not approximately."""
+    """tmux's own layout serialization, which restores geometry exactly -- but
+    only into a window holding the same NUMBER of panes.
+
+    A layout string describes every pane the window had. `tmux select-layout`
+    given one that describes more panes than the window holds exits 0, prints
+    nothing, and leaves the default split: measured 2026-11-23, a 4-pane layout
+    applied to a 2-pane window. So this said "restores geometry exactly, not
+    approximately" and was false for any window that held a pane the restore does
+    not rebuild -- silently, which is the half worth fixing. `furniture` below is
+    what makes the count match again; `fleetrestore` counts the panes in the
+    string and says so when it cannot.
+    """
     return {k: {"name": v["name"], "layout": v["layout"]} for k, v in meta.items()}
 
 def pane_rows():
@@ -108,7 +119,15 @@ def pane_rows():
                      "#{pane_index}", "#{pane_id}",
                      "#{@agent}", "#{pane_title}",
                      "#{pane_current_path}", "#{pane_pid}", "#{pane_width}x#{pane_height}",
-                     "#{@fleet}"])
+                     "#{@fleet}",
+                     # LAST, and the consumer joins everything from here on with
+                     # a tab again. It is the only column that can itself contain
+                     # one -- it is a command line, not an identifier -- and a
+                     # fixed unpack would silently keep the half before the tab
+                     # and relaunch a truncated command. Last also means the
+                     # columns above it did not move, which is the bug this
+                     # format has already had twice.
+                     "#{pane_start_command}"])
     # `.strip("\n")`, NOT `.strip()`. `@fleet` is the last column and an unset
     # pane option renders as an empty field, so the last row ends in a tab --
     # which `.strip()` eats, leaving that row one field short. It then fails the
@@ -290,11 +309,11 @@ def main():
             # session resumes that transcript, via --resume in its process argv or
             # via a descendant executing from its scratchpad path.
             "authority": CFG.get("authority", {})}
-    outside, foreign = [], []
+    outside, foreign, unlabeled = [], [], []
     for r in pane_rows():
         # Must match the unpack below. It said 11 while the unpack took 12: a row
         # of exactly 11 would pass this and raise in the next statement.
-        if len(r) < 11:
+        if len(r) < 12:
             continue
         # Two labels now: `@agent` and `@fleet`. 2026-10-01: this unpack was left behind twice while
         # the format moved -- once holding the AGENT NAME in a variable named
@@ -303,6 +322,21 @@ def main():
         # alone is the bug. The arity test below is what makes that structural.
         (sess, win, winname, pidx, pane,
          agent, title, pane_path, ppid, size, fleet) = r[:11]
+        # Everything left is ONE field: see the format above.
+        start = "\t".join(r[11:])
+        # A pane carrying NEITHER label. Held aside rather than decided here,
+        # because what it is depends on WHERE it is, and that is not known until
+        # every session has been collected: in one of our windows it is
+        # FURNITURE -- a fleetboard, a shell the human keeps beside his agents --
+        # and in any other window it is somebody else's pane, which is what
+        # `list-panes -a` crossing tmux sessions shows us. It used to be reported
+        # as foreign either way, which is true of the second and useless for the
+        # first.
+        if not agent_label(agent) and not fleet_label(fleet):
+            unlabeled.append({"key": f"{sess}:{win}", "pane_index": int(pidx),
+                              "pane_id": pane, "cwd": pane_path,
+                              "start_command": start})
+            continue
         # Whose fleet, before anything expensive. `@fleet` was appended to the END
         # of the format for exactly this reason: a new column that shifts the old
         # ones is the bug this unpack has already had twice.
@@ -384,6 +418,31 @@ def main():
                   for s in snap["sessions"]}
     winnotes = keep_real_window_names(meta, prior, fleet_wins)
     snap["window_layouts"] = layouts = window_layouts(meta)
+    # FURNITURE, decided now that there is something to decide it against.
+    #
+    # A pane with neither label is furniture when it shares a window with one of
+    # our sessions, and somebody else's pane otherwise. The same scoping as
+    # `keep_real_window_names`, for the same reason: a scratch window full of
+    # unlabeled panes is unlabeled BY DESIGN, and recording or warning about
+    # those every run is how a record gets trained into noise.
+    #
+    # It is recorded beside the layout, not in `sessions`. Furniture is not a
+    # session: no brief, no color, no re-arm ledger, nothing that counts it as a
+    # member. Putting it in `sessions` would hand it a membership obligation it
+    # cannot meet, and every count derived from that list would be wrong by two.
+    # What it is FOR is the pane count -- a layout string describes every pane
+    # the window had, and `select-layout` silently does nothing when the window
+    # holds fewer.
+    furniture = {}
+    for f in unlabeled:
+        if f["key"] in fleet_wins:
+            furniture.setdefault(f["key"], []).append(f)
+        else:
+            foreign.append((f["pane_id"], "(no @agent)", ""))
+    for key, items in furniture.items():
+        items.sort(key=lambda x: x["pane_index"])
+        layouts.setdefault(key, {})["furniture"] = [
+            {k: v for k, v in x.items() if k != "key"} for x in items]
     snap["window_name_notes"] = winnotes
     for s in snap["sessions"]:
         key = f"{s['tmux']['session']}:{s['tmux']['window']}"
@@ -436,6 +495,19 @@ def main():
         print("    If one of these SHOULD be in the fleet it is missing its label, "
               "and it is missing from recovery too:")
         print(f"      tmux set -p -t <pane> @fleet {OURS}")
+
+    if furniture:
+        n = sum(len(v) for v in furniture.values())
+        print(f"  {n} pane(s) in fleet windows are not sessions and are recorded "
+              f"as furniture, so a restore can rebuild the window at the size it "
+              f"was hand-set to:")
+        for key in sorted(furniture):
+            for f in furniture[key]:
+                print(f"    {key}.{f['pane_index']}  {f['pane_id']}  "
+                      f"{f['start_command'] or '(the default shell)'}  "
+                      f"in {f['cwd']}")
+        print("    A restore RUNS these commands. Read them in "
+              "`fleetrestore`'s plan before `--go`.")
 
     # No per-fleet manifests. There is one fleet, so there is one manifest; the
     # grouping they split by agreed with the window name only by accident and could
@@ -515,9 +587,15 @@ def main():
              + (f", last modified {tc['mtime']}. " if tc['exists'] else ". ")
              + "It is a file on disk, so it survives a power cycle and is re-read when "
                "the tmux server next starts. The `@agent` pane-border logic lives there.")
-    L.append("\nExact window layouts, restorable verbatim with `tmux select-layout`:\n")
+    L.append("\nWindow layouts, restorable verbatim with `tmux select-layout` — but "
+             "only into a window holding the same NUMBER of panes, which is what "
+             "the furniture below is recorded for:\n")
     for k, v in sorted(snap["window_layouts"].items()):
-        L.append(f"- `{k}` ({v['name']}): `{v['layout']}`")
+        L.append(f"- `{k}` ({v.get('name')}): `{v.get('layout')}`")
+        for f in v.get("furniture", []):
+            L.append(f"  - pane {f['pane_index']} is not a session: "
+                     f"`{f['start_command'] or 'the default shell'}` in "
+                     f"`{f['cwd']}`")
     L.append("\n## What does NOT survive a power cycle\n")
     L.append("- tmux layout, pane ids, `@agent` labels — rebuilt by the restore script")
     L.append("- every local background job, including anything started with `setsid`")
