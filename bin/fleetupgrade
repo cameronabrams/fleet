@@ -875,7 +875,8 @@ def report_eligible(ss, inst):
     age = installed_age_hours()
     print("installed claude: %s%s" % (inst_newest() or "?",
           "" if age is None else "  (%s ago)" % human_age(age * 3600)))
-    print("target (newest soaked): %s" % (tgt or "NONE -- nothing has soaked yet"))
+    print("target (newest past the on-disk window): %s"
+          % (tgt or "NONE -- nothing has been on disk long enough yet"))
     print("gates: idle, lag >= %d behind the target, no exit-blocking child, "
           "no unnamed runtime" % lag)
     print("       (the %dh on-disk window picks the TARGET, not who may roll)" % soak)
@@ -925,7 +926,7 @@ def main():
     if "--json" in sys.argv:
         print(json.dumps({"installed": inst, "sessions": ss}, indent=1))
         return
-    print("installed claude: %s   target (newest soaked): %s\n"
+    print("installed claude: %s   target (newest past the on-disk window): %s\n"
           % (inst, versions.target()[0] or "NONE -- nothing has soaked"))
     print("%-22s %-5s %-9s %-6s %-7s %-8s %s" % ("SESSION", "PANE", "VERSION", "STALE", "LEDGER", "COLOR", "RESUME UUID"))
     for s in ss:
